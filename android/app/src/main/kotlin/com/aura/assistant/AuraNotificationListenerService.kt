@@ -231,7 +231,15 @@ class AuraNotificationListenerService : NotificationListenerService() {
                             `package` = applicationContext.packageName
                         })
                     }
+                    @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId, errorCode)"))
+                    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
                     override fun onError(utteranceId: String?) {
+                        WakeWordService.isTtsSpeaking = false
+                        sendBroadcast(Intent(WakeWordService.ACTION_TTS_END).apply {
+                            `package` = applicationContext.packageName
+                        })
+                    }
+                    override fun onError(utteranceId: String?, errorCode: Int) {
                         WakeWordService.isTtsSpeaking = false
                         sendBroadcast(Intent(WakeWordService.ACTION_TTS_END).apply {
                             `package` = applicationContext.packageName

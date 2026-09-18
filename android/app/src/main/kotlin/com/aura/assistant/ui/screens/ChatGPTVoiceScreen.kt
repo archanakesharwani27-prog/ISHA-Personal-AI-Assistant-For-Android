@@ -1,6 +1,15 @@
 package com.aura.assistant.ui.screens
 
+import android.graphics.Bitmap
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,9 +17,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -18,30 +27,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aura.assistant.ai.AuraLiveState
+import com.aura.assistant.ui.components.CosmicEnergyOrb
 import com.aura.assistant.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import kotlin.math.*
 
 /**
- * AURA Full-Screen Voice Mode.
+ * Gemini Live Voice Mode Screen.
  *
- * Features a fluid, organic glowing orb — exactly matching the design mockup:
- * - White glowing core at center
- * - Cyan fluid wisps swirling outward
- * - Violet soft glow rim
- * - Amplitude-reactive pulsing
- * - State-color shifts: Listening → Cyan, Thinking → Purple, Speaking → White/Cyan
+ * Implements the authentic Gemini Live experience (Image 1):
+ * - Ambient light bloom radiating from the bottom and edges (Deep Blue & Electric Cyan)
+ * - 4-point Gemini star header with Google color gradient
+ * - Personalized greeting: "Hi Ansh, what's on your mind?"
+ * - Center Cosmic Energy Orb (Image 2) with 3D glass sphere, cyan plasma wisps, and laser flare
+ * - Floating bottom pill bar with 100% working controls (Camera, Screen Share, Equalizer, Mute, Close)
  */
 @Composable
 fun ChatGPTVoiceScreen(
@@ -51,118 +64,138 @@ fun ChatGPTVoiceScreen(
     onCloseVoiceMode: () -> Unit,
     onToggleMute: (Boolean) -> Unit = {},
     onStartListening: () -> Unit = {},
+    onSendCameraImage: (ByteArray) -> Unit = {},
+    onSendScreenCapture: () -> Unit = {},
+    userName: String = "Ansh",
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var isMuted by remember { mutableStateOf(false) }
-    var isSpeakerOn by remember { mutableStateOf(true) }
+    var feedbackMessage by remember { mutableStateOf<String?>(null) }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "OrbAnim")
+    // Transient feedback auto-dismiss
+    LaunchedEffect(feedbackMessage) {
+        if (feedbackMessage != null) {
+            delay(2800L)
+            feedbackMessage = null
+        }
+    }
 
-    // Slow organic breathing — sphere "inhales and exhales"
-    val breathScale by infiniteTransition.animateFloat(
-        initialValue = 0.92f, targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "Breath"
-    )
-
-    // Main fluid warp rotation (slow, calm)
-    val rotation1 by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(10000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ), label = "Rot1"
-    )
-
-    // Counter-rotation for second layer of wisps (creates fluid figure-8 effect)
-    val rotation2 by infiniteTransition.animateFloat(
-        initialValue = 360f, targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(15000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ), label = "Rot2"
-    )
-
-    // Outer glow pulse
-    val outerGlowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.5f, targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "GlowPulse"
-    )
-
-    // Amplitude-reactive orb boost — spring-damped so it doesn't jitter
-    val boostDp by animateDpAsState(
-        targetValue = (amplitude.coerceIn(0f, 1f) * 48).dp,
-        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow),
-        label = "AmpBoost"
-    )
-
-    // State-dependent colors
-    val (coreInner, coreOuter, wispColor, glowColor) = when (liveState) {
-        AuraLiveState.SPEAKING -> listOf(
-            Color.White,
-            Color(0xFF80DEEA),
-            Color(0xFF00E5FF),
-            Color(0xFF00E5FF).copy(alpha = 0.25f)
-        )
-        AuraLiveState.THINKING -> listOf(
-            Color(0xFFD1C4E9),
-            Color(0xFF9C27B0),
-            Color(0xFF7C4DFF),
-            Color(0xFF7C4DFF).copy(alpha = 0.25f)
-        )
-        AuraLiveState.ERROR -> listOf(
-            Color(0xFFFFCDD2),
-            Color(0xFFE53935),
-            Color(0xFFFF5252),
-            Color(0xFFFF1744).copy(alpha = 0.2f)
-        )
-        else -> listOf( // Idle / Listening
-            Color.White,
-            Color(0xFF80CBC4),
-            Color(0xFF00E5FF),
-            Color(0xFF00BCD4).copy(alpha = 0.22f)
-        )
+    // Camera capture launcher
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        if (bitmap != null) {
+            coroutineScope.launch {
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                val bytes = stream.toByteArray()
+                bitmap.recycle()
+                if (bytes.isNotEmpty()) {
+                    feedbackMessage = "Photo sent to Aura"
+                    onSendCameraImage(bytes)
+                }
+            }
+        }
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF050505)) // Near-pure black
+            .background(Color(0xFF030712)) // Dark midnight background
     ) {
-        // ── Header ──────────────────────────────────────────────────────────
+        // ── 1. Radiant Ambient Bottom & Edge Lighting Mesh (Gemini signature) ──
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+
+            // Bottom large radiant blue/cyan bloom
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF0284C7).copy(alpha = 0.35f), // Electric Cyan-Blue
+                        Color(0xFF0369A1).copy(alpha = 0.20f),
+                        Color(0xFF1E1B4B).copy(alpha = 0.15f), // Indigo base
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.5f, h * 0.98f),
+                    radius = w * 0.95f
+                ),
+                radius = w * 0.95f,
+                center = Offset(w * 0.5f, h * 0.98f)
+            )
+
+            // Bottom right accent glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF4F46E5).copy(alpha = 0.22f), // Violet glow
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.85f, h * 0.88f),
+                    radius = w * 0.6f
+                ),
+                radius = w * 0.6f,
+                center = Offset(w * 0.85f, h * 0.88f)
+            )
+
+            // Bottom left accent glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF00E5FF).copy(alpha = 0.18f), // Cyan glow
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.15f, h * 0.88f),
+                    radius = w * 0.6f
+                ),
+                radius = w * 0.6f,
+                center = Offset(w * 0.15f, h * 0.88f)
+            )
+        }
+
+        // ── 2. Top Header (Gemini 4-Point Star + Greeting) ──────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(top = 52.dp),
+                .padding(top = 54.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Sparkling 4-point Gemini star
+            GeminiFourPointStar(
+                modifier = Modifier.size(36.dp),
+                pulseScale = if (liveState == AuraLiveState.THINKING) 1.2f else 1.0f
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Greeting matching Image 1
             Text(
-                text = "AURA",
-                style = AuraTypography.titleMedium.copy(
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 6.sp
+                text = "Hi $userName, what's on your mind?",
+                style = AuraTypography.titleLarge.copy(
+                    color = Color.White.copy(alpha = 0.94f),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.2.sp,
+                    textAlign = TextAlign.Center
                 )
             )
+
             Spacer(modifier = Modifier.height(4.dp))
+
             Text(
                 text = "Voice Mode  •  Gemini Live",
-                style = AuraTypography.bodyMedium.copy(
-                    color = Color.White.copy(alpha = 0.4f),
+                style = AuraTypography.bodySmall.copy(
+                    color = Color.White.copy(alpha = 0.40f),
                     fontSize = 11.sp,
                     letterSpacing = 1.sp
                 )
             )
         }
 
-        // ── Fluid Orb (center) ──────────────────────────────────────────────
+        // ── 3. Center Stage (Cosmic Energy Orb + Live Transcript) ───────────────
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -170,263 +203,192 @@ fun ChatGPTVoiceScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // The orb Canvas — 280dp container, orb fills ~65% of it
-            Box(
-                modifier = Modifier.size(280.dp),
-                contentAlignment = Alignment.Center
+            // Cosmic Energy Orb (Image 2)
+            CosmicEnergyOrb(
+                liveState = liveState,
+                amplitude = amplitude,
+                isMuted = isMuted,
+                orbSize = 280.dp
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Status label with live state dot
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val center = Offset(size.width / 2f, size.height / 2f)
-                    val baseR = size.minDimension * 0.32f
-                    // Amplitude boost: 0..1 scale maps to 1.0..1.5x scale
-                    val ampScale = 1f + (amplitude.coerceIn(0f, 1f) * 0.45f)
-                    val radius = baseR * breathScale * ampScale
-                    val boosted = radius
+                val dotColor = when {
+                    isMuted -> Color(0xFFFF5252)
+                    liveState == AuraLiveState.THINKING -> Color(0xFFA855F7)
+                    liveState == AuraLiveState.SPEAKING -> Color(0xFF38BDF8)
+                    liveState == AuraLiveState.LISTENING -> Color(0xFF00E5FF)
+                    liveState == AuraLiveState.ERROR -> Color(0xFFFF1744)
+                    else -> Color(0xFF94A3B8)
+                }
 
-                    // Color palette according to live state
-                    val (wispColor, coreInner, coreOuter) = when {
-                        isMuted -> Triple(
-                            Color(0xFFFF5252),
-                            Color(0xFFFF8A80),
-                            Color(0xFFD32F2F)
-                        )
-                        liveState == AuraLiveState.LISTENING -> Triple(
-                            Color(0xFF38BDF8), // Vibrant Sky Blue
-                            Color(0xFFBAE6FD), // Light cyan
-                            Color(0xFF0284C7)  // Deep cyan
-                        )
-                        liveState == AuraLiveState.THINKING -> Triple(
-                            Color(0xFFA855F7), // Purple/Violet
-                            Color(0xFFE9D5FF), // Soft lavender
-                            Color(0xFF7E22CE)  // Deep violet
-                        )
-                        liveState == AuraLiveState.SPEAKING -> Triple(
-                            Color(0xFF67E8F9), // Aqua cyan
-                            Color(0xFFFFFFFF), // Pure white
-                            Color(0xFF06B6D4)  // Cyan
-                        )
-                        else -> Triple(
-                            Color(0xFF38BDF8).copy(alpha = 0.5f),
-                            Color(0xFFE0F2FE),
-                            Color(0xFF0369A1)
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                )
 
-                    // ── Layer 0: Deep background ambient glow ──────────────
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                wispColor.copy(alpha = 0.35f),
-                                wispColor.copy(alpha = 0.12f),
-                                Color.Transparent
-                            ),
-                            center = center,
-                            radius = boosted * 1.7f
-                        ),
-                        radius = boosted * 1.7f,
-                        center = center
+                val statusText = when {
+                    isMuted -> "Microphone muted"
+                    liveState == AuraLiveState.CONNECTING -> "Connecting to Gemini Live..."
+                    liveState == AuraLiveState.LISTENING -> "Listening..."
+                    liveState == AuraLiveState.THINKING -> "Thinking..."
+                    liveState == AuraLiveState.SPEAKING -> "Speaking..."
+                    liveState == AuraLiveState.ERROR -> "Connection issue • Tap to reconnect"
+                    liveState == AuraLiveState.IDLE -> "Ready • Tap to speak"
+                    else -> "Listening..."
+                }
+
+                Text(
+                    text = statusText,
+                    style = AuraTypography.titleMedium.copy(
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Normal
                     )
+                )
+            }
 
-                    // ── Layer 1: Clockwise outer fluid wisps ────────────────
-                    rotate(rotation1, center) {
-                        drawFluidWisps(
-                            center = center,
-                            radius = boosted * 1.15f,
-                            wispColor = wispColor.copy(alpha = 0.45f),
-                            count = 6,
-                            wispWidth = 3.5f
-                        )
-                    }
-
-                    // ── Layer 2: Counter-rotating inner wisps ──────────────
-                    rotate(rotation2, center) {
-                        drawFluidWisps(
-                            center = center,
-                            radius = boosted * 0.88f,
-                            wispColor = wispColor.copy(alpha = 0.25f),
-                            count = 4,
-                            wispWidth = 2.0f
-                        )
-                    }
-
-                    // ── Layer 3: Mid glow ring (torus effect) ──────────────
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                wispColor.copy(alpha = 0.18f),
-                                Color.Transparent
-                            ),
-                            center = center,
-                            radius = boosted * 1.05f
+            // Spoken transcript display
+            if (liveTranscript.isNotBlank()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Surface(
+                    color = Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                ) {
+                    Text(
+                        text = liveTranscript,
+                        style = AuraTypography.bodyMedium.copy(
+                            color = Color.White.copy(alpha = 0.70f),
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 20.sp
                         ),
-                        radius = boosted * 1.05f,
-                        center = center,
-                        style = Stroke(width = (boosted * 0.18f))
-                    )
-
-                    // ── Layer 4: Core glowing sphere ────────────────────────
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.98f),    // Bright white center
-                                coreInner.copy(alpha = 0.85f),      // Light inner color
-                                coreOuter.copy(alpha = 0.7f),       // Transition to wisp color
-                                wispColor.copy(alpha = 0.3f),       // Soft edge blend
-                            ),
-                            center = Offset(
-                                center.x - boosted * 0.12f,
-                                center.y - boosted * 0.12f
-                            ),
-                            radius = boosted
-                        ),
-                        radius = boosted,
-                        center = center
-                    )
-
-                    // ── Layer 5: Specular highlight (top-left glossy spot) ──
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.65f),
-                                Color.Transparent
-                            ),
-                            center = Offset(center.x - boosted * 0.3f, center.y - boosted * 0.3f),
-                            radius = boosted * 0.35f
-                        ),
-                        radius = boosted * 0.35f,
-                        center = Offset(center.x - boosted * 0.3f, center.y - boosted * 0.3f)
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
                     )
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(36.dp))
-
-            // Status Text
-            val statusText = when {
-                isMuted -> "Microphone muted • Tap to unmute"
-                liveState == AuraLiveState.CONNECTING -> "Connecting..."
-                liveState == AuraLiveState.LISTENING -> "Listening..."
-                liveState == AuraLiveState.THINKING -> "Thinking..."
-                liveState == AuraLiveState.SPEAKING -> "Speaking"
-                liveState == AuraLiveState.ERROR -> "Connection lost • Tap to reconnect"
-                liveState == AuraLiveState.IDLE -> "Ready • Tap to speak"
-                else -> "Listening..."
-            }
-
-            Text(
-                text = statusText,
-                style = AuraTypography.titleMedium.copy(
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Light,
-                    letterSpacing = 0.5.sp
-                )
-            )
-
-            // Transcript
-            if (liveTranscript.isNotBlank()) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = liveTranscript,
-                    style = AuraTypography.bodyMedium.copy(
-                        color = Color.White.copy(alpha = 0.55f),
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 22.sp
-                    ),
-                    modifier = Modifier.padding(horizontal = 32.dp)
-                )
+        // ── 4. Transient Feedback Pill ──────────────────────────────────────────
+        AnimatedVisibility(
+            visible = feedbackMessage != null,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp)
+        ) {
+            Surface(
+                color = Color(0xFF1E293B).copy(alpha = 0.95f),
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF00E5FF),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = feedbackMessage ?: "",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
 
-        // ── Bottom Controls ──────────────────────────────────────────────────
+        // ── 5. Bottom Floating Controls Bar (Image 1 Phone Mockup) ──────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 58.dp),
+                .padding(bottom = 44.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
-                color = Color(0xFF111111).copy(alpha = 0.9f),
-                shape = RoundedCornerShape(40.dp),
+                color = Color(0xFF0B0F19).copy(alpha = 0.92f),
+                shape = RoundedCornerShape(42.dp),
                 border = androidx.compose.foundation.BorderStroke(
-                    1.dp, Color.White.copy(alpha = 0.1f)
+                    1.dp, Color.White.copy(alpha = 0.12f)
                 ),
-                modifier = Modifier.padding(horizontal = 24.dp)
+                shadowElevation = 16.dp
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Mute / Speak Button
-                    val isDisconnected = liveState == AuraLiveState.IDLE || liveState == AuraLiveState.ERROR
-                    val micLabel = when {
-                        isMuted -> "Unmute"
-                        isDisconnected -> "Speak"
-                        else -> "Mute"
-                    }
-                    val micIcon = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic
-
-                    VoiceControlButton(
-                        icon = micIcon,
-                        label = micLabel,
-                        isActive = isMuted,
-                        activeColor = Color(0xFFFF5252),
+                    // 1. Camera Button (Live capture frame to send to Gemini Live)
+                    GeminiLiveCircleButton(
+                        icon = Icons.Default.CameraAlt,
+                        contentDescription = "Share Camera Frame",
+                        isActive = false,
                         onClick = {
-                            if (isMuted) {
-                                isMuted = false
-                                onToggleMute(false)
-                            } else if (isDisconnected) {
-                                onStartListening()
-                            } else {
-                                isMuted = true
-                                onToggleMute(true)
+                            try {
+                                cameraLauncher.launch(null)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Camera unavailable", Toast.LENGTH_SHORT).show()
                             }
                         }
                     )
 
-                    // Center Action Button (large white button)
-                    Box(
-                        modifier = Modifier
-                            .size(60.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .clickable {
-                                if (isDisconnected) {
-                                    if (isMuted) {
-                                        isMuted = false
-                                        onToggleMute(false)
-                                    }
-                                    onStartListening()
-                                } else {
-                                    isSpeakerOn = !isSpeakerOn
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isDisconnected) {
-                                Icons.Default.Mic
-                            } else if (isSpeakerOn) {
-                                Icons.Default.VolumeUp
-                            } else {
-                                Icons.Default.VolumeOff
-                            },
-                            contentDescription = if (isDisconnected) "Start Voice" else "Speaker",
-                            tint = Color.Black,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-
-                    // End Call Button
-                    VoiceControlButton(
-                        icon = Icons.Default.Close,
-                        label = "End",
+                    // 2. Screen Share Button (Instant screen capture to Gemini Live)
+                    GeminiLiveCircleButton(
+                        icon = Icons.AutoMirrored.Filled.ScreenShare,
+                        contentDescription = "Share Screen",
                         isActive = false,
-                        activeColor = Color.White,
+                        onClick = {
+                            feedbackMessage = "Screen captured & shared with Aura"
+                            onSendScreenCapture()
+                        }
+                    )
+
+                    // 3. Live Equalizer Capsule Pill (Center visualizer)
+                    GeminiLiveEqualizerPill(
+                        amplitude = amplitude,
+                        liveState = liveState,
+                        isMuted = isMuted
+                    )
+
+                    // 4. Microphone Mute / Unmute Button
+                    val isDisconnected = liveState == AuraLiveState.IDLE || liveState == AuraLiveState.ERROR
+                    GeminiLiveCircleButton(
+                        icon = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                        contentDescription = if (isMuted) "Unmute" else "Mute",
+                        isActive = isMuted,
+                        activeColor = Color(0xFFFF5252),
+                        onClick = {
+                            if (isDisconnected) {
+                                onStartListening()
+                            } else {
+                                val nextMuted = !isMuted
+                                isMuted = nextMuted
+                                onToggleMute(nextMuted)
+                                feedbackMessage = if (nextMuted) "Microphone muted" else "Microphone unmuted"
+                            }
+                        }
+                    )
+
+                    // 5. Close / Exit Button
+                    GeminiLiveCircleButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = "End Live Session",
+                        isActive = false,
                         onClick = onCloseVoiceMode
                     )
                 }
@@ -435,78 +397,178 @@ fun ChatGPTVoiceScreen(
     }
 }
 
-// ── Fluid Wisps Draw Helper ───────────────────────────────────────────────────
-// Draws N organic arc wisps around a center point.
-// Each wisp is a curved arc that mimics a fluid tendril.
-private fun DrawScope.drawFluidWisps(
-    center: Offset,
-    radius: Float,
-    wispColor: Color,
-    count: Int,
-    wispWidth: Float
+/**
+ * Authentic 4-Point Gemini Star Icon with Google brand gradient.
+ */
+@Composable
+private fun GeminiFourPointStar(
+    modifier: Modifier = Modifier,
+    pulseScale: Float = 1.0f
 ) {
-    val angleStep = 360f / count
-    for (i in 0 until count) {
-        val startAngle = i * angleStep
-        val sweepAngle = 65f + (i % 2) * 15f  // Slightly varied arc length for organic feel
-        val wispPath = Path().apply {
-            val startRad = Math.toRadians(startAngle.toDouble())
-            val startX = center.x + cos(startRad).toFloat() * radius * 0.5f
-            val startY = center.y + sin(startRad).toFloat() * radius * 0.5f
-            moveTo(startX, startY)
+    val infiniteTransition = rememberInfiniteTransition(label = "StarGlow")
+    val starRot by infiniteTransition.animateFloat(
+        initialValue = -8f, targetValue = 8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ), label = "StarRot"
+    )
 
-            val midRad = Math.toRadians((startAngle + sweepAngle / 2.0))
-            val ctrlX = center.x + cos(midRad).toFloat() * radius * 1.1f
-            val ctrlY = center.y + sin(midRad).toFloat() * radius * 1.1f
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        val r = (min(w, h) / 2f) * pulseScale
 
-            val endRad = Math.toRadians((startAngle + sweepAngle).toDouble())
-            val endX = center.x + cos(endRad).toFloat() * radius * 0.75f
-            val endY = center.y + sin(endRad).toFloat() * radius * 0.75f
+        rotate(starRot, Offset(cx, cy)) {
+            // Astroid / 4-point cusp path
+            val starPath = Path().apply {
+                moveTo(cx, cy - r) // Top tip
+                quadraticTo(cx, cy, cx + r, cy) // Right tip
+                quadraticTo(cx, cy, cx, cy + r) // Bottom tip
+                quadraticTo(cx, cy, cx - r, cy) // Left tip
+                quadraticTo(cx, cy, cx, cy - r) // Back to top
+                close()
+            }
 
-            quadraticBezierTo(ctrlX, ctrlY, endX, endY)
+            // Google 4-color gradient (Blue, Red/Purple, Yellow, Green/Cyan)
+            val starBrush = Brush.linearGradient(
+                colors = listOf(
+                    Color(0xFF4285F4), // Google Blue
+                    Color(0xFFEA4335), // Google Red
+                    Color(0xFFFBBC05), // Google Yellow
+                    Color(0xFF34A853)  // Google Green
+                ),
+                start = Offset(cx - r, cy - r),
+                end = Offset(cx + r, cy + r)
+            )
+
+            // Outer soft glow
+            drawPath(
+                path = starPath,
+                brush = Brush.radialGradient(
+                    colors = listOf(Color(0xFF00E5FF).copy(alpha = 0.4f), Color.Transparent),
+                    center = Offset(cx, cy),
+                    radius = r * 1.5f
+                )
+            )
+
+            // Star fill
+            drawPath(
+                path = starPath,
+                brush = starBrush
+            )
         }
-        drawPath(
-            path = wispPath,
-            color = wispColor,
-            style = Stroke(width = wispWidth.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        )
     }
 }
 
-// ── Voice Control Button ──────────────────────────────────────────────────────
+/**
+ * 5-Bar Dynamic Equalizer Pill inside the center of the control bar.
+ */
 @Composable
-private fun VoiceControlButton(
+private fun GeminiLiveEqualizerPill(
+    amplitude: Float,
+    liveState: AuraLiveState,
+    isMuted: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "EqualizerAnim")
+
+    val phase0 by infiniteTransition.animateFloat(
+        initialValue = 0.2f, targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(tween(420, easing = LinearEasing), RepeatMode.Reverse),
+        label = "Eq0"
+    )
+    val phase1 by infiniteTransition.animateFloat(
+        initialValue = 0.4f, targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(tween(310, easing = LinearEasing), RepeatMode.Reverse),
+        label = "Eq1"
+    )
+    val phase2 by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(480, easing = LinearEasing), RepeatMode.Reverse),
+        label = "Eq2"
+    )
+    val phase3 by infiniteTransition.animateFloat(
+        initialValue = 0.5f, targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(tween(360, easing = LinearEasing), RepeatMode.Reverse),
+        label = "Eq3"
+    )
+    val phase4 by infiniteTransition.animateFloat(
+        initialValue = 0.2f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(tween(440, easing = LinearEasing), RepeatMode.Reverse),
+        label = "Eq4"
+    )
+
+    val phases = listOf(phase0, phase1, phase2, phase3, phase4)
+
+    Box(
+        modifier = modifier
+            .size(width = 72.dp, height = 48.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xFF030712))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val totalBars = 5
+            val barWidth = 3.5.dp.toPx()
+            val spacing = (size.width - (totalBars * barWidth)) / (totalBars - 1)
+            val maxHeight = size.height * 0.85f
+            val baseAmp = if (isMuted) 0.05f else amplitude.coerceIn(0.08f, 1.0f)
+            val isIdle = liveState == AuraLiveState.IDLE || liveState == AuraLiveState.ERROR
+
+            for (i in 0 until totalBars) {
+                val x = i * (barWidth + spacing)
+                val animatedHeightFactor = if (isIdle || isMuted) 0.15f else phases[i] * baseAmp
+                val barH = (maxHeight * animatedHeightFactor).coerceAtLeast(3.dp.toPx())
+                val y = (size.height - barH) / 2f
+
+                val barColor = when {
+                    isMuted -> Color(0xFFFF5252).copy(alpha = 0.4f)
+                    liveState == AuraLiveState.THINKING -> Color(0xFFA855F7)
+                    liveState == AuraLiveState.SPEAKING -> Color(0xFF38BDF8)
+                    else -> Color(0xFF00E5FF)
+                }
+
+                drawRoundRect(
+                    color = barColor,
+                    topLeft = Offset(x, y),
+                    size = Size(barWidth, barH),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Standard circle action button in the Gemini Live bottom bar.
+ */
+@Composable
+private fun GeminiLiveCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
+    contentDescription: String,
     isActive: Boolean,
-    activeColor: Color,
+    activeColor: Color = Color(0xFF00E5FF),
     onClick: () -> Unit
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .clip(CircleShape)
+            .background(
+                if (isActive) activeColor.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(if (isActive) activeColor.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f))
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = if (isActive) activeColor else Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(22.dp)
-            )
-        }
-        Text(
-            text = label,
-            style = AuraTypography.bodyMedium.copy(
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 10.sp
-            )
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (isActive) activeColor else Color.White.copy(alpha = 0.88f),
+            modifier = Modifier.size(22.dp)
         )
     }
 }

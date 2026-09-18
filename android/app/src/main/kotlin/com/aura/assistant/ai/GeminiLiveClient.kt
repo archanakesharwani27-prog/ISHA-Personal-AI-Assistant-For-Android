@@ -25,6 +25,12 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.sqrt
 
+data class LiveVoiceTurn(
+    val userText: String,
+    val assistantText: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 enum class AuraLiveState {
     IDLE,
     CONNECTING,
@@ -89,10 +95,11 @@ class GeminiLiveClient(private val context: Context) {
     private val _amplitudeFlow = MutableStateFlow(0.0f)
     val amplitudeFlow: StateFlow<Float> = _amplitudeFlow
 
-    private val _turnCompletedFlow = MutableSharedFlow<String>(extraBufferCapacity = 10)
-    val turnCompletedFlow: SharedFlow<String> = _turnCompletedFlow.asSharedFlow()
+    private val _turnCompletedFlow = MutableSharedFlow<LiveVoiceTurn>(extraBufferCapacity = 10)
+    val turnCompletedFlow: SharedFlow<LiveVoiceTurn> = _turnCompletedFlow.asSharedFlow()
 
-    private val currentTurnTextAccumulator = StringBuilder()
+    private val currentUserTurnAccumulator = StringBuilder()
+    private val currentAssistantTurnAccumulator = StringBuilder()
 
     private val vadDetector = AuraVadDetector()
     private var micJob: Job? = null
@@ -327,8 +334,9 @@ class GeminiLiveClient(private val context: Context) {
                 }
 
                 record.startRecording()
-                val shortBuf = ShortArray(512)
-                val byteBuf = ByteArray(1024)
+                // Buffer to 1600 samples (100ms @ 16kHz) for smooth streaming without WebSocket queue congestion
+                val shortBuf = ShortArray(1600)
+                val byteBuf = ByteArray(3200)
 
                 while (isActive && isMicRecordingActive && webSocket != null) {
                     val readShorts = record.read(shortBuf, 0, shortBuf.size)
@@ -395,6 +403,7 @@ class GeminiLiveClient(private val context: Context) {
      */
     fun sendTextMessage(text: String) {
         if (text.isBlank()) return
+        currentUserTurnAccumulator.append(text).append(" ")
         if (_liveState.value == AuraLiveState.LISTENING || _liveState.value == AuraLiveState.CONNECTED) {
             sendTextMessageInternal(text)
         } else {
@@ -425,6 +434,30 @@ class GeminiLiveClient(private val context: Context) {
             add("clientContent", clientContent)
         }
         webSocket?.send(inputObj.toString())
+    }
+
+    /**
+     * Streams real-time camera or screen capture JPEG frames to Gemini Live.
+     */
+    fun sendImageChunk(jpegBytes: ByteArray) {
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+
+        val base64Data = Base64.encodeToString(jpegBytes, 0, jpegBytes.size, Base64.NO_WRAP)
+        val inputObj = JsonObject().apply {
+            val realtime = JsonObject().apply {
+                val chunks = JsonArray().apply {
+                    val chunk = JsonObject().apply {
+                        addProperty("mimeType", "image/jpeg")
+                        addProperty("data", base64Data)
+                    }
+                    add(chunk)
+                }
+                add("mediaChunks", chunks)
+            }
+            add("realtimeInput", realtime)
+        }
+        webSocket?.send(inputObj.toString())
+        Log.i(TAG, "Sent real-time image frame (${jpegBytes.size} bytes) to Gemini Live")
     }
 
     /**
@@ -475,6 +508,18 @@ class GeminiLiveClient(private val context: Context) {
                 if (serverContent.has("interrupted") && serverContent.get("interrupted").asBoolean) {
                     Log.i(TAG, "Server acknowledged user interruption")
                     flushAudioPlayback()
+                    val partialUser = currentUserTurnAccumulator.toString().trim()
+                    val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
+                    if (partialUser.isNotBlank() || partialAssistant.isNotBlank()) {
+                        _turnCompletedFlow.tryEmit(
+                            LiveVoiceTurn(
+                                userText = if (partialUser.isNotBlank()) partialUser else "Spoken query",
+                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant..." else ""
+                            )
+                        )
+                        currentUserTurnAccumulator.clear()
+                        currentAssistantTurnAccumulator.clear()
+                    }
                     _liveState.value = AuraLiveState.LISTENING
                     return
                 }
@@ -485,6 +530,7 @@ class GeminiLiveClient(private val context: Context) {
                     val tx = inTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
                         _transcriptFlow.value = tx
+                        currentUserTurnAccumulator.append(tx).append(" ")
                         if (_liveState.value != AuraLiveState.SPEAKING) {
                             _liveState.value = AuraLiveState.THINKING
                         }
@@ -496,7 +542,7 @@ class GeminiLiveClient(private val context: Context) {
                     val tx = outTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
                         _transcriptFlow.value = tx
-                        currentTurnTextAccumulator.append(tx).append(" ")
+                        currentAssistantTurnAccumulator.append(tx).append(" ")
                     }
                 }
 
@@ -523,11 +569,18 @@ class GeminiLiveClient(private val context: Context) {
 
                 if (serverContent.has("turnComplete") &&
                     serverContent.get("turnComplete").asBoolean) {
-                    val fullTurn = currentTurnTextAccumulator.toString().trim()
-                    if (fullTurn.isNotBlank()) {
-                        _turnCompletedFlow.tryEmit(fullTurn)
+                    val userTurn = currentUserTurnAccumulator.toString().trim()
+                    val assistantTurn = currentAssistantTurnAccumulator.toString().trim()
+                    if (userTurn.isNotBlank() || assistantTurn.isNotBlank()) {
+                        _turnCompletedFlow.tryEmit(
+                            LiveVoiceTurn(
+                                userText = if (userTurn.isNotBlank()) userTurn else "Spoken query",
+                                assistantText = assistantTurn
+                            )
+                        )
                     }
-                    currentTurnTextAccumulator.clear()
+                    currentUserTurnAccumulator.clear()
+                    currentAssistantTurnAccumulator.clear()
                     _liveState.value = AuraLiveState.LISTENING
                 }
             }

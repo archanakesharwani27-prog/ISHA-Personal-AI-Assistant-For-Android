@@ -172,41 +172,75 @@ fun AuraMainScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                        // ── Ambient Glow Canvas ──────────────────────────────
+                        // ── Signature Gemini Ambient Light Mesh Canvas ───────────────────
                         .drawBehind {
-                            // Base background
+                            // Base deep background
                             drawRect(ChatGptBackground)
 
-                            // Touch-reactive glow orb
-                            val cx = animGlowX * size.width
-                            val cy = animGlowY * size.height
+                            val w = size.width
+                            val h = size.height
+
+                            // 1. Top subtle ambient glow (Indigo/Violet)
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        ChatGptAccentCyan.copy(alpha = 0.07f),
-                                        AuraCyberPurple.copy(alpha = 0.04f),
+                                        Color(0xFF4F46E5).copy(alpha = 0.09f),
+                                        Color(0xFF7C3AED).copy(alpha = 0.04f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(w * 0.5f, h * 0.05f),
+                                    radius = w * 0.85f
+                                ),
+                                radius = w * 0.85f,
+                                center = Offset(w * 0.5f, h * 0.05f)
+                            )
+
+                            // 2. Bottom radiant ambient bloom (Electric Cyan & Sky Blue)
+                            val bottomGlowAlpha = if (isGenerating) 0.18f else 0.10f
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFF0284C7).copy(alpha = bottomGlowAlpha),
+                                        Color(0xFF00E5FF).copy(alpha = bottomGlowAlpha * 0.6f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(w * 0.5f, h * 0.95f),
+                                    radius = w * 0.95f
+                                ),
+                                radius = w * 0.95f,
+                                center = Offset(w * 0.5f, h * 0.95f)
+                            )
+
+                            // 3. Touch-reactive glow orb
+                            val cx = animGlowX * w
+                            val cy = animGlowY * h
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        ChatGptAccentCyan.copy(alpha = 0.08f),
+                                        AuraCyberPurple.copy(alpha = 0.05f),
                                         Color.Transparent
                                     ),
                                     center = Offset(cx, cy),
-                                    radius = size.minDimension * 0.7f
+                                    radius = size.minDimension * 0.65f
                                 ),
-                                radius = size.minDimension * 0.7f,
+                                radius = size.minDimension * 0.65f,
                                 center = Offset(cx, cy)
                             )
 
-                            // Idle secondary glow (drifts independently)
-                            val ix = idleX * size.width
-                            val iy = idleY * size.height
+                            // 4. Idle secondary ambient drift
+                            val ix = idleX * w
+                            val iy = idleY * h
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        AuraCyberPurple.copy(alpha = 0.04f),
+                                        AuraCyberPurple.copy(alpha = 0.05f),
                                         Color.Transparent
                                     ),
                                     center = Offset(ix, iy),
-                                    radius = size.minDimension * 0.5f
+                                    radius = size.minDimension * 0.45f
                                 ),
-                                radius = size.minDimension * 0.5f,
+                                radius = size.minDimension * 0.45f,
                                 center = Offset(ix, iy)
                             )
                         }
@@ -258,7 +292,14 @@ fun AuraMainScreen(
                     liveTranscript = liveTranscript,
                     onCloseVoiceMode = { viewModel.stopVoiceMode() },
                     onToggleMute = { muted -> viewModel.setVoiceMuted(muted) },
-                    onStartListening = { viewModel.startVoiceMode() }
+                    onStartListening = { viewModel.startVoiceMode() },
+                    onSendCameraImage = { bytes ->
+                        viewModel.sendImageToLive(bytes, "Analyze what is in this camera frame")
+                    },
+                    onSendScreenCapture = {
+                        viewModel.captureAndSendScreenToLive()
+                    },
+                    userName = "Ansh"
                 )
             }
 

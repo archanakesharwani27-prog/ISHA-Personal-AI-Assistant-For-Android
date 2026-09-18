@@ -623,17 +623,17 @@ object AuraDynamicIsland {
                     newPrompt = command,
                     callback = object : com.aura.assistant.ai.ChatStreamCallback {
                         val responseBuf = StringBuilder()
-                        override fun onToken(token: String) {
-                            responseBuf.append(token)
+                        override fun onToken(chunk: String) {
+                            responseBuf.append(chunk)
                         }
                         override fun onToolExecution(toolName: String, args: String, result: String) {
                             handler.post {
                                 stateText?.text = "$toolName ✓"
                             }
                         }
-                        override fun onComplete(fullResponse: String) {
+                        override fun onComplete(fullText: String) {
                             handler.post {
-                                val shortResp = fullResponse.lines().firstOrNull { it.isNotBlank() } ?: "Done ✓"
+                                val shortResp = fullText.lines().firstOrNull { it.isNotBlank() } ?: "Done ✓"
                                 val display = if (shortResp.length > 28) shortResp.take(25) + "..." else shortResp
                                 stateText?.text = display
                                 updateBackgroundColor("Speaking")
@@ -642,7 +642,7 @@ object AuraDynamicIsland {
                                 handler.postDelayed({ hide() }, 2500L)
                             }
                         }
-                        override fun onError(error: String) {
+                        override fun onError(errorMessage: String) {
                             handler.post {
                                 stateText?.text = "Done ✓"
                                 updateBackgroundColor("Idle")

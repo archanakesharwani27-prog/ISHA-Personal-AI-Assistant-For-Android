@@ -98,18 +98,40 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         // Sync completed Gemini Live turns into current chat session
         viewModelScope.launch {
-            liveClient.turnCompletedFlow.collect { turnText ->
-                if (turnText.isNotBlank()) {
-                    val currentSessionId = _activeSessionId.value
-                    if (currentSessionId.isNotBlank()) {
-                        val assistantMsg = ChatMessage(
-                            sessionId = currentSessionId,
-                            role = MessageRole.ASSISTANT,
-                            text = turnText
+            liveClient.turnCompletedFlow.collect { turn ->
+                val currentSessionId = _activeSessionId.value
+                if (currentSessionId.isNotBlank()) {
+                    val newMsgs = mutableListOf<ChatMessage>()
+                    if (turn.userText.isNotBlank()) {
+                        newMsgs.add(
+                            ChatMessage(
+                                sessionId = currentSessionId,
+                                role = MessageRole.USER,
+                                text = turn.userText
+                            )
                         )
-                        val updated = _chatMessages.value.toMutableList().apply { add(assistantMsg) }
+                    }
+                    if (turn.assistantText.isNotBlank()) {
+                        newMsgs.add(
+                            ChatMessage(
+                                sessionId = currentSessionId,
+                                role = MessageRole.ASSISTANT,
+                                text = turn.assistantText
+                            )
+                        )
+                    }
+                    if (newMsgs.isNotEmpty()) {
+                        val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
                         _chatMessages.value = updated
                         repository.saveMessages(currentSessionId, updated)
+
+                        // If it's "New Chat", auto-title with the user prompt
+                        val session = _sessions.value.find { it.id == currentSessionId }
+                        if (session != null && session.title == "New Chat" && turn.userText.isNotBlank()) {
+                            val autoTitle = if (turn.userText.length > 28) turn.userText.take(25) + "..." else turn.userText
+                            repository.renameSession(currentSessionId, autoTitle)
+                            _sessions.value = repository.getAllSessions()
+                        }
                     }
                 }
             }
@@ -385,6 +407,37 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun setVoiceMuted(muted: Boolean) {
         liveClient.setMuted(muted)
+    }
+
+    fun sendImageToLive(jpegBytes: ByteArray, prompt: String = "") {
+        liveClient.sendImageChunk(jpegBytes)
+        if (prompt.isNotBlank()) {
+            liveClient.sendTextMessage(prompt)
+        }
+    }
+
+    fun captureAndSendScreenToLive(onResult: (Boolean) -> Unit = {}) {
+        val a11y = com.aura.assistant.AuraAccessibilityService.instance
+        if (a11y != null) {
+            a11y.takeScreenCapture { bytes: ByteArray? ->
+                if (bytes != null) {
+                    liveClient.sendImageChunk(bytes)
+                    liveClient.sendTextMessage("Here is a screenshot of what is currently on my screen. Please analyze it and help me.")
+                    onResult(true)
+                } else {
+                    val screenText = a11y.getScreenTextHierarchy()
+                    liveClient.sendTextMessage("Here is the textual content on my current screen:\n$screenText\nPlease help me with this screen.")
+                    onResult(true)
+                }
+            }
+        } else {
+            liveClient.sendTextMessage("I attempted to share my screen, but Aura's Accessibility Service is currently not active. Please remind me to enable it in Android Settings.")
+            onResult(false)
+        }
+    }
+
+    fun sendLivePrompt(prompt: String) {
+        liveClient.sendTextMessage(prompt)
     }
 
     // ── Text-to-Speech (Read Aloud) ────────────────────────────────────────────
