@@ -1,0 +1,423 @@
+package com.aura.assistant.ai
+
+import android.content.Context
+import android.util.Log
+import com.aura.assistant.config.Secrets
+import com.aura.assistant.data.ChatMessage
+import com.aura.assistant.data.MessageRole
+import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import kotlinx.coroutines.*
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
+
+interface ChatStreamCallback {
+    fun onToken(chunk: String)
+    fun onToolExecution(toolName: String, args: String, result: String)
+    fun onComplete(fullText: String)
+    fun onError(errorMessage: String)
+}
+
+/**
+ * High-performance Gemini 2.0 Flash Streaming Chat Service.
+ * Implements SSE (Server-Sent Events) streaming with full multi-turn conversation memory,
+ * automatic tool calling (JarvisToolRegistry), and instant generation abort support.
+ */
+class GeminiChatService(private val context: Context) {
+
+    companion object {
+        private const val TAG = "GeminiChatService"
+        // Models verified from user backup zip (api_config.dart) & tested live on user API key:
+        private val CANDIDATE_MODELS = listOf(
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash"
+        )
+    }
+
+    private val gson = Gson()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    private var activeCall: Call? = null
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Sends a chat prompt along with previous conversation history to Gemini.
+     */
+    fun sendChatStream(
+        history: List<ChatMessage>,
+        newPrompt: String,
+        callback: ChatStreamCallback
+    ) {
+        cancelCurrentGeneration()
+
+        serviceScope.launch {
+            try {
+                executeStreamRequest(history, newPrompt, callback)
+            } catch (e: Exception) {
+                if (e !is CancellationException) {
+                    Log.e(TAG, "Stream execution failed", e)
+                    callback.onError(e.localizedMessage ?: "Network error")
+                }
+            }
+        }
+    }
+
+    private suspend fun executeStreamRequest(
+        history: List<ChatMessage>,
+        newPrompt: String,
+        callback: ChatStreamCallback
+    ) {
+        val apiKey = Secrets.getActiveGeminiKey()
+        val requestBodyJson = buildRequestBody(history, newPrompt)
+        val bodyStr = requestBodyJson.toString()
+
+        var lastErrorMsg = "Gemini API Error"
+        for (model in CANDIDATE_MODELS) {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+            val body = bodyStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .build()
+
+            val call = client.newCall(request)
+            activeCall = call
+
+            val response = try {
+                withContext(Dispatchers.IO) { call.execute() }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Model $model connection failed: ${e.message}, trying fallback...")
+                lastErrorMsg = e.localizedMessage ?: "Connection error"
+                continue
+            }
+
+            if (!response.isSuccessful) {
+                val errBody = response.body?.string() ?: "(no body)"
+                Log.w(TAG, "Model $model failed with HTTP ${response.code}: $errBody")
+                lastErrorMsg = when (response.code) {
+                    400 -> "Bad request — check request format"
+                    401, 403 -> "API key invalid or quota exceeded"
+                    404 -> "Model not found ($model)"
+                    429 -> "Rate limit reached"
+                    else -> "Gemini API Error (${response.code})"
+                }
+                // If 404 or 429, try next fallback model
+                if (response.code == 404 || response.code == 429 || response.code >= 500) {
+                    continue
+                } else {
+                    callback.onError(lastErrorMsg)
+                    return
+                }
+            }
+
+            val responseStream = response.body?.byteStream()
+            if (responseStream == null) {
+                continue
+            }
+
+            Log.i(TAG, "Streaming from model: $model successfully")
+            val reader = BufferedReader(InputStreamReader(responseStream))
+            val fullAccumulator = StringBuilder()
+            var pendingFunctionCall: JsonObject? = null
+            var exactModelTurnContent: JsonObject? = null
+
+        try {
+            var line: String?
+            while (withContext(Dispatchers.IO) { reader.readLine() }.also { line = it } != null) {
+                val currentLine = line ?: break
+                if (currentLine.startsWith("data: ")) {
+                    val jsonStr = currentLine.removePrefix("data: ").trim()
+                    if (jsonStr.isBlank() || jsonStr == "[DONE]") continue
+
+                    try {
+                        val parsed = JsonParser.parseString(jsonStr).asJsonObject
+                        val candidates = parsed.getAsJsonArray("candidates")
+                        if (candidates != null && candidates.size() > 0) {
+                            val candidate = candidates.get(0).asJsonObject
+                            val content = candidate.getAsJsonObject("content")
+                            if (content != null && content.has("parts")) {
+                                val parts = content.getAsJsonArray("parts")
+                                for (p in 0 until parts.size()) {
+                                    val part = parts.get(p).asJsonObject
+
+                                    // Check for streaming text token
+                                    if (part.has("text")) {
+                                        val token = part.get("text").asString
+                                        fullAccumulator.append(token)
+                                        callback.onToken(token)
+                                    }
+
+                                    // Check for tool function call
+                                    if (part.has("functionCall")) {
+                                        pendingFunctionCall = part.getAsJsonObject("functionCall")
+                                        exactModelTurnContent = content
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error parsing chunk: $jsonStr", e)
+                    }
+                }
+            }
+        } finally {
+            try { reader.close() } catch (_: Exception) {}
+        }
+
+        // If a function call was requested, execute it natively
+        if (pendingFunctionCall != null) {
+            val fnName = pendingFunctionCall.get("name").asString
+            val fnArgs = pendingFunctionCall.getAsJsonObject("args") ?: JsonObject()
+
+            Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
+            val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
+            val resultSummary = toolResult.get("message")?.asString
+                ?: toolResult.get("status")?.asString
+                ?: "Completed"
+
+            callback.onToolExecution(
+                toolName = fnName,
+                args = fnArgs.toString(),
+                result = resultSummary
+            )
+
+            // Send tool response to complete conversation turn with natural speech
+            executeToolResponseStream(model, history, newPrompt, fnName, fnArgs, toolResult, exactModelTurnContent, callback)
+        } else {
+            callback.onComplete(fullAccumulator.toString())
+        }
+        return // Successfully completed request with this model
+    }
+
+    // If all candidate models failed
+    callback.onError(lastErrorMsg)
+}
+
+    private suspend fun executeToolResponseStream(
+        model: String,
+        history: List<ChatMessage>,
+        originalPrompt: String,
+        toolName: String,
+        toolArgs: JsonObject,
+        toolResult: JsonObject,
+        modelTurnContent: JsonObject?,
+        callback: ChatStreamCallback
+    ) {
+        val apiKey = Secrets.getActiveGeminiKey()
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+
+        val root = JsonObject().apply {
+            // System instruction with rich persona and permanent memory
+            add("system_instruction", createSystemInstruction())
+
+            // Contents with user prompt, exact model functionCall, and functionResponse
+            val contents = createHistoryContents(history)
+
+            // User turn
+            val userTurn = JsonObject().apply {
+                addProperty("role", "user")
+                val parts = JsonArray().apply {
+                    val textPart = JsonObject().apply { addProperty("text", originalPrompt) }
+                    add(textPart)
+                }
+                add("parts", parts)
+            }
+            contents.add(userTurn)
+
+            // Model turn calling the function
+            val modelTurn = modelTurnContent ?: JsonObject().apply {
+                addProperty("role", "model")
+                val parts = JsonArray().apply {
+                    val fnCallPart = JsonObject().apply {
+                        val fnObj = JsonObject().apply {
+                            addProperty("name", toolName)
+                            add("args", toolArgs)
+                        }
+                        add("functionCall", fnObj)
+                    }
+                    add(fnCallPart)
+                }
+                add("parts", parts)
+            }
+            contents.add(modelTurn)
+
+            // Function response turn (Role MUST be "user" in Gemini v1beta REST)
+            val fnResponseTurn = JsonObject().apply {
+                addProperty("role", "user")
+                val parts = JsonArray().apply {
+                    val fnRespPart = JsonObject().apply {
+                        val fnRespObj = JsonObject().apply {
+                            addProperty("name", toolName)
+                            val resp = JsonObject().apply {
+                                add("output", toolResult)
+                            }
+                            add("response", resp)
+                        }
+                        add("functionResponse", fnRespObj)
+                    }
+                    add(fnRespPart)
+                }
+                add("parts", parts)
+            }
+            contents.add(fnResponseTurn)
+
+            add("contents", contents)
+
+            // Include tool declarations so model has schema context
+            val tools = JsonArray().apply {
+                val toolHolder = JsonObject()
+                toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
+                add(toolHolder)
+            }
+            add("tools", tools)
+        }
+
+        val body = root.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = Request.Builder().url(url).post(body).build()
+
+        val call = client.newCall(request)
+        activeCall = call
+
+        val response = withContext(Dispatchers.IO) { call.execute() }
+        if (!response.isSuccessful) {
+            val fallback = toolResult.get("message")?.asString ?: "Ho gaya Boss! $toolName complete kar diya gaya hai."
+            callback.onComplete(fallback)
+            return
+        }
+
+        val stream = response.body?.byteStream() ?: return
+        val reader = BufferedReader(InputStreamReader(stream))
+        val postToolAccumulator = StringBuilder()
+
+        try {
+            var line: String?
+            while (withContext(Dispatchers.IO) { reader.readLine() }.also { line = it } != null) {
+                val currentLine = line ?: break
+                if (currentLine.startsWith("data: ")) {
+                    val jsonStr = currentLine.removePrefix("data: ").trim()
+                    if (jsonStr.isBlank() || jsonStr == "[DONE]") continue
+                    try {
+                        val parsed = JsonParser.parseString(jsonStr).asJsonObject
+                        val candidates = parsed.getAsJsonArray("candidates")
+                        if (candidates != null && candidates.size() > 0) {
+                            val candidate = candidates.get(0).asJsonObject
+                            val content = candidate.getAsJsonObject("content")
+                            if (content != null && content.has("parts")) {
+                                val parts = content.getAsJsonArray("parts")
+                                for (p in 0 until parts.size()) {
+                                    val part = parts.get(p).asJsonObject
+                                    if (part.has("text")) {
+                                        val token = part.get("text").asString
+                                        postToolAccumulator.append(token)
+                                        callback.onToken(token)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        } finally {
+            try { reader.close() } catch (_: Exception) {}
+        }
+
+        val fullSpokenText = postToolAccumulator.toString().trim()
+        if (fullSpokenText.isNotBlank()) {
+            callback.onComplete(fullSpokenText)
+        } else {
+            val fallback = toolResult.get("message")?.asString ?: "Task complete ho gaya Boss! ✅"
+            callback.onComplete(fallback)
+        }
+    }
+
+    private fun buildRequestBody(history: List<ChatMessage>, newPrompt: String): JsonObject {
+        val root = JsonObject()
+
+        // 1. System Instruction (Persona & Tool Guidance)
+        root.add("system_instruction", createSystemInstruction())
+
+        // 2. Contents Array
+        val contents = createHistoryContents(history)
+        val userTurn = JsonObject().apply {
+            addProperty("role", "user")
+            val parts = JsonArray().apply {
+                val part = JsonObject().apply { addProperty("text", newPrompt) }
+                add(part)
+            }
+            add("parts", parts)
+        }
+        contents.add(userTurn)
+        root.add("contents", contents)
+
+        // 3. Tools (Function Declarations)
+        val tools = JsonArray().apply {
+            val toolHolder = JsonObject()
+            toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
+            add(toolHolder)
+        }
+        root.add("tools", tools)
+
+        // 4. Generation Config
+        val genConfig = JsonObject().apply {
+            addProperty("temperature", 0.7)
+            addProperty("topP", 0.95)
+            addProperty("maxOutputTokens", 2048)
+        }
+        root.add("generationConfig", genConfig)
+
+        return root
+    }
+
+    private fun createSystemInstruction(): JsonObject {
+        return JsonObject().apply {
+            val parts = JsonArray().apply {
+                val part = JsonObject().apply {
+                    addProperty("text", AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false))
+                }
+                add(part)
+            }
+            add("parts", parts)
+        }
+    }
+
+    private fun createHistoryContents(history: List<ChatMessage>): JsonArray {
+        val contents = JsonArray()
+        // Take last 16 messages for context
+        val contextSlice = history.takeLast(16)
+
+        for (msg in contextSlice) {
+            if (msg.text.isBlank()) continue
+            val role = if (msg.role == MessageRole.USER) "user" else "model"
+            val turn = JsonObject().apply {
+                addProperty("role", role)
+                val parts = JsonArray().apply {
+                    val part = JsonObject().apply { addProperty("text", msg.text) }
+                    add(part)
+                }
+                add("parts", parts)
+            }
+            contents.add(turn)
+        }
+        return contents
+    }
+
+    fun cancelCurrentGeneration() {
+        try {
+            activeCall?.cancel()
+            activeCall = null
+        } catch (_: Exception) {}
+    }
+}
