@@ -592,32 +592,36 @@ class GeminiLiveClient(private val context: Context) {
                 _liveState.value = AuraLiveState.THINKING
 
                 scope.launch {
-                    val responseArray = JsonArray()
-                    for (j in 0 until fnCalls.size()) {
-                        val call = fnCalls.get(j).asJsonObject
-                        val name = call.get("name").asString
-                        val id = call.get("id").asString
-                        val args = call.getAsJsonObject("args") ?: JsonObject()
-                        val result = JarvisToolRegistry.executeTool(context, name, args)
-                        val fnResp = JsonObject().apply {
-                            addProperty("id", id)
-                            addProperty("name", name)
-                            val resp = JsonObject().apply {
-                                add("output", result)
+                    try {
+                        val responseArray = JsonArray()
+                        for (j in 0 until fnCalls.size()) {
+                            val call = fnCalls.get(j).asJsonObject
+                            val name = call.get("name").asString
+                            val id = call.get("id").asString
+                            val args = call.getAsJsonObject("args") ?: JsonObject()
+                            val result = JarvisToolRegistry.executeTool(context, name, args)
+                            val fnResp = JsonObject().apply {
+                                addProperty("id", id)
+                                addProperty("name", name)
+                                val resp = JsonObject().apply {
+                                    add("output", result)
+                                }
+                                add("response", resp)
                             }
-                            add("response", resp)
+                            responseArray.add(fnResp)
                         }
-                        responseArray.add(fnResp)
-                    }
 
-                    val toolResponseObj = JsonObject().apply {
-                        val toolResponse = JsonObject().apply {
-                            add("functionResponses", responseArray)
+                        val toolResponseObj = JsonObject().apply {
+                            val toolResponse = JsonObject().apply {
+                                add("functionResponses", responseArray)
+                            }
+                            add("toolResponse", toolResponse)
                         }
-                        add("toolResponse", toolResponse)
+                        webSocket?.send(toolResponseObj.toString())
+                        Log.i(TAG, "Sent toolResponse to Gemini Live")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error executing tool for Gemini Live", e)
                     }
-                    webSocket?.send(toolResponseObj.toString())
-                    Log.i(TAG, "Sent toolResponse to Gemini Live")
                 }
             }
         } catch (e: Exception) {

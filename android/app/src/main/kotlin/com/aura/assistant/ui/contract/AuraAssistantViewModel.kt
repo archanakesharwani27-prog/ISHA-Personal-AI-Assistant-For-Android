@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
 
@@ -99,39 +100,42 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         // Sync completed Gemini Live turns into current chat session
         viewModelScope.launch {
             liveClient.turnCompletedFlow.collect { turn ->
-                val currentSessionId = _activeSessionId.value
-                if (currentSessionId.isNotBlank()) {
-                    val newMsgs = mutableListOf<ChatMessage>()
-                    if (turn.userText.isNotBlank()) {
-                        newMsgs.add(
-                            ChatMessage(
-                                sessionId = currentSessionId,
-                                role = MessageRole.USER,
-                                text = turn.userText
-                            )
+                var currentSessionId = _activeSessionId.value
+                if (currentSessionId.isBlank()) {
+                    val newSession = withContext(Dispatchers.IO) { repository.createSession("Voice Chat") }
+                    currentSessionId = newSession.id
+                    _activeSessionId.value = currentSessionId
+                }
+                val newMsgs = mutableListOf<ChatMessage>()
+                if (turn.userText.isNotBlank()) {
+                    newMsgs.add(
+                        ChatMessage(
+                            sessionId = currentSessionId,
+                            role = MessageRole.USER,
+                            text = turn.userText
                         )
-                    }
-                    if (turn.assistantText.isNotBlank()) {
-                        newMsgs.add(
-                            ChatMessage(
-                                sessionId = currentSessionId,
-                                role = MessageRole.ASSISTANT,
-                                text = turn.assistantText
-                            )
+                    )
+                }
+                if (turn.assistantText.isNotBlank()) {
+                    newMsgs.add(
+                        ChatMessage(
+                            sessionId = currentSessionId,
+                            role = MessageRole.ASSISTANT,
+                            text = turn.assistantText
                         )
-                    }
-                    if (newMsgs.isNotEmpty()) {
-                        val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
-                        _chatMessages.value = updated
+                    )
+                }
+                if (newMsgs.isNotEmpty()) {
+                    val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
+                    _chatMessages.value = updated
+                    withContext(Dispatchers.IO) {
                         repository.saveMessages(currentSessionId, updated)
-
-                        // If it's "New Chat", auto-title with the user prompt
-                        val session = _sessions.value.find { it.id == currentSessionId }
-                        if (session != null && session.title == "New Chat" && turn.userText.isNotBlank()) {
+                        val session = repository.getAllSessions().find { it.id == currentSessionId }
+                        if (session != null && (session.title == "New Chat" || session.title == "Voice Chat") && turn.userText.isNotBlank()) {
                             val autoTitle = if (turn.userText.length > 28) turn.userText.take(25) + "..." else turn.userText
                             repository.renameSession(currentSessionId, autoTitle)
-                            _sessions.value = repository.getAllSessions()
                         }
+                        _sessions.value = repository.getAllSessions()
                     }
                 }
             }

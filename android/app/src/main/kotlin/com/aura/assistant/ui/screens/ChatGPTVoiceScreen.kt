@@ -2,6 +2,7 @@ package com.aura.assistant.ui.screens
 
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -73,6 +74,11 @@ fun ChatGPTVoiceScreen(
     val coroutineScope = rememberCoroutineScope()
     var isMuted by remember { mutableStateOf(false) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
+
+    // Intercept system back gestures to gracefully exit voice mode
+    BackHandler {
+        onCloseVoiceMode()
+    }
 
     // Transient feedback auto-dismiss
     LaunchedEffect(feedbackMessage) {
@@ -160,7 +166,8 @@ fun ChatGPTVoiceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(top = 54.dp, start = 24.dp, end = 24.dp),
+                .statusBarsPadding()
+                .padding(top = 18.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Sparkling 4-point Gemini star
@@ -284,7 +291,8 @@ fun ChatGPTVoiceScreen(
             exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp)
+                .navigationBarsPadding()
+                .padding(bottom = 86.dp)
         ) {
             Surface(
                 color = Color(0xFF1E293B).copy(alpha = 0.95f),
@@ -317,7 +325,8 @@ fun ChatGPTVoiceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 44.dp),
+                .navigationBarsPadding()
+                .padding(bottom = 20.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
