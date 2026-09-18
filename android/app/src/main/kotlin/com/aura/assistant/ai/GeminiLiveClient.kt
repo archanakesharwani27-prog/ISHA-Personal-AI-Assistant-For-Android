@@ -47,9 +47,14 @@ class GeminiLiveClient(private val context: Context) {
         private const val TAG = "GeminiLiveClient"
         private const val BASE_WS_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        // Official low-latency Live Audio API model (verified working)
-        private const val DEFAULT_LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
+        // Primary low-latency Live Audio API model
+        private const val PRIMARY_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
+        // Fallback model if primary model is unreachable or throttled
+        private const val FALLBACK_LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
     }
+
+    private var activeModel = PRIMARY_LIVE_MODEL
+    private var isFallbackAttempt = false
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
@@ -168,6 +173,15 @@ class GeminiLiveClient(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    private fun ensureAudioPlaybackReady() {
+        if (audioTrack == null || audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
+            initAudioTrack()
+        }
+        if (playbackJob == null || playbackJob?.isActive == false) {
+            startAudioPlaybackWorker()
+        }
+    }
+
     /**
      * Connects to Gemini Live using the primary verified API key.
      */
@@ -177,16 +191,17 @@ class GeminiLiveClient(private val context: Context) {
             _liveState.value == AuraLiveState.LISTENING ||
             _liveState.value == AuraLiveState.SPEAKING) return
 
+        ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
         val key = Secrets.getActiveGeminiKey()
         val url = "$BASE_WS_URL?key=$key"
         val request = Request.Builder().url(url).build()
 
-        Log.i(TAG, "Connecting to Gemini Live WS with model: $DEFAULT_LIVE_MODEL")
+        Log.i(TAG, "Connecting to Gemini Live WS with model: $activeModel")
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket connected successfully to Gemini Live")
+                Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
                 _liveState.value = AuraLiveState.CONNECTED
                 sendSetupMessage()
             }
@@ -203,9 +218,20 @@ class GeminiLiveClient(private val context: Context) {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val code = response?.code
-                Log.e(TAG, "WebSocket failure: ${t.message}, HTTP=$code")
-                _liveState.value = AuraLiveState.ERROR
+                Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
                 stopMicRecording()
+                if (!isFallbackAttempt && activeModel != FALLBACK_LIVE_MODEL) {
+                    Log.w(TAG, "Falling back to $FALLBACK_LIVE_MODEL...")
+                    isFallbackAttempt = true
+                    activeModel = FALLBACK_LIVE_MODEL
+                    _liveState.value = AuraLiveState.IDLE
+                    scope.launch {
+                        delay(400)
+                        connect()
+                    }
+                } else {
+                    _liveState.value = AuraLiveState.ERROR
+                }
             }
         })
     }
@@ -213,7 +239,7 @@ class GeminiLiveClient(private val context: Context) {
     private fun sendSetupMessage() {
         val setupObj = JsonObject().apply {
             val setup = JsonObject().apply {
-                addProperty("model", DEFAULT_LIVE_MODEL)
+                addProperty("model", activeModel)
 
                 val genConfig = JsonObject().apply {
                     val modalities = JsonArray().apply { add("AUDIO") }
@@ -278,18 +304,25 @@ class GeminiLiveClient(private val context: Context) {
             var record: AudioRecord? = null
             try {
                 isMicRecordingActive = true
-                record = AudioRecord(
+                val audioSources = listOf(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    sampleRate, channelConfig, audioFormat, bufferSize
+                    MediaRecorder.AudioSource.MIC
                 )
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    record = AudioRecord(
-                        MediaRecorder.AudioSource.MIC,
-                        sampleRate, channelConfig, audioFormat, bufferSize
-                    )
+                for (source in audioSources) {
+                    try {
+                        val r = AudioRecord(source, sampleRate, channelConfig, audioFormat, bufferSize)
+                        if (r.state == AudioRecord.STATE_INITIALIZED) {
+                            record = r
+                            Log.i(TAG, "AudioRecord initialized using source: $source")
+                            break
+                        } else {
+                            r.release()
+                        }
+                    } catch (_: Exception) {}
                 }
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "Failed to initialize AudioRecord")
+                if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "Failed to initialize AudioRecord with any source")
                     return@launch
                 }
 
@@ -317,11 +350,11 @@ class GeminiLiveClient(private val context: Context) {
                             _amplitudeFlow.value = (rms * 3.0).toFloat().coerceIn(0.05f, 1.0f)
                         }
 
-                        // Barge-in check: if user speaks loudly while bot is talking, interrupt instantly
+                        // Barge-in check: if user speaks while bot is talking, interrupt instantly
                         if (isBotSpeaking) {
-                            val bargeThreshold = max(0.04, noiseFloor * 1.8)
+                            val bargeThreshold = max(0.012, noiseFloor * 1.5)
                             if (rms > bargeThreshold) {
-                                Log.i(TAG, "User barge-in detected! Stopping audio playback.")
+                                Log.i(TAG, "User barge-in detected (RMS: $rms > $bargeThreshold)! Stopping audio playback.")
                                 flushAudioPlayback()
                                 _liveState.value = AuraLiveState.LISTENING
                             } else {
@@ -398,8 +431,7 @@ class GeminiLiveClient(private val context: Context) {
      * Streams raw 16kHz mono PCM audio to Gemini Live in official camelCase schema.
      */
     fun sendAudioChunk(pcmBytes: ByteArray, length: Int = pcmBytes.size) {
-        if (_liveState.value != AuraLiveState.LISTENING &&
-            _liveState.value != AuraLiveState.CONNECTED) return
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
 
         val base64Data = Base64.encodeToString(pcmBytes, 0, length, Base64.NO_WRAP)
         val inputObj = JsonObject().apply {
@@ -579,9 +611,13 @@ class GeminiLiveClient(private val context: Context) {
     fun release() {
         disconnect()
         playbackJob?.cancel()
-        scope.cancel()
-        audioTrack?.stop()
-        audioTrack?.release()
+        playbackJob = null
+        micJob?.cancel()
+        micJob = null
+        try {
+            audioTrack?.stop()
+            audioTrack?.release()
+        } catch (_: Exception) {}
         audioTrack = null
     }
 }

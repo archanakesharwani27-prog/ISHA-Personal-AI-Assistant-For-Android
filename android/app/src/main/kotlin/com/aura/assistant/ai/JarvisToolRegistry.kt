@@ -528,16 +528,21 @@ object JarvisToolRegistry {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
                         try { context.startActivity(intent) } catch (_: Exception) {}
+                        a11y?.armWhatsappDeleteLastMessage()
                     } else {
                         val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
                         if (intent != null) {
                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             context.startActivity(intent)
                         }
+                        if (contact.isNotBlank()) {
+                            a11y?.armWhatsappOpenContactChat(contact) {
+                                a11y.armWhatsappDeleteLastMessage()
+                            }
+                        } else {
+                            a11y?.armWhatsappDeleteLastMessage()
+                        }
                     }
-
-                    // Arm accessibility service to long-click last bubble and tap trash + confirm
-                    a11y?.armWhatsappDeleteLastMessage()
 
                     // Also search and vault any recent WhatsApp Image files from device storage
                     var localDeleted = 0

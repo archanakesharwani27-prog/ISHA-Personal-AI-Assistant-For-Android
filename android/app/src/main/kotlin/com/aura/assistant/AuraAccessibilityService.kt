@@ -394,56 +394,109 @@ class AuraAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun armWhatsappDeleteLastMessage() {
+    fun armWhatsappDeleteLastMessage(attempt: Int = 1) {
+        val delay = if (attempt == 1) 1400L else 1000L
         stepHandler.postDelayed({
             val root = rootInActiveWindow
-            if (root != null) {
-                val bubble = findLastMessageNode(root)
-                var initiated = false
-                if (bubble != null) {
-                    val rect = android.graphics.Rect()
-                    bubble.getBoundsInScreen(rect)
-                    val clicked = bubble.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
-                    if (clicked) {
-                        initiated = true
-                        Log.i(TAG, "ACTION_LONG_CLICK succeeded on WhatsApp message bubble")
-                    } else if (!rect.isEmpty && rect.width() > 0) {
-                        initiated = performLongPress(rect.exactCenterX(), rect.exactCenterY(), 900L)
-                        Log.i(TAG, "performLongPress touch gesture executed on WhatsApp message bubble: $initiated")
-                    }
-                }
-                if (!initiated) {
-                    // Touch fallback: long-press the middle-lower region of chat screen
-                    val dm = resources.displayMetrics
-                    performLongPress(dm.widthPixels * 0.5f, dm.heightPixels * 0.72f, 900L)
-                    Log.i(TAG, "Fallback physical long press at 72% screen height executed")
-                }
-
-                // Wait for top action bar to appear with trash icon
-                stepHandler.postDelayed({
-                    val currentRoot = rootInActiveWindow
-                    if (currentRoot != null) {
-                        val trashHints = listOf("delete", "trash", "com.whatsapp:id/menuitem_conversations_delete", "हटाएं", "remove")
-                        val trashClicked = clickFirstMatch(currentRoot, trashHints)
-                        Log.i(TAG, "Trash icon click: $trashClicked")
-
-                        // Wait for confirmation dialog
-                        stepHandler.postDelayed({
-                            val dialogRoot = rootInActiveWindow
-                            if (dialogRoot != null) {
-                                val confirmHints = listOf("delete for everyone", "delete for me", "sabke liye delete karein", "mere liye delete karein", "ok", "हटाएं", "delete")
-                                val confirmClicked = clickFirstMatch(dialogRoot, confirmHints)
-                                Log.i(TAG, "Delete confirmation clicked: $confirmClicked")
-                            }
-                        }, 700)
-                    }
-                }, 800)
+            if (root == null) {
+                if (attempt < 4) armWhatsappDeleteLastMessage(attempt + 1)
+                return@postDelayed
             }
-        }, 1200)
+
+            val trashHints = listOf(
+                "delete", "trash", "com.whatsapp:id/menuitem_conversations_delete",
+                "हटाएं", "डिलीट", "remove"
+            )
+            // If already in selection mode (trash icon visible)
+            if (findNode(root, trashHints) != null) {
+                scheduleTrashAndConfirmCheck(1)
+                return@postDelayed
+            }
+
+            val bubble = findLastMessageNode(root)
+            var initiated = false
+
+            if (bubble != null) {
+                // 1. Walk up to long-clickable parent if bubble itself isn't long-clickable
+                var longClickTarget: AccessibilityNodeInfo? = bubble
+                while (longClickTarget != null && !longClickTarget.isLongClickable) {
+                    longClickTarget = longClickTarget.parent
+                }
+                if (longClickTarget != null) {
+                    initiated = longClickTarget.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+                    Log.i(TAG, "ACTION_LONG_CLICK on parent container ($longClickTarget): $initiated")
+                }
+
+                // 2. Direct ACTION_LONG_CLICK on bubble
+                if (!initiated) {
+                    initiated = bubble.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+                    Log.i(TAG, "ACTION_LONG_CLICK on bubble ($bubble): $initiated")
+                }
+
+                // 3. Physical gesture fallback on bubble coordinates
+                if (!initiated) {
+                    val rect = android.graphics.Rect()
+                    (longClickTarget ?: bubble).getBoundsInScreen(rect)
+                    if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                        initiated = performLongPress(rect.exactCenterX(), rect.exactCenterY(), 1000L)
+                        Log.i(TAG, "performLongPress at (${rect.exactCenterX()}, ${rect.exactCenterY()}): $initiated")
+                    }
+                }
+            }
+
+            if (!initiated) {
+                // Physical fallback at lower-middle region of chat
+                val dm = resources.displayMetrics
+                performLongPress(dm.widthPixels * 0.55f, dm.heightPixels * 0.72f, 1000L)
+                Log.i(TAG, "Fallback physical long press at 72% height executed")
+            }
+
+            // Schedule multi-stage trash icon and confirmation dialog check
+            scheduleTrashAndConfirmCheck(1)
+        }, delay)
+    }
+
+    private fun scheduleTrashAndConfirmCheck(checkAttempt: Int) {
+        stepHandler.postDelayed({
+            val currentRoot = rootInActiveWindow ?: return@postDelayed
+            val trashHints = listOf(
+                "delete", "trash", "com.whatsapp:id/menuitem_conversations_delete",
+                "हटाएं", "डिलीट", "remove"
+            )
+            val trashClicked = clickFirstMatch(currentRoot, trashHints)
+            Log.i(TAG, "Trash icon click (attempt $checkAttempt): $trashClicked")
+
+            if (trashClicked) {
+                scheduleConfirmDialogClicks(1)
+            } else if (checkAttempt < 4) {
+                scheduleTrashAndConfirmCheck(checkAttempt + 1)
+            }
+        }, 600L)
+    }
+
+    private fun scheduleConfirmDialogClicks(dialogAttempt: Int) {
+        stepHandler.postDelayed({
+            val dialogRoot = rootInActiveWindow ?: return@postDelayed
+            val confirmHints = listOf(
+                "delete for everyone", "sabke liye delete karein", "सभी के लिए हटाएं",
+                "delete for me", "mere liye delete karein", "मेरे लिए हटाएं",
+                "delete", "हटाएं", "डिलीट", "ok", "हाँ", "yes"
+            )
+            val confirmClicked = clickFirstMatch(dialogRoot, confirmHints)
+            Log.i(TAG, "Delete confirmation clicked (attempt $dialogAttempt): $confirmClicked")
+
+            if (!confirmClicked && dialogAttempt < 5) {
+                scheduleConfirmDialogClicks(dialogAttempt + 1)
+            }
+        }, 500L)
     }
 
     private fun findLastMessageNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
+        val dm = resources.displayMetrics
+        val minTop = dm.heightPixels * 0.10f
+        val maxBottom = dm.heightPixels * 0.88f
+
         val candidates = mutableListOf<Pair<AccessibilityNodeInfo, Int>>()
         fun scan(n: AccessibilityNodeInfo?) {
             if (n == null) return
@@ -452,11 +505,29 @@ class AuraAccessibilityService : AccessibilityService() {
             val rect = android.graphics.Rect()
             n.getBoundsInScreen(rect)
 
-            val isMsg = resId.contains("conversation_row") || resId.contains("message") ||
-                    resId.contains("thumb") || resId.contains("image") || resId.contains("photo") ||
-                    desc.contains("photo") || desc.contains("image") || desc.contains("message")
-            if (isMsg && rect.bottom > 100) {
-                candidates.add(Pair(n, rect.bottom))
+            val withinChatBounds = rect.top >= minTop && rect.bottom <= maxBottom && rect.height() >= 30
+
+            if (withinChatBounds) {
+                val isMessageItem = resId.contains("conversation_row") ||
+                        resId.contains("message") ||
+                        resId.contains("thumb") ||
+                        resId.contains("image") ||
+                        resId.contains("photo") ||
+                        resId.contains("media") ||
+                        resId.contains("row_content") ||
+                        resId.contains("main_layout") ||
+                        n.isLongClickable ||
+                        desc.contains("photo") ||
+                        desc.contains("image") ||
+                        desc.contains("message")
+
+                val isInput = resId.contains("entry") || resId.contains("voice") ||
+                        resId.contains("send") || resId.contains("camera") ||
+                        resId.contains("attach") || resId.contains("emoji")
+
+                if (isMessageItem && !isInput) {
+                    candidates.add(Pair(n, rect.bottom))
+                }
             }
             for (i in 0 until n.childCount) {
                 scan(n.getChild(i))
@@ -464,6 +535,35 @@ class AuraAccessibilityService : AccessibilityService() {
         }
         scan(node)
         return candidates.maxByOrNull { it.second }?.first
+    }
+
+    /**
+     * Search for a contact inside WhatsApp and open their conversation, then execute callback.
+     */
+    fun armWhatsappOpenContactChat(contact: String, onOpened: () -> Unit) {
+        val searchHints = listOf("search", "com.whatsapp:id/menuitem_search", "खोजें")
+        stepHandler.postDelayed({
+            val root = rootInActiveWindow
+            if (root != null) {
+                clickFirstMatch(root, searchHints)
+            }
+            stepHandler.postDelayed({
+                val searchRoot = rootInActiveWindow
+                val edit = findFocusedEditText(searchRoot)
+                if (edit != null) {
+                    typeIntoNode(edit, contact)
+                }
+                stepHandler.postDelayed({
+                    val resultRoot = rootInActiveWindow
+                    if (resultRoot != null) {
+                        clickFirstMatch(resultRoot, listOf(contact.lowercase()))
+                    }
+                    stepHandler.postDelayed({
+                        onOpened()
+                    }, 1000L)
+                }, 1000L)
+            }, 600L)
+        }, 1000L)
     }
 
     fun armAutoInstall()      { pendingAutoInstall = true }
@@ -1190,8 +1290,11 @@ class AuraAccessibilityService : AccessibilityService() {
      */
     fun performTap(x: Float, y: Float): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 75)
+        val path = Path().apply {
+            moveTo(x, y)
+            lineTo(x + 1f, y + 1f)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 80)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
     }
@@ -1199,9 +1302,12 @@ class AuraAccessibilityService : AccessibilityService() {
     /**
      * Dispatches a real physical long-press touch gesture at exact screen coordinates (x, y).
      */
-    fun performLongPress(x: Float, y: Float, durationMs: Long = 1000L): Boolean {
+    fun performLongPress(x: Float, y: Float, durationMs: Long = 1100L): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-        val path = Path().apply { moveTo(x, y) }
+        val path = Path().apply {
+            moveTo(x, y)
+            lineTo(x + 1f, y + 1f)
+        }
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)

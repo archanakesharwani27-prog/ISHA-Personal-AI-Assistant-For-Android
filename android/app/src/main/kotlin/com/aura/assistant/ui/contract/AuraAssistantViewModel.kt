@@ -345,12 +345,26 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun startVoiceMode() {
         _isVoiceModeActive.value = true
+        val app = getApplication<Application>()
+        try {
+            val pauseIntent = Intent(app, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_PAUSE
+            }
+            app.startService(pauseIntent)
+        } catch (_: Exception) {}
         liveClient.connect()
     }
 
     fun stopVoiceMode() {
         _isVoiceModeActive.value = false
         liveClient.disconnect()
+        val app = getApplication<Application>()
+        try {
+            val resumeIntent = Intent(app, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_RESUME
+            }
+            app.startService(resumeIntent)
+        } catch (_: Exception) {}
     }
 
     fun onMicButtonPressed() {
@@ -427,6 +441,13 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         super.onCleared()
         liveClient.release()
+        val app = getApplication<Application>()
+        try {
+            val resumeIntent = Intent(app, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_RESUME
+            }
+            app.startService(resumeIntent)
+        } catch (_: Exception) {}
         chatService.cancelCurrentGeneration()
         tts?.shutdown()
     }
