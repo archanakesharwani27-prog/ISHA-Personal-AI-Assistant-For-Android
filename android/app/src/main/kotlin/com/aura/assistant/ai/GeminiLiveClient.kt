@@ -35,6 +35,35 @@ data class LiveVoiceTurn(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/**
+ * Holds the context of an interrupted turn so it can be merged with the
+ * next user utterance — ChatGPT-style context-preserving barge-in.
+ */
+data class InterruptedContext(
+    val userSaid: String,           // What user said before interrupting
+    val assistantWasSaying: String, // What AURA was saying when interrupted
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+/**
+ * Rolling buffer of recent conversation turns for in-session context.
+ * Keeps up to [maxTurns] turns; oldest are dropped automatically.
+ */
+class ConversationTurnBuffer(private val maxTurns: Int = 6) {
+    private val turns = ArrayDeque<LiveVoiceTurn>()
+
+    fun add(turn: LiveVoiceTurn) {
+        turns.addLast(turn)
+        if (turns.size > maxTurns) turns.removeFirst()
+    }
+
+    fun recentTurns(): List<LiveVoiceTurn> = turns.toList()
+
+    fun isEmpty(): Boolean = turns.isEmpty()
+
+    fun clear() = turns.clear()
+}
+
 enum class AuraLiveState {
     IDLE,
     CONNECTING,
@@ -104,6 +133,16 @@ class GeminiLiveClient(private val context: Context) {
 
     private val currentUserTurnAccumulator = StringBuilder()
     private val currentAssistantTurnAccumulator = StringBuilder()
+
+    // ── Context-Preserving Barge-In (ChatGPT style) ───────────────────────────
+    // When user interrupts AURA mid-speech, the partial context is NOT discarded.
+    // It is stored here and silently injected into the next user turn so AURA
+    // always responds with full conversational awareness.
+    @Volatile
+    private var interruptedContext: InterruptedContext? = null
+
+    // Rolling buffer of completed turns for in-session context continuity
+    private val turnBuffer = ConversationTurnBuffer(maxTurns = 6)
 
     private val vadDetector = AuraVadDetector()
     private var micJob: Job? = null
@@ -552,29 +591,81 @@ class GeminiLiveClient(private val context: Context) {
         }
     }
 
+    /**
+     * Sends a user text message to Gemini Live.
+     *
+     * If an [interruptedContext] is present (user interrupted AURA mid-speech),
+     * the prior partial exchange is injected as multi-turn context BEFORE the
+     * new user utterance. This gives Gemini full conversation awareness across
+     * interruptions — ChatGPT-style seamless context preservation.
+     *
+     * Context injection format:
+     *   [user: what they said before] → [model: what AURA was saying] → [user: NEW message]
+     */
     private fun sendTextMessageInternal(text: String) {
+        val ctx = interruptedContext
+
         val inputObj = JsonObject().apply {
             val clientContent = JsonObject().apply {
                 val turns = JsonArray().apply {
-                    val turn = JsonObject().apply {
+
+                    // ── Inject interrupted context as prior turns ──────────────────────
+                    // When user barge-in happened, we replay the partial exchange first
+                    // so Gemini's next response is contextually continuous.
+                    if (ctx != null) {
+                        // Prior user utterance (what user said before interrupting)
+                        if (ctx.userSaid.isNotBlank()) {
+                            val priorUserTurn = JsonObject().apply {
+                                addProperty("role", "user")
+                                val parts = JsonArray().apply {
+                                    add(JsonObject().apply {
+                                        addProperty("text", ctx.userSaid)
+                                    })
+                                }
+                                add("parts", parts)
+                            }
+                            add(priorUserTurn)
+                        }
+
+                        // Prior model response (what AURA was saying when interrupted)
+                        if (ctx.assistantWasSaying.isNotBlank()) {
+                            val priorModelTurn = JsonObject().apply {
+                                addProperty("role", "model")
+                                val parts = JsonArray().apply {
+                                    add(JsonObject().apply {
+                                        // Mark as interrupted so model knows it wasn't finished
+                                        addProperty("text", "${ctx.assistantWasSaying} [interrupted]")
+                                    })
+                                }
+                                add("parts", parts)
+                            }
+                            add(priorModelTurn)
+                        }
+
+                        Log.i(TAG, "Context-preserving barge-in: injecting prior turn into clientContent " +
+                                "(userSaid='${ctx.userSaid.take(40)}', auraWasSaying='${ctx.assistantWasSaying.take(40)}')")
+                    }
+
+                    // ── Current new user utterance ─────────────────────────────────────
+                    val newUserTurn = JsonObject().apply {
                         addProperty("role", "user")
                         val parts = JsonArray().apply {
-                            val part = JsonObject().apply {
+                            add(JsonObject().apply {
                                 addProperty("text", text)
-                            }
-                            add(part)
+                            })
                         }
                         add("parts", parts)
                     }
-                    add(turn)
+                    add(newUserTurn)
                 }
                 add("turns", turns)
                 addProperty("turnComplete", true)
             }
             add("clientContent", clientContent)
         }
+
         webSocket?.send(inputObj.toString())
-        Log.d(TAG, "Sent text via clientContent: $text")
+        Log.d(TAG, "Sent text via clientContent (withContext=${ctx != null}): $text")
     }
 
     /**
@@ -644,20 +735,34 @@ class GeminiLiveClient(private val context: Context) {
 
                 // Server detected user interruption
                 if (serverContent.has("interrupted") && serverContent.get("interrupted").asBoolean) {
-                    Log.i(TAG, "Server acknowledged user interruption")
+                    Log.i(TAG, "Server acknowledged user interruption — preserving context (ChatGPT style)")
                     flushAudioPlayback()
                     val partialUser = currentUserTurnAccumulator.toString().trim()
                     val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
+
+                    // ── CONTEXT-PRESERVING BARGE-IN ──────────────────────────────────────
+                    // Save interrupted context instead of discarding it. When user speaks
+                    // next, we inject this as background context so AURA's response is
+                    // continuous and aware — exactly like ChatGPT's behaviour.
                     if (partialUser.isNotBlank() || partialAssistant.isNotBlank()) {
+                        interruptedContext = InterruptedContext(
+                            userSaid = partialUser,
+                            assistantWasSaying = partialAssistant
+                        )
+                        Log.i(TAG, "Interrupted context saved — user='${partialUser.take(60)}' " +
+                                "assistant='${partialAssistant.take(60)}'")
+
+                        // Emit partial turn for chat history UI (marked as interrupted)
                         _turnCompletedFlow.tryEmit(
                             LiveVoiceTurn(
                                 userText = if (partialUser.isNotBlank()) partialUser else "Spoken query",
-                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant..." else ""
+                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant…" else ""
                             )
                         )
-                        currentUserTurnAccumulator.clear()
-                        currentAssistantTurnAccumulator.clear()
                     }
+                    // Reset accumulators for the NEXT turn (context is in interruptedContext)
+                    currentUserTurnAccumulator.clear()
+                    currentAssistantTurnAccumulator.clear()
                     _liveState.value = AuraLiveState.LISTENING
                     return
                 }
@@ -712,12 +817,16 @@ class GeminiLiveClient(private val context: Context) {
                     val userTurn = currentUserTurnAccumulator.toString().trim()
                     val assistantTurn = currentAssistantTurnAccumulator.toString().trim()
                     if (userTurn.isNotBlank() || assistantTurn.isNotBlank()) {
-                        _turnCompletedFlow.tryEmit(
-                            LiveVoiceTurn(
-                                userText = if (userTurn.isNotBlank()) userTurn else "Spoken query",
-                                assistantText = assistantTurn
-                            )
+                        val completedTurn = LiveVoiceTurn(
+                            userText = if (userTurn.isNotBlank()) userTurn else "Spoken query",
+                            assistantText = assistantTurn
                         )
+                        _turnCompletedFlow.tryEmit(completedTurn)
+                        // Add to rolling context buffer for future turns
+                        turnBuffer.add(completedTurn)
+                        // Successful turn completion clears any pending interrupted context
+                        interruptedContext = null
+                        Log.d(TAG, "Turn complete — context buffer size=${turnBuffer.recentTurns().size}, interrupted context cleared")
                     }
                     currentUserTurnAccumulator.clear()
                     currentAssistantTurnAccumulator.clear()
@@ -799,6 +908,11 @@ class GeminiLiveClient(private val context: Context) {
             stopMicRecording()
             flushAudioPlayback()
             pendingTextMessages.clear()
+            // Clear context buffers — stale context should not bleed across sessions
+            interruptedContext = null
+            turnBuffer.clear()
+            currentUserTurnAccumulator.clear()
+            currentAssistantTurnAccumulator.clear()
             webSocket?.close(1000, "User disconnected")
             webSocket = null
             _liveState.value = AuraLiveState.IDLE
