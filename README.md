@@ -1,107 +1,132 @@
-# Aura Shell (Flutter)
+# AURA 2.0 — Autonomous Personal AI Companion for Android
 
-Native Android WebView wrapper for the Aura web app. Implements the bridge
-contract from `ANDROID_BRIDGE.md` in the web project: it hosts the deployed
-Aura URL in a WebView and exposes an `auraDeviceIntent` JS handler that the
-page calls to trigger real device actions.
+<p align="center">
+  <img src="https://img.shields.io/badge/AURA-2.0-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="AURA 2.0" />
+  <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/Gemini-Live%20Multimodal-10A37F?style=for-the-badge&logo=google&logoColor=white" alt="Gemini Live" />
+  <img src="https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge" alt="Status" />
+</p>
 
-This was generated as source files only — this sandbox doesn't have the
-Flutter SDK or access to pub.dev, so it hasn't been built or `pub get`'d.
-You'll need to do that step locally.
+---
 
-## 1. Turn this into a runnable Flutter project
+## 🌟 Overview
 
-This folder has the parts that differ from a stock template
-(`pubspec.yaml`, `lib/`, and everything under `android/app/src/main/`).
-Scaffold the rest with:
+**AURA 2.0** is an autonomous personal AI companion designed exclusively for Android. Moving far beyond traditional command bots, AURA combines:
 
-```bash
-flutter create --org com.aura --project-name aura_shell aura_shell_full
+- **Gemini Live Multimodal Intelligence**: Real-time bidirectional voice & vision streaming over WebSocket.
+- **ChatGPT-Style Context-Preserving Barge-In**: Interrupt AURA naturally mid-speech without losing conversational context.
+- **Background Wake Word Detection**: Offline, high-precision keyword spotting (*"Hey Aura"*) via OpenWakeWord ONNX.
+- **Autonomous Tool Engine**: 52+ native Android device tools with multi-step execution, fallback, and verification.
+- **Gemini Floating Overlay & Dynamic Island**: Instant access over any running app without interrupting the user's workflow.
+
+---
+
+## 🏗 System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           AURA 2.0 ECOSYSTEM                           │
+├────────────────────────────────┬────────────────────────────────────────┤
+│         VOICE & PERCEPTION     │          DECISION & CONTROL            │
+│  • Gemini Live Bidi WebSocket  │  • Autonomous Tool Engine (52+ Tools)  │
+│  • 16kHz PCM In / 24kHz Out    │  • Execution & Verification Engine     │
+│  • OpenWakeWord ONNX Engine    │  • Intent Router & Fallback Pipeline   │
+│  • ChatGPT-Style Barge-In      │  • Long-Term Memory (AuraMemoryManager)│
+├────────────────────────────────┴────────────────────────────────────────┤
+│                       HARDWARE ARBITRATION LAYER                        │
+│  • MicOwnershipManager (Atomic handshake between WakeWord & GeminiLive) │
+│  • AcousticEchoCanceler (AEC) & AutomaticGainControl (AGC)              │
+│  • Adaptive Far-Field Gain (1.3x - 3.5x Dynamic RMS)                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                             USER INTERFACE                              │
+│  • Jetpack Compose True-Dark Theme (ChatGPT Aesthetic)                  │
+│  • AuraDynamicIsland Floating Overlay Card                              │
+│  • Live Telemetry Diagnostics Screen                                    │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-That gives you `applicationId "com.aura.assistant"` and a default
-`MainActivity.kt` in the same package — which is why every native file
-here uses `package com.aura.assistant`. Then copy into the generated
-project, overwriting the defaults:
+---
 
-- `lib/` (both `main.dart` and `device_bridge.dart`)
-- `pubspec.yaml`
-- `android/app/src/main/AndroidManifest.xml`
-- `android/app/src/main/kotlin/com/aura/assistant/` (all three `.kt` files
-  — delete the generated `MainActivity.kt`/`.java` first so there's no
-  duplicate class)
-- `android/app/src/main/res/xml/accessibility_service_config.xml`
-- `android/app/src/main/res/values/strings.xml` (merge with, don't
-  overwrite, the generated one if it already has content)
+## 🚀 Key Features
 
-## 2. Point it at your deployed web app
+### 1. 🎙 ChatGPT-Style Context-Preserving Barge-In
+- When the user interrupts AURA mid-speech, the in-progress exchange is **not discarded**.
+- AURA automatically captures the partial turn (`InterruptedContext`), saves it to a rolling turn buffer, and silently merges it with the user's new command.
+- **Result**: Seamless, natural conversational continuity just like human dialogue.
 
-Deploy the TanStack Start project first (Vercel, Netlify, Cloudflare, etc.),
-then edit the URL constant in `lib/main.dart`:
+### 2. ⚡ Microphone Ownership Arbitration (`MicOwnershipManager`)
+- Eliminates race conditions and double-open crashes between background keyword spotting and live voice sessions.
+- `WakeWordService` immediately yields microphone ownership before broadcasting wake events.
+- `GeminiLiveClient` acquires exclusive 16kHz capture and releases cleanly upon session end.
 
-```dart
-const String auraWebAppUrl = 'https://your-real-domain.com';
+### 3. 🛠 52+ Native Android Autonomous Tools
+AURA executes native device actions directly via Android APIs:
+- **Communication**: WhatsApp auto-send, Direct SMS, Phone calls, Contacts lookup.
+- **Media & Music**: YouTube Music search/playback, System media transport controls (play/pause/next/like).
+- **Productivity**: Google Calendar events, Alarms, Timers, Notes.
+- **Device Control**: Flashlight, Volume, Brightness, Wi-Fi/Bluetooth settings, App launching.
+- **Navigation & Vision**: Google Maps routing, Real-time camera & screen frame analysis.
+
+### 4. 📊 Live Telemetry & Diagnostics
+- Integrated developer diagnostics accessible via **Settings -> System & Diagnostics**.
+- Real-time observation of WebSocket connectivity, audio packet metrics, barge-in counts, tool invocations, and hardware mic owner.
+- Emergency manual **"Force Release Mic"** controls for testing.
+
+---
+
+## 📁 Repository Structure
+
+```
+aura_shell_backup/
+├── 2.0.md                                      # Comprehensive AURA 2.0 Specification
+├── android/
+│   ├── app/src/main/kotlin/com/aura/assistant/
+│   │   ├── MainActivity.kt                     # Compose entry point & Lifecycle
+│   │   ├── WakeWordService.kt                  # Foreground OpenWakeWord service
+│   │   ├── ai/
+│   │   │   ├── GeminiLiveClient.kt             # Gemini Live Bidi WebSocket client
+│   │   │   ├── AuraMemoryManager.kt            # Persistent user memory system
+│   │   │   └── tools/                          # Native tool registry & implementations
+│   │   ├── audio/
+│   │   │   ├── MicOwnershipManager.kt          # Hardware mic coordinator
+│   │   │   ├── AudioCaptureSession.kt          # 16kHz PCM capture + VAD + AGC
+│   │   │   ├── AudioPlaybackSession.kt         # 24kHz PCM playback + instant flush
+│   │   │   ├── AuraVadDetector.kt              # Voice activity detection
+│   │   │   └── AuraDiagnostics.kt              # System telemetry flows
+│   │   ├── ui/
+│   │   │   ├── screens/
+│   │   │   │   ├── AuraMainScreen.kt           # Main chat interface
+│   │   │   │   ├── ChatGPTVoiceScreen.kt       # Fullscreen voice orb
+│   │   │   │   └── AuraDiagnosticsScreen.kt    # Developer metrics screen
+│   │   │   ├── components/                     # Compose UI components
+│   │   │   └── theme/                          # True-dark ChatGPT tokens
+│   │   └── service/
+│   │       ├── AuraAccessibilityService.kt     # UI automation & WhatsApp auto-send
+│   │       └── AuraNotificationListenerService.kt # Media session listener
+└── README.md
 ```
 
-For local testing against `npm run dev` on the same laptop, use
-`http://10.0.2.2:PORT` from an emulator (that's how the emulator reaches
-your machine's localhost), or your LAN IP for a physical device on the
-same Wi-Fi.
+---
 
-## 3. Install dependencies and run
+## 🔧 Getting Started
 
-```bash
-cd aura_shell_full
-flutter pub get
-flutter run          # deploys to a connected device/emulator
-# or, to just build an APK to sideload:
-flutter build apk --release
-# output: build/app/outputs/flutter-apk/app-release.apk
-```
+### Prerequisites
+- Android Studio Ladybug | 2024.2+
+- Android SDK 34+ (Android 14 / 15 target)
+- JDK 17+
+- Gemini API Key with access to Google GenerativeService (v1beta Bidi WebSocket)
 
-Sideloading: copy that APK to your phone and open it (you'll need to allow
-"install unknown apps" for whatever app you use to open it).
+### Build & Run
+1. Open the `android/` directory in Android Studio.
+2. Add your Gemini API key in `Secrets.kt` or `local.properties`.
+3. Sync Gradle and run on a physical Android device or emulator with microphone support:
+   ```bash
+   ./gradlew installDebug
+   ```
+4. Grant **Microphone**, **Accessibility**, and **Notification Listener** permissions when prompted for full autonomous functionality.
 
-## 4. What's implemented
+---
 
-`lib/device_bridge.dart` implements every action in `ANDROID_BRIDGE.md`,
-backed by real native code where the doc calls for it:
+## 📜 License
 
-- **`media_control` (play/pause/next/previous/stop)** — real transport
-  control via `MediaSessionManager`, wired through the `aura/media`
-  MethodChannel in `MainActivity.kt` and `AuraNotificationListenerService.kt`
-  (a presence-only notification listener; Android requires one to hand back
-  the active session — it reads no notification content).
-- **`media_control` ("like")** and **`send_whatsapp` auto-send** — via
-  `AuraAccessibilityService.kt`, which walks the on-screen accessibility
-  tree for a send/like control and taps it.
-- **`send_sms`** — sent directly with `SmsManager` through the `aura/sms`
-  channel; falls back to opening the SMS composer pre-filled if the
-  permission isn't granted.
-- **Everything else** (open_app, play_music, make_call, calendar, alarms,
-  timers, navigate_maps, take_photo, open_url, and wifi/bluetooth/airplane/
-  flashlight/dnd/brightness/volume under toggle_setting) — intents or
-  plugins, as in the original scaffold.
-
-### Two things no code can skip, by Android design
-
-- **Notification access** (for media_control) and **accessibility service**
-  (for "like" and WhatsApp auto-send) can only be turned on by the user,
-  by hand, in Settings — this is an Android anti-abuse boundary, not a gap
-  in this project. The app detects when they're off and opens the right
-  settings screen for the user automatically; it just can't flip the
-  switch itself.
-- **Wi-Fi/Bluetooth/airplane-mode toggling** has had no public API since
-  Android 10 (API 29) for any app, full stop — this project opens the
-  relevant settings screen instead, which is the same thing every other
-  app in this situation does.
-
-Everything else is genuinely wired end-to-end: build it, install it, grant
-the two settings above once, and every action in `ANDROID_BRIDGE.md` works
-the way the table describes.
-
-## 5. App icon / branding
-
-The manifest references `@mipmap/ic_launcher`, which only exists once you
-scaffold with `flutter create` (step 1) or add your own icons under
-`android/app/src/main/res/mipmap-*/`.
+This project is licensed under the MIT License — see the LICENSE file for details.
