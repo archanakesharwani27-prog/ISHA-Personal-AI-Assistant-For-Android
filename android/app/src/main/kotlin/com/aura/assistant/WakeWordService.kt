@@ -24,6 +24,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import com.aura.assistant.audio.AuraDiagnostics
+import com.aura.assistant.audio.MicOwnershipManager
+import com.aura.assistant.audio.MicOwner
 
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -524,6 +527,12 @@ class WakeWordService : Service(), SensorEventListener {
 
     private fun startWakeEngine() {
         if (!wakeEnabled || isPaused || isTtsSpeaking) return
+        if (!MicOwnershipManager.requestOwnership(MicOwner.WAKE_WORD)) {
+            Log.w(TAG, "Mic currently owned by ${MicOwnershipManager.currentOwner.value} — deferring wake engine")
+            AuraDiagnostics.updateWake { it.copy(micOwned = false) }
+            return
+        }
+        AuraDiagnostics.updateWake { it.copy(micOwned = true, serviceRunning = true) }
         if (wakeWordEngine == null) {
             initWakeWordEngine()
             return
@@ -542,6 +551,8 @@ class WakeWordService : Service(), SensorEventListener {
 
     private fun pauseWakeEngine() {
         try {
+            MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+            AuraDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
             detectionJob?.cancel()
             detectionJob = null
             wakeWordEngine?.stop()
@@ -555,6 +566,8 @@ class WakeWordService : Service(), SensorEventListener {
 
     private fun stopListening() {
         isRunning = false
+        MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+        AuraDiagnostics.updateWake { it.copy(serviceRunning = false, micOwned = false, inferenceRunning = false) }
         pauseWakeEngine()
         stopShakeSensor()
         detectionJob?.cancel()
@@ -572,6 +585,18 @@ class WakeWordService : Service(), SensorEventListener {
 
     private fun onTriggerDetected(reason: String, score: Float = 0.0f, modelName: String = "") {
         Log.i(TAG, "Trigger detected: $reason (score=$score, model=$modelName) — presenting Gemini Assistant Floating Overlay")
+
+        // Immediately release mic ownership so Gemini Live can acquire it without contention
+        MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+        AuraDiagnostics.updateWake {
+            it.copy(
+                micOwned = false,
+                detectionCount = it.detectionCount + 1,
+                lastDetectionTime = System.currentTimeMillis(),
+                lastModelName = modelName,
+                lastScore = score
+            )
+        }
 
         // Acquire a brief 2-second wake lock in case the display was sleeping
         try {

@@ -11,7 +11,10 @@ import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Base64
 import android.util.Log
+import com.aura.assistant.audio.AuraDiagnostics
 import com.aura.assistant.audio.AuraVadDetector
+import com.aura.assistant.audio.MicOwnershipManager
+import com.aura.assistant.audio.MicOwner
 import com.aura.assistant.config.Secrets
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -66,11 +69,15 @@ class ConversationTurnBuffer(private val maxTurns: Int = 6) {
 
 enum class AuraLiveState {
     IDLE,
+    WAKE_LISTENING,
+    WAKE_DETECTED,
     CONNECTING,
     CONNECTED,
     LISTENING,
     THINKING,
     SPEAKING,
+    INTERRUPTED,
+    RECOVERY,
     ERROR
 }
 
@@ -296,6 +303,7 @@ class GeminiLiveClient(private val context: Context) {
 
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
+        AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
         val key = Secrets.getActiveGeminiKey()
         val url = "$BASE_WS_URL?key=$key"
         val request = Request.Builder().url(url).build()
@@ -306,6 +314,7 @@ class GeminiLiveClient(private val context: Context) {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
                 _liveState.value = AuraLiveState.CONNECTED
+                AuraDiagnostics.updateLive { it.copy(wsConnected = true, sessionState = AuraLiveState.CONNECTED) }
                 sendSetupMessage()
             }
 
@@ -323,6 +332,7 @@ class GeminiLiveClient(private val context: Context) {
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.i(TAG, "WebSocket closing: $code / $reason")
                 _liveState.value = AuraLiveState.IDLE
+                AuraDiagnostics.updateLive { it.copy(wsConnected = false, sessionState = AuraLiveState.IDLE) }
                 stopMicRecording()
             }
 
@@ -331,6 +341,7 @@ class GeminiLiveClient(private val context: Context) {
                 Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
                 stopMicRecording()
                 _liveState.value = AuraLiveState.ERROR
+                AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
             }
         })
     }
@@ -400,6 +411,19 @@ class GeminiLiveClient(private val context: Context) {
             // setupComplete arrives and this runs, total elapsed time is well over 500ms.
             // The extra 200ms here is a safety margin for the hardware pipeline.
             delay(200)
+
+            // Acquire exclusive mic ownership from MicOwnershipManager
+            if (!MicOwnershipManager.requestOwnership(MicOwner.GEMINI_LIVE)) {
+                Log.w(TAG, "Mic not immediately available, waiting 300ms for release...")
+                delay(300)
+                if (!MicOwnershipManager.requestOwnership(MicOwner.GEMINI_LIVE)) {
+                    Log.e(TAG, "Mic ownership denied to GEMINI_LIVE (held by ${MicOwnershipManager.currentOwner.value})")
+                    _liveState.value = AuraLiveState.ERROR
+                    AuraDiagnostics.updateLive { it.copy(lastError = "Mic ownership denied", sessionState = AuraLiveState.ERROR) }
+                    return@launch
+                }
+            }
+            AuraDiagnostics.updateLive { it.copy(micOwned = true, sessionState = _liveState.value) }
 
             val hasPerm = androidx.core.content.ContextCompat.checkSelfPermission(
                 context,
@@ -517,9 +541,33 @@ class GeminiLiveClient(private val context: Context) {
                             if ((vadResult.isSpeech && rms > 0.06) || rms > 0.12) {
                                 bargeInConsecutiveFrames++
                                 if (bargeInConsecutiveFrames >= 2) {
-                                    Log.i(TAG, "Real user barge-in detected (RMS=$rms). Flushing playback.")
+                                    Log.i(TAG, "Real user barge-in detected (RMS=$rms). Flushing playback & preserving context.")
                                     flushAudioPlayback()
+                                    val partialUser = currentUserTurnAccumulator.toString().trim()
+                                    val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
+                                    if (partialUser.isNotBlank() || partialAssistant.isNotBlank()) {
+                                        interruptedContext = InterruptedContext(
+                                            userSaid = partialUser,
+                                            assistantWasSaying = partialAssistant
+                                        )
+                                        Log.i(TAG, "Client barge-in saved interrupted context: user='${partialUser.take(40)}', aura='${partialAssistant.take(40)}'")
+                                        _turnCompletedFlow.tryEmit(
+                                            LiveVoiceTurn(
+                                                userText = if (partialUser.isNotBlank()) partialUser else "Spoken query",
+                                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant…" else ""
+                                            )
+                                        )
+                                    }
+                                    currentUserTurnAccumulator.clear()
+                                    currentAssistantTurnAccumulator.clear()
                                     bargeInConsecutiveFrames = 0
+                                    _liveState.value = AuraLiveState.INTERRUPTED
+                                    AuraDiagnostics.updateLive {
+                                        it.copy(
+                                            interruptionCount = it.interruptionCount + 1,
+                                            sessionState = AuraLiveState.INTERRUPTED
+                                        )
+                                    }
                                     _liveState.value = AuraLiveState.LISTENING
                                 }
                             } else {
@@ -572,6 +620,8 @@ class GeminiLiveClient(private val context: Context) {
         isMicRecordingActive = false
         micJob?.cancel()
         micJob = null
+        MicOwnershipManager.releaseOwnership(MicOwner.GEMINI_LIVE)
+        AuraDiagnostics.updateLive { it.copy(micOwned = false) }
     }
 
     /**
@@ -710,10 +760,12 @@ class GeminiLiveClient(private val context: Context) {
             add("realtimeInput", realtime)
         }
         webSocket?.send(inputObj.toString())
+        AuraDiagnostics.updateLive { it.copy(audioPacketsSent = it.audioPacketsSent + 1) }
     }
 
     private fun handleServerMessage(jsonText: String) {
         try {
+            AuraDiagnostics.updateLive { it.copy(serverEventsReceived = it.serverEventsReceived + 1) }
             val root = JsonParser.parseString(jsonText).asJsonObject
 
             // 0. Setup Complete
@@ -764,6 +816,12 @@ class GeminiLiveClient(private val context: Context) {
                     currentUserTurnAccumulator.clear()
                     currentAssistantTurnAccumulator.clear()
                     _liveState.value = AuraLiveState.LISTENING
+                    AuraDiagnostics.updateLive {
+                        it.copy(
+                            interruptionCount = it.interruptionCount + 1,
+                            sessionState = AuraLiveState.LISTENING
+                        )
+                    }
                     return
                 }
 
@@ -841,6 +899,12 @@ class GeminiLiveClient(private val context: Context) {
                 val toolCall = root.getAsJsonObject("toolCall")
                 val fnCalls = toolCall.getAsJsonArray("functionCalls") ?: return
                 _liveState.value = AuraLiveState.THINKING
+                AuraDiagnostics.updateLive {
+                    it.copy(
+                        toolCallsHandled = it.toolCallsHandled + fnCalls.size(),
+                        sessionState = AuraLiveState.THINKING
+                    )
+                }
 
                 scope.launch {
                     val responseArray = JsonArray()

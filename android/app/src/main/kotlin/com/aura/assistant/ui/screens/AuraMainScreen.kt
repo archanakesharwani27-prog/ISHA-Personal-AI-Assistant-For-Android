@@ -54,6 +54,7 @@ fun AuraMainScreen(
     val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     val isShakeEnabled by viewModel.isShakeEnabled.collectAsState()
+    var isDiagnosticsVisible by remember { mutableStateOf(false) }
 
     // Activity Launchers for Attachments
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -233,7 +234,15 @@ fun AuraMainScreen(
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onClearAllChats = { viewModel.clearAllChats() },
+                    onOpenDiagnostics = { isDiagnosticsVisible = true },
                     onDismiss = { viewModel.hideSettings() }
+                )
+            }
+
+            // ── Diagnostics Screen ───────────────────────────────────────────
+            if (isDiagnosticsVisible) {
+                AuraDiagnosticsScreen(
+                    onBack = { isDiagnosticsVisible = false }
                 )
             }
         }

@@ -42,6 +42,7 @@ fun AuraSettingsSheet(
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,
     onClearAllChats: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -400,6 +401,60 @@ fun AuraSettingsSheet(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = null,
                         tint = AuraAlertRed.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── Section: Developer & Diagnostics ──────────────────────────────
+            SettingsSectionHeader(icon = Icons.Default.Build, title = "System & Diagnostics")
+
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onDismiss()
+                        onOpenDiagnostics()
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(ChatGptAccentGreen.copy(alpha = 0.12f))
+                            .border(1.dp, ChatGptAccentGreen.copy(alpha = 0.3f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = ChatGptAccentGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "AURA 2.0 Diagnostics",
+                            style = AuraTypography.titleMedium.copy(fontSize = 13.sp)
+                        )
+                        Text(
+                            text = "Inspect mic ownership, wake word & Gemini Live telemetry",
+                            style = AuraTypography.bodyMedium.copy(fontSize = 11.sp, color = ChatGptTextMuted)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = ChatGptTextMuted
                     )
                 }
             }
