@@ -28,6 +28,7 @@ import androidx.activity.viewModels
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
 import com.aura.assistant.ui.screens.AuraMainScreen
 import com.aura.assistant.ui.theme.AuraTheme
+import com.aura.assistant.training.AuraTrainingEngine
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -179,6 +180,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         registerReceivers()
         initShakeSensor()
         initNativeTts()
+
+        // ── Seed AURA training corpus into ExperienceMemory (background, idempotent) ──
+        Thread {
+            try {
+                AuraTrainingEngine.seedIfNeeded(applicationContext)
+                Log.i(TAG, "AuraTrainingEngine seed complete.")
+            } catch (e: Exception) {
+                Log.e(TAG, "AuraTrainingEngine seed failed", e)
+            }
+        }.apply { name = "aura-training-seed"; isDaemon = true; start() }
+
         startWakeWordService()
         handleWakeIntent(intent)
 

@@ -42,13 +42,17 @@ fun AuraHeaderHud(
     )
 
     val (ledColor, ledText) = when (liveState) {
-        AuraLiveState.IDLE       -> Pair(AuraTextMuted, "IDLE")
-        AuraLiveState.CONNECTING -> Pair(AuraAmberGold.copy(alpha = ledAlpha), "CONNECTING")
-        AuraLiveState.CONNECTED  -> Pair(AuraHoloEmerald.copy(alpha = ledAlpha), "CONNECTED")
-        AuraLiveState.LISTENING  -> Pair(AuraNeonCyan.copy(alpha = ledAlpha), "LISTENING")
-        AuraLiveState.THINKING   -> Pair(AuraCyberPurple.copy(alpha = ledAlpha), "THINKING")
-        AuraLiveState.SPEAKING   -> Pair(AuraNeonCyan.copy(alpha = ledAlpha), "SPEAKING")
-        AuraLiveState.ERROR      -> Pair(AuraAlertRed, "ERROR")
+        AuraLiveState.IDLE           -> Pair(AuraTextMuted, "IDLE")
+        AuraLiveState.CONNECTING     -> Pair(AuraAmberGold.copy(alpha = ledAlpha), "CONNECTING")
+        AuraLiveState.CONNECTED      -> Pair(AuraHoloEmerald.copy(alpha = ledAlpha), "CONNECTED")
+        AuraLiveState.LISTENING      -> Pair(AuraNeonCyan.copy(alpha = ledAlpha), "LISTENING")
+        AuraLiveState.THINKING       -> Pair(AuraCyberPurple.copy(alpha = ledAlpha), "THINKING")
+        AuraLiveState.SPEAKING       -> Pair(AuraNeonCyan.copy(alpha = ledAlpha), "SPEAKING")
+        AuraLiveState.ERROR          -> Pair(AuraAlertRed, "ERROR")
+        AuraLiveState.WAKE_LISTENING -> Pair(AuraNeonCyan.copy(alpha = ledAlpha * 0.6f), "WAKE-LISTEN")
+        AuraLiveState.WAKE_DETECTED  -> Pair(AuraHoloEmerald.copy(alpha = ledAlpha), "WAKE!")
+        AuraLiveState.INTERRUPTED    -> Pair(AuraAmberGold.copy(alpha = ledAlpha), "INTERRUPTED")
+        AuraLiveState.RECOVERY       -> Pair(AuraCyberPurple.copy(alpha = ledAlpha * 0.7f), "RECOVERY")
     }
 
     Surface(

@@ -73,13 +73,17 @@ fun GlowingVoiceOrb(
     )
 
     val primaryColor = when (liveState) {
-        AuraLiveState.IDLE -> AuraNeonCyan
-        AuraLiveState.CONNECTING -> AuraAmberGold
-        AuraLiveState.CONNECTED -> AuraHoloEmerald
-        AuraLiveState.LISTENING -> AuraNeonCyan
-        AuraLiveState.THINKING -> AuraCyberPurple
-        AuraLiveState.SPEAKING -> AuraNeonCyan
-        AuraLiveState.ERROR -> AuraAlertRed
+        AuraLiveState.IDLE            -> AuraNeonCyan
+        AuraLiveState.CONNECTING      -> AuraAmberGold
+        AuraLiveState.CONNECTED       -> AuraHoloEmerald
+        AuraLiveState.LISTENING       -> AuraNeonCyan
+        AuraLiveState.THINKING        -> AuraCyberPurple
+        AuraLiveState.SPEAKING        -> AuraNeonCyan
+        AuraLiveState.ERROR           -> AuraAlertRed
+        AuraLiveState.WAKE_LISTENING  -> AuraNeonCyan.copy(alpha = 0.7f)
+        AuraLiveState.WAKE_DETECTED   -> AuraHoloEmerald
+        AuraLiveState.INTERRUPTED     -> AuraAmberGold
+        AuraLiveState.RECOVERY        -> AuraCyberPurple.copy(alpha = 0.6f)
     }
 
     val secondaryColor = when (liveState) {
@@ -199,13 +203,17 @@ fun GlowingVoiceOrb(
 
         // State Badge
         val statusText = when (liveState) {
-            AuraLiveState.IDLE -> "TAP TO TALK  •  SAY \"HEY AURA\""
-            AuraLiveState.CONNECTING -> "CONNECTING TO GEMINI LIVE..."
-            AuraLiveState.CONNECTED -> "AURA READY  •  LISTENING"
-            AuraLiveState.LISTENING -> "AURA IS LISTENING..."
-            AuraLiveState.THINKING -> "AURA IS THINKING..."
-            AuraLiveState.SPEAKING -> "AURA IS SPEAKING..."
-            AuraLiveState.ERROR -> "CONNECTION ERROR • RETRY"
+            AuraLiveState.IDLE           -> "TAP TO TALK  •  SAY \"HEY AURA\""
+            AuraLiveState.CONNECTING     -> "CONNECTING TO GEMINI LIVE..."
+            AuraLiveState.CONNECTED      -> "AURA READY  •  LISTENING"
+            AuraLiveState.LISTENING      -> "AURA IS LISTENING..."
+            AuraLiveState.THINKING       -> "AURA IS THINKING..."
+            AuraLiveState.SPEAKING       -> "AURA IS SPEAKING..."
+            AuraLiveState.ERROR          -> "CONNECTION ERROR • RETRY"
+            AuraLiveState.WAKE_LISTENING -> "WAKE WORD LISTENING..."
+            AuraLiveState.WAKE_DETECTED  -> "WAKE WORD DETECTED!"
+            AuraLiveState.INTERRUPTED    -> "INTERRUPTED • PROCESSING..."
+            AuraLiveState.RECOVERY       -> "RECOVERING..."
         }
 
         Text(

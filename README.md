@@ -1,11 +1,50 @@
 # AURA 2.0 — Autonomous Personal AI Companion for Android
 
 <p align="center">
-  <img src="https://img.shields.io/badge/AURA-2.0-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="AURA 2.0" />
+  <img src="https://img.shields.io/badge/AURA-2.0.3-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="AURA 2.0.3" />
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Gemini-Live%20Multimodal-10A37F?style=for-the-badge&logo=google&logoColor=white" alt="Gemini Live" />
   <img src="https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge" alt="Status" />
+  <img src="https://img.shields.io/badge/Training_Corpus-333+_Commands-FF6B35?style=for-the-badge" alt="Training Corpus" />
 </p>
+
+---
+
+## 📋 Version History
+
+| Version | Date | What's New |
+|---------|------|------------|
+| **2.0.3** 🆕 | 2026-09-19 | **AURA Training System** — 333+ command corpus, ExperienceMemory seeding, AuraTrainingEngine |
+| 2.0.2 | 2026-09-18 | ConversationalReactionEngine, IntentRouter, improved feminine grammar |
+| 2.0.1 | 2026-09-17 | MicOwnershipManager, ExecutionVerifier, RetryPolicy, 52+ tool registry |
+| 2.0.0 | 2026-09-13 | Full native Kotlin/Compose rewrite from Flutter, Gemini Live Bidi WebSocket |
+
+---
+
+## 🆕 What's New in v2.0.3 — Training System
+
+> These features are **brand new** — not present in any previous version.
+
+### 🧠 AuraCommandCorpus (`training/AuraCommandCorpus.kt`)
+A massive pre-built training dataset with **333+ real-world user command patterns** spanning **55 categories**:
+- Hindi, Hinglish, English, typos, slang, compound commands, edge cases
+- Every command maps to the correct tool, parameters, and a pre-seeded lesson
+- Categories include: calls, SMS, WhatsApp, volume, brightness, WiFi, Bluetooth, alarms, timers, navigation, music, camera, battery, memory, notes, emergency, chitchat, and 37 more
+
+### ⚙️ AuraTrainingEngine (`training/AuraTrainingEngine.kt`)
+- **Idempotent seeding**: Seeds `ExperienceMemory` only once per corpus version (v3 → `CORPUS_VERSION = 3`)
+- **Background thread**: Non-blocking daemon thread seeded on app start
+- **5 extra lesson categories**: COMPOUND, CLARIFY, SAFETY, ANTI_HALLUCINATION, GRAMMAR
+- `diagnosticsReport()` — runtime stats about lessons loaded
+- `forceSeed()` — for debug/QA
+
+### 📚 Enhanced ExperienceMemory (`memory/ExperienceMemory.kt`)
+- Capacity raised: **200 total lessons** (was 3 per tool)
+- **5 lessons per tool** (was 3)
+- **Prioritised injection**: Warnings/failures first in system prompt (most critical)
+- New `recordLessonsBatch()` for efficient bulk seeding
+- `stats()` summary for diagnostics
+- `MAX_PROMPT_LESSONS = 15` injected per session
 
 ---
 
@@ -18,6 +57,7 @@
 - **Background Wake Word Detection**: Offline, high-precision keyword spotting (*"Hey Aura"*) via OpenWakeWord ONNX.
 - **Autonomous Tool Engine**: 52+ native Android device tools with multi-step execution, fallback, and verification.
 - **Gemini Floating Overlay & Dynamic Island**: Instant access over any running app without interrupting the user's workflow.
+- **Self-Learning Experience Memory**: AURA learns from successes and failures and never repeats the same mistake.
 
 ---
 
@@ -37,6 +77,11 @@
 │  • MicOwnershipManager (Atomic handshake between WakeWord & GeminiLive) │
 │  • AcousticEchoCanceler (AEC) & AutomaticGainControl (AGC)              │
 │  • Adaptive Far-Field Gain (1.3x - 3.5x Dynamic RMS)                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                    🆕 TRAINING & SELF-LEARNING LAYER                    │
+│  • AuraCommandCorpus (333+ command patterns, 55 categories)             │
+│  • AuraTrainingEngine (idempotent seeding, background daemon thread)    │
+│  • ExperienceMemory v2 (200 lessons, prioritised prompt injection)      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                             USER INTERFACE                              │
 │  • Jetpack Compose True-Dark Theme (ChatGPT Aesthetic)                  │
@@ -68,9 +113,14 @@ AURA executes native device actions directly via Android APIs:
 - **Navigation & Vision**: Google Maps routing, Real-time camera & screen frame analysis.
 
 ### 4. 📊 Live Telemetry & Diagnostics
-- Integrated developer diagnostics accessible via **Settings -> System & Diagnostics**.
+- Integrated developer diagnostics accessible via **Settings → System & Diagnostics**.
 - Real-time observation of WebSocket connectivity, audio packet metrics, barge-in counts, tool invocations, and hardware mic owner.
 - Emergency manual **"Force Release Mic"** controls for testing.
+
+### 5. 🧠 Self-Learning Training System 🆕
+- **333+ pre-built command patterns** covering every realistic user input style.
+- Lessons seeded into `ExperienceMemory` on first boot — AURA starts smart, not blank.
+- Compound commands, ambiguity handling, safety rules, anti-hallucination rules, and grammar rules all pre-loaded.
 
 ---
 
@@ -85,24 +135,26 @@ aura_shell_backup/
 │   │   ├── WakeWordService.kt                  # Foreground OpenWakeWord service
 │   │   ├── ai/
 │   │   │   ├── GeminiLiveClient.kt             # Gemini Live Bidi WebSocket client
-│   │   │   ├── AuraMemoryManager.kt            # Persistent user memory system
-│   │   │   └── tools/                          # Native tool registry & implementations
+│   │   │   ├── AuraMemoryManager.kt            # Persistent user memory + system prompt
+│   │   │   └── JarvisToolRegistry.kt           # 52+ tool declarations & dispatcher
+│   │   ├── memory/
+│   │   │   └── ExperienceMemory.kt             # 🆕 v2: 200 lessons, batch seeding
+│   │   ├── training/                           # 🆕 NEW in v2.0.3
+│   │   │   ├── AuraCommandCorpus.kt            # 🆕 333+ command patterns, 55 categories
+│   │   │   └── AuraTrainingEngine.kt           # 🆕 Idempotent corpus → memory seeder
+│   │   ├── brain/
+│   │   │   ├── ConversationalReactionEngine.kt # Emotional & contextual response logic
+│   │   │   └── IntentRouter.kt                 # Command intent classification
 │   │   ├── audio/
 │   │   │   ├── MicOwnershipManager.kt          # Hardware mic coordinator
 │   │   │   ├── AudioCaptureSession.kt          # 16kHz PCM capture + VAD + AGC
-│   │   │   ├── AudioPlaybackSession.kt         # 24kHz PCM playback + instant flush
-│   │   │   ├── AuraVadDetector.kt              # Voice activity detection
-│   │   │   └── AuraDiagnostics.kt              # System telemetry flows
-│   │   ├── ui/
-│   │   │   ├── screens/
-│   │   │   │   ├── AuraMainScreen.kt           # Main chat interface
-│   │   │   │   ├── ChatGPTVoiceScreen.kt       # Fullscreen voice orb
-│   │   │   │   └── AuraDiagnosticsScreen.kt    # Developer metrics screen
-│   │   │   ├── components/                     # Compose UI components
-│   │   │   └── theme/                          # True-dark ChatGPT tokens
-│   │   └── service/
-│   │       ├── AuraAccessibilityService.kt     # UI automation & WhatsApp auto-send
-│   │       └── AuraNotificationListenerService.kt # Media session listener
+│   │   │   └── AudioPlaybackSession.kt         # 24kHz PCM playback + instant flush
+│   │   └── ui/
+│   │       ├── screens/
+│   │       │   ├── AuraMainScreen.kt           # Main chat interface
+│   │       │   ├── ChatGPTVoiceScreen.kt       # Fullscreen voice orb
+│   │       │   └── AuraDiagnosticsScreen.kt    # Developer metrics screen
+│   │       └── theme/                          # True-dark ChatGPT tokens
 └── README.md
 ```
 

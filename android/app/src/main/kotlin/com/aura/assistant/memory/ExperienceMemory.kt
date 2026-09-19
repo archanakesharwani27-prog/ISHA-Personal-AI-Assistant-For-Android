@@ -14,31 +14,90 @@ data class ExecutionLesson(
 
 /**
  * Long-term autonomous experience memory for AURA 2.0.
- * Stores lessons learned from past tool successes and failures
- * so AURA never repeats the same mistake twice.
+ *
+ * Stores lessons learned from:
+ *  - Real tool execution outcomes (success / failure)
+ *  - Pre-seeded corpus wisdom from AuraTrainingEngine
+ *
+ * AURA never repeats the same mistake twice.
+ * Lessons are injected into the system prompt on every session.
  */
 object ExperienceMemory {
+
+    private const val TAG = "ExperienceMemory"
     private const val PREFS_NAME = "aura_experience_memory"
     private const val KEY_LESSONS = "execution_lessons"
+
+    /**
+     * Max lessons to keep in memory total.
+     * Increased from 3-per-tool to support pre-seeded corpus.
+     */
+    private const val MAX_LESSONS_PER_TOOL = 5
+    private const val MAX_TOTAL_LESSONS = 200
+    private const val MAX_PROMPT_LESSONS = 15   // how many to inject per session
+
     private val gson = Gson()
 
-    private fun getPrefs(context: Context): SharedPreferences {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private fun getPrefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // ── Write ─────────────────────────────────────────────────────────
+
+    /**
+     * Records a lesson from a tool execution outcome or training corpus seed.
+     * Deduplicates and respects per-tool + total capacity limits.
+     */
+    fun recordLesson(context: Context, toolName: String, success: Boolean, lesson: String) {
+        if (lesson.isBlank() || toolName.isBlank()) return
+
+        val allLessons = getLessons(context).toMutableList()
+
+        // Avoid exact duplicates
+        if (allLessons.any { it.toolName == toolName && it.lesson == lesson }) return
+
+        // Per-tool capacity: remove oldest when tool has too many
+        val toolLessons = allLessons.filter { it.toolName == toolName }
+        if (toolLessons.size >= MAX_LESSONS_PER_TOOL) {
+            allLessons.remove(toolLessons.first())
+        }
+
+        // Global capacity: remove oldest overall when full
+        if (allLessons.size >= MAX_TOTAL_LESSONS) {
+            allLessons.removeAt(0)
+        }
+
+        allLessons.add(ExecutionLesson(toolName, success, lesson))
+        saveLessons(context, allLessons)
     }
 
     /**
-     * Records a lesson from an execution outcome.
+     * Batch-records multiple lessons at once (used by AuraTrainingEngine seeding).
+     * More efficient than individual calls.
      */
-    fun recordLesson(context: Context, toolName: String, success: Boolean, lesson: String) {
-        val currentLessons = getLessons(context).toMutableList()
-        // Remove older lessons for the same tool if more than 3 exist
-        val existingToolLessons = currentLessons.filter { it.toolName == toolName }
-        if (existingToolLessons.size >= 3) {
-            currentLessons.remove(existingToolLessons.first())
+    fun recordLessonsBatch(
+        context: Context,
+        entries: List<Triple<String, Boolean, String>>
+    ) {
+        val allLessons = getLessons(context).toMutableList()
+
+        for ((toolName, success, lesson) in entries) {
+            if (lesson.isBlank() || toolName.isBlank()) continue
+            if (allLessons.any { it.toolName == toolName && it.lesson == lesson }) continue
+
+            val toolLessons = allLessons.filter { it.toolName == toolName }
+            if (toolLessons.size >= MAX_LESSONS_PER_TOOL) {
+                allLessons.remove(toolLessons.first())
+            }
+            if (allLessons.size >= MAX_TOTAL_LESSONS) {
+                allLessons.removeAt(0)
+            }
+            allLessons.add(ExecutionLesson(toolName, success, lesson))
         }
-        currentLessons.add(ExecutionLesson(toolName, success, lesson))
-        saveLessons(context, currentLessons)
+
+        saveLessons(context, allLessons)
     }
+
+    // ── Read ──────────────────────────────────────────────────────────
 
     /**
      * Retrieves all recorded execution lessons.
@@ -53,24 +112,70 @@ object ExperienceMemory {
         }
     }
 
+    /**
+     * Returns lessons for a specific tool name.
+     */
+    fun getLessonsForTool(context: Context, toolName: String): List<ExecutionLesson> =
+        getLessons(context).filter { it.toolName == toolName }
+
+    /**
+     * Total number of lessons stored.
+     */
+    fun lessonCount(context: Context): Int = getLessons(context).size
+
+    /**
+     * Summary statistics for diagnostics.
+     */
+    fun stats(context: Context): String {
+        val lessons = getLessons(context)
+        val byTool = lessons.groupBy { it.toolName }
+        return "ExperienceMemory: ${lessons.size} lessons across ${byTool.size} tools. " +
+               "Success: ${lessons.count { it.success }}, Warnings: ${lessons.count { !it.success }}."
+    }
+
+    // ── Wipe ──────────────────────────────────────────────────────────
+
+    /**
+     * Clears all lessons. Use only with explicit user confirmation.
+     */
+    fun clearAll(context: Context) {
+        getPrefs(context).edit().remove(KEY_LESSONS).apply()
+    }
+
+    // ── Prompt Injection ──────────────────────────────────────────────
+
+    /**
+     * Formats the most important lessons for injection into the system prompt.
+     *
+     * Strategy:
+     *  - Failures/warnings first (most critical to avoid re-making mistakes)
+     *  - Successes / patterns second
+     *  - Capped at MAX_PROMPT_LESSONS to keep prompt concise
+     */
+    fun formatLessonsForPrompt(context: Context): String {
+        val allLessons = getLessons(context)
+        if (allLessons.isEmpty()) return ""
+
+        // Prioritise: warnings first, then successes; take the most recent
+        val warnings = allLessons.filter { !it.success }.takeLast(MAX_PROMPT_LESSONS / 2)
+        val successes = allLessons.filter { it.success }.takeLast(MAX_PROMPT_LESSONS / 2)
+        val selected = (warnings + successes).distinctBy { it.lesson }.take(MAX_PROMPT_LESSONS)
+
+        if (selected.isEmpty()) return ""
+
+        val sb = StringBuilder()
+        sb.appendLine("\n📚 AURA'S LEARNED EXPERIENCES & LESSONS (IN_MEMORY — DO NOT REPEAT MISTAKES):")
+        for (l in selected) {
+            val icon = if (l.success) "✅" else "⚠️"
+            sb.appendLine("$icon [${l.toolName}]: ${l.lesson}")
+        }
+        return sb.toString()
+    }
+
+    // ── Private ───────────────────────────────────────────────────────
+
     private fun saveLessons(context: Context, lessons: List<ExecutionLesson>) {
         val json = gson.toJson(lessons)
         getPrefs(context).edit().putString(KEY_LESSONS, json).apply()
-    }
-
-    /**
-     * Formats lessons for system prompt injection.
-     */
-    fun formatLessonsForPrompt(context: Context): String {
-        val lessons = getLessons(context)
-        if (lessons.isEmpty()) return ""
-
-        val sb = StringBuilder()
-        sb.appendLine("\n📚 AURA'S LEARNED EXPERIENCES & LESSONS (DO NOT REPEAT MISTAKES):")
-        for (l in lessons.takeLast(10)) {
-            val statusIcon = if (l.success) "✅" else "⚠️"
-            sb.appendLine("$statusIcon [${l.toolName}]: ${l.lesson}")
-        }
-        return sb.toString()
     }
 }
