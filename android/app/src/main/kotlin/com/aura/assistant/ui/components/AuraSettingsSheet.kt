@@ -353,12 +353,15 @@ fun AuraSettingsSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoRow(label = "AI Model", value = "Gemini 2.5 Flash")
-                    InfoRow(label = "Live Voice", value = "Gemini 2.0 Flash Live")
-                    InfoRow(label = "Audio I/O", value = "16 kHz → 24 kHz PCM")
-                    InfoRow(label = "Active Voice", value = selectedVoice)
-                    InfoRow(label = "App Version", value = "AURA 2.0 Native")
-                    InfoRow(label = "Build", value = "Kotlin + Compose")
+                    InfoRow(label = "App Version", value = "v2.0.0-alpha")
+                    InfoRow(label = "Release Stage", value = "Phase 1 Complete (Tag: v2.0.0-phase1)")
+                    InfoRow(label = "Architecture", value = "AURA 2.0 Autonomous Companion")
+                    InfoRow(label = "Live Voice Model", value = "Gemini 2.5 Flash Native Audio")
+                    InfoRow(label = "Barge-In Engine", value = "ChatGPT-Style Context-Preserving")
+                    InfoRow(label = "Wake Engine", value = "OpenWakeWord (Offline ONNX)")
+                    InfoRow(label = "Audio Streaming", value = "16 kHz In → 24 kHz Out (PCM)")
+                    InfoRow(label = "Active Voice Persona", value = selectedVoice)
+                    InfoRow(label = "Native Stack", value = "Pure Kotlin + Jetpack Compose")
                 }
             }
 

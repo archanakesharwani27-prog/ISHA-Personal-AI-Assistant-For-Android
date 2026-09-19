@@ -1885,6 +1885,21 @@ object JarvisToolRegistry {
             result.addProperty("error", e.message ?: "Execution failed")
         }
 
+        // Post-execution state verification via AURA 2.0 ExecutionVerifier
+        try {
+            val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, name, args)
+            result.addProperty("verified", evidence.verified)
+            if (evidence.observedState != null) {
+                result.addProperty("observedState", evidence.observedState)
+            }
+            result.addProperty("verificationMethod", evidence.method ?: "standard")
+            if (!evidence.verified) {
+                Log.w(TAG, "Tool '$name' verification failed: ${evidence.observedState}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Verification check skipped for $name: ${e.message}")
+        }
+
         return result
     }
 
