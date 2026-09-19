@@ -6,6 +6,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.util.Base64
 import android.util.Log
 import com.aura.assistant.audio.AuraVadDetector
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import okhttp3.*
+import okio.ByteString
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -53,10 +57,10 @@ class GeminiLiveClient(private val context: Context) {
         private const val TAG = "GeminiLiveClient"
         private const val BASE_WS_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        // Primary low-latency Live Audio API model
+        // Primary low-latency Live Audio API model (verified from Google v1beta GenerativeService)
         private const val PRIMARY_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
-        // Fallback model if primary model is unreachable or throttled
-        private const val FALLBACK_LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
+        // Fallback model
+        private const val FALLBACK_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
     }
 
     private var activeModel = PRIMARY_LIVE_MODEL
@@ -107,6 +111,14 @@ class GeminiLiveClient(private val context: Context) {
 
     // Adaptive noise floor for speaker barge-in
     private var noiseFloor = 0.02
+    @Volatile private var playbackEndTime = 0L
+    @Volatile private var bargeInCooldownUntil = 0L
+    private var bargeInConsecutiveFrames = 0
+
+    // Progressive word streaming (prevents spoiling assistant transcript ahead of spoken audio)
+    private val pendingAssistantWords = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private var wordStreamerJob: Job? = null
+    private val displayedAssistantText = StringBuilder()
 
     // ── Pending text queue (for messages sent before LISTENING state) ──────────
     private val pendingTextMessages = ArrayDeque<String>()
@@ -178,6 +190,51 @@ class GeminiLiveClient(private val context: Context) {
             audioTrack?.flush()
             audioTrack?.play()
         } catch (_: Exception) {}
+        clearAssistantStreamer()
+    }
+
+    private fun enqueueAssistantText(text: String) {
+        val tokens = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        for (tok in tokens) {
+            pendingAssistantWords.add(tok)
+        }
+        startWordStreamerIfNeeded()
+    }
+
+    private fun startWordStreamerIfNeeded() {
+        if (wordStreamerJob?.isActive == true) return
+        wordStreamerJob = scope.launch(Dispatchers.Default) {
+            while (isActive && pendingAssistantWords.isNotEmpty()) {
+                val nextWord = pendingAssistantWords.poll() ?: break
+                if (displayedAssistantText.isNotEmpty()) {
+                    displayedAssistantText.append(" ")
+                }
+                displayedAssistantText.append(nextWord)
+                _transcriptFlow.value = displayedAssistantText.toString()
+                delay(175) // Natural human speaking cadence (~3.5 words per second)
+            }
+            wordStreamerJob = null
+        }
+    }
+
+    private fun flushPendingAssistantText() {
+        while (pendingAssistantWords.isNotEmpty()) {
+            val nextWord = pendingAssistantWords.poll() ?: break
+            if (displayedAssistantText.isNotEmpty()) {
+                displayedAssistantText.append(" ")
+            }
+            displayedAssistantText.append(nextWord)
+        }
+        if (displayedAssistantText.isNotEmpty()) {
+            _transcriptFlow.value = displayedAssistantText.toString()
+        }
+    }
+
+    private fun clearAssistantStreamer() {
+        wordStreamerJob?.cancel()
+        wordStreamerJob = null
+        pendingAssistantWords.clear()
+        displayedAssistantText.clear()
     }
 
     private fun ensureAudioPlaybackReady() {
@@ -214,6 +271,13 @@ class GeminiLiveClient(private val context: Context) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                Log.d(TAG, "WS text message received: ${text.take(80)}")
+                handleServerMessage(text)
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                val text = bytes.utf8()
+                Log.d(TAG, "WS binary message received (${bytes.size} bytes): ${text.take(80)}")
                 handleServerMessage(text)
             }
 
@@ -227,18 +291,7 @@ class GeminiLiveClient(private val context: Context) {
                 val code = response?.code
                 Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
                 stopMicRecording()
-                if (!isFallbackAttempt && activeModel != FALLBACK_LIVE_MODEL) {
-                    Log.w(TAG, "Falling back to $FALLBACK_LIVE_MODEL...")
-                    isFallbackAttempt = true
-                    activeModel = FALLBACK_LIVE_MODEL
-                    _liveState.value = AuraLiveState.IDLE
-                    scope.launch {
-                        delay(400)
-                        connect()
-                    }
-                } else {
-                    _liveState.value = AuraLiveState.ERROR
-                }
+                _liveState.value = AuraLiveState.ERROR
             }
         })
     }
@@ -288,7 +341,8 @@ class GeminiLiveClient(private val context: Context) {
                 }
                 add("tools", toolsArray)
 
-                // Explicitly enable input and output audio transcriptions
+                // Explicitly enable input and output audio transcriptions.
+                // Per Gemini Live API spec: AudioTranscriptionConfig = empty object = enabled.
                 add("inputAudioTranscription", JsonObject())
                 add("outputAudioTranscription", JsonObject())
             }
@@ -302,41 +356,104 @@ class GeminiLiveClient(private val context: Context) {
     private fun startMicRecording() {
         stopMicRecording()
         micJob = scope.launch(Dispatchers.IO) {
+            // Give audio hardware 200ms to settle after WakeWordService released its AudioRecord.
+            // The ViewModel already waits 500ms before calling connect(), so by the time
+            // setupComplete arrives and this runs, total elapsed time is well over 500ms.
+            // The extra 200ms here is a safety margin for the hardware pipeline.
+            delay(200)
+
+            val hasPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!hasPerm) {
+                Log.e(TAG, "RECORD_AUDIO permission missing! Cannot open microphone.")
+                _liveState.value = AuraLiveState.ERROR
+                return@launch
+            }
+
             val sampleRate = 16000
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-            val bufferSize = maxOf(minBuf, 2048)
+            if (minBuf <= 0) {
+                Log.e(TAG, "AudioRecord.getMinBufferSize returned $minBuf — hardware not ready")
+                _liveState.value = AuraLiveState.ERROR
+                return@launch
+            }
+            val bufferSize = maxOf(minBuf * 4, 16384)
+            Log.i(TAG, "AudioRecord params: sampleRate=$sampleRate minBuf=$minBuf actualBuf=$bufferSize")
 
+            val audioSources = listOf(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION, // Far-field speech recognition (Google Assistant tuning)
+                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.DEFAULT
+            )
+
+            // CRITICAL FIX: Retry loop — if another component (e.g. WakeWordService) held the
+            // AudioRecord just before us, give the hardware up to 3 attempts with 200ms backoff.
             var record: AudioRecord? = null
-            try {
-                isMicRecordingActive = true
-                val audioSources = listOf(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    MediaRecorder.AudioSource.MIC
-                )
+            for (attempt in 1..3) {
                 for (source in audioSources) {
                     try {
                         val r = AudioRecord(source, sampleRate, channelConfig, audioFormat, bufferSize)
                         if (r.state == AudioRecord.STATE_INITIALIZED) {
                             record = r
-                            Log.i(TAG, "AudioRecord initialized using source: $source")
+                            Log.i(TAG, "AudioRecord initialized (attempt $attempt, source=$source, sessionId=${r.audioSessionId})")
                             break
                         } else {
+                            Log.w(TAG, "AudioRecord STATE not initialized (attempt $attempt, source=$source, state=${r.state})")
                             r.release()
                         }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        Log.w(TAG, "AudioRecord init exception (attempt $attempt, source=$source): ${e.message}")
+                    }
                 }
-                if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "Failed to initialize AudioRecord with any source")
-                    return@launch
+                if (record != null) break
+                if (attempt < 3) {
+                    Log.w(TAG, "AudioRecord not ready yet — retrying in 200ms (attempt $attempt/3)")
+                    delay(200)
+                }
+            }
+
+            if (record == null) {
+                Log.e(TAG, "FATAL: AudioRecord failed to initialize after 3 attempts. Mic unavailable.")
+                _liveState.value = AuraLiveState.ERROR
+                return@launch
+            }
+
+            // CRITICAL FIX: Only set isMicRecordingActive = true AFTER AudioRecord is confirmed initialized.
+            isMicRecordingActive = true
+
+            try {
+                // Hardware AcousticEchoCanceler & AutomaticGainControl
+                try {
+                    if (AcousticEchoCanceler.isAvailable()) {
+                        AcousticEchoCanceler.create(record.audioSessionId)?.apply {
+                            enabled = true
+                            Log.i(TAG, "Hardware AcousticEchoCanceler enabled")
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "AcousticEchoCanceler attach skipped: ${e.message}")
+                }
+                try {
+                    if (AutomaticGainControl.isAvailable()) {
+                        AutomaticGainControl.create(record.audioSessionId)?.apply {
+                            enabled = true
+                            Log.i(TAG, "Hardware AutomaticGainControl enabled")
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "AutomaticGainControl attach skipped: ${e.message}")
                 }
 
                 record.startRecording()
-                // Buffer to 1600 samples (100ms @ 16kHz) for smooth streaming without WebSocket queue congestion
-                val shortBuf = ShortArray(1600)
-                val byteBuf = ByteArray(3200)
+                Log.i(TAG, "✅ Microphone recording started. recordingState=${record.recordingState}")
+
+                // Official Google Live API best practice: Stream audio in 40ms chunks (640 samples @ 16kHz)
+                val shortBuf = ShortArray(640)
+                val byteBuf = ByteArray(1280)
 
                 while (isActive && isMicRecordingActive && webSocket != null) {
                     val readShorts = record.read(shortBuf, 0, shortBuf.size)
@@ -346,47 +463,68 @@ class GeminiLiveClient(private val context: Context) {
                             continue
                         }
 
-                        // Compute local energy for visualizer
+                        // Compute local energy (RMS)
                         var sum = 0.0
                         for (i in 0 until readShorts) {
-                            sum += (shortBuf[i] * shortBuf[i])
+                            sum += (shortBuf[i].toLong() * shortBuf[i].toLong())
                         }
                         val rms = sqrt(sum / readShorts) / 32768.0
 
-                        val isBotSpeaking = _liveState.value == AuraLiveState.SPEAKING
-                        if (!isBotSpeaking) {
-                            _amplitudeFlow.value = (rms * 3.0).toFloat().coerceIn(0.05f, 1.0f)
-                        }
+                        // Process VAD for human speech classification and UI visualizer
+                        val vadResult = vadDetector.process(shortBuf, readShorts)
 
-                        // Barge-in check: if user speaks while bot is talking, interrupt instantly
-                        if (isBotSpeaking) {
-                            val bargeThreshold = max(0.012, noiseFloor * 1.5)
-                            if (rms > bargeThreshold) {
-                                Log.i(TAG, "User barge-in detected (RMS: $rms > $bargeThreshold)! Stopping audio playback.")
-                                flushAudioPlayback()
-                                _liveState.value = AuraLiveState.LISTENING
+                        // ── 1. Acoustic Echo Gate & Intentional Barge-In ─────────────────
+                        if (_liveState.value == AuraLiveState.SPEAKING) {
+                            if ((vadResult.isSpeech && rms > 0.06) || rms > 0.12) {
+                                bargeInConsecutiveFrames++
+                                if (bargeInConsecutiveFrames >= 2) {
+                                    Log.i(TAG, "Real user barge-in detected (RMS=$rms). Flushing playback.")
+                                    flushAudioPlayback()
+                                    bargeInConsecutiveFrames = 0
+                                    _liveState.value = AuraLiveState.LISTENING
+                                }
                             } else {
-                                // Track noise floor and suppress sending chunk while bot is producing sound to prevent echo
-                                noiseFloor = noiseFloor * 0.95 + rms * 0.05
-                                continue
+                                bargeInConsecutiveFrames = 0
                             }
+                            // CRITICAL: NEVER stream speaker audio back into mic to prevent echo loop
+                            continue
                         }
 
-                        // Convert short buffer to byte buffer
+                        // ── 2. Adaptive Far-Field Audio Gain (30-100 cm natural distance) ──
+                        // Dynamically boost quiet/distant speech by up to 3.5x so user never needs
+                        // to put lips to the microphone hole, while gently tapering loud speech to prevent clipping.
+                        val adaptiveGain = when {
+                            rms < 0.020 -> 3.5f  // Distant or whisper level (desk / arm distance)
+                            rms < 0.050 -> 2.6f  // Normal conversational speech
+                            rms < 0.100 -> 1.8f  // Close / elevated speech
+                            else -> 1.3f         // Very loud / near mic
+                        }
                         for (i in 0 until readShorts) {
-                            val s = shortBuf[i].toInt()
-                            byteBuf[i * 2] = (s and 0xFF).toByte()
-                            byteBuf[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+                            val sample = (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)
+                            byteBuf[i * 2] = (sample and 0xFF).toByte()
+                            byteBuf[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
                         }
 
-                        // Continuously stream 16kHz audio to Gemini Live
+                        // Update UI orb with normalized amplitude
+                        _amplitudeFlow.value = if (vadResult.isSpeech) {
+                            vadResult.normalizedEnergy.coerceIn(0.15f, 1.0f)
+                        } else {
+                            (rms * 4.0).toFloat().coerceIn(0.02f, 0.15f)
+                        }
+
+                        // Stream directly to Gemini Live — no destructive zero-filling during listening
                         sendAudioChunk(byteBuf, readShorts * 2)
+                    } else if (readShorts < 0) {
+                        Log.e(TAG, "AudioRecord.read() returned error code: $readShorts — stopping mic")
+                        break
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in mic recording loop", e)
             } finally {
-                try { record?.stop(); record?.release() } catch (_: Exception) {}
+                isMicRecordingActive = false
+                try { record.stop(); record.release() } catch (_: Exception) {}
+                Log.i(TAG, "Microphone recording stopped and released")
             }
         }
     }
@@ -421,7 +559,9 @@ class GeminiLiveClient(private val context: Context) {
                     val turn = JsonObject().apply {
                         addProperty("role", "user")
                         val parts = JsonArray().apply {
-                            val part = JsonObject().apply { addProperty("text", text) }
+                            val part = JsonObject().apply {
+                                addProperty("text", text)
+                            }
                             add(part)
                         }
                         add("parts", parts)
@@ -434,6 +574,7 @@ class GeminiLiveClient(private val context: Context) {
             add("clientContent", clientContent)
         }
         webSocket?.send(inputObj.toString())
+        Log.d(TAG, "Sent text via clientContent: $text")
     }
 
     /**
@@ -461,7 +602,7 @@ class GeminiLiveClient(private val context: Context) {
     }
 
     /**
-     * Streams raw 16kHz mono PCM audio to Gemini Live in official camelCase schema.
+     * Streams raw 16kHz mono PCM audio to Gemini Live.
      */
     fun sendAudioChunk(pcmBytes: ByteArray, length: Int = pcmBytes.size) {
         if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
@@ -469,14 +610,11 @@ class GeminiLiveClient(private val context: Context) {
         val base64Data = Base64.encodeToString(pcmBytes, 0, length, Base64.NO_WRAP)
         val inputObj = JsonObject().apply {
             val realtime = JsonObject().apply {
-                val chunks = JsonArray().apply {
-                    val chunk = JsonObject().apply {
-                        addProperty("mimeType", "audio/pcm;rate=16000")
-                        addProperty("data", base64Data)
-                    }
-                    add(chunk)
+                val audioObj = JsonObject().apply {
+                    addProperty("data", base64Data)
+                    addProperty("mimeType", "audio/pcm;rate=16000")
                 }
-                add("mediaChunks", chunks)
+                add("audio", audioObj)
             }
             add("realtimeInput", realtime)
         }
@@ -529,6 +667,7 @@ class GeminiLiveClient(private val context: Context) {
                     val inTx = serverContent.getAsJsonObject("inputTranscription")
                     val tx = inTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
+                        clearAssistantStreamer()
                         _transcriptFlow.value = tx
                         currentUserTurnAccumulator.append(tx).append(" ")
                         if (_liveState.value != AuraLiveState.SPEAKING) {
@@ -541,7 +680,7 @@ class GeminiLiveClient(private val context: Context) {
                     val outTx = serverContent.getAsJsonObject("outputTranscription")
                     val tx = outTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
-                        _transcriptFlow.value = tx
+                        enqueueAssistantText(tx)
                         currentAssistantTurnAccumulator.append(tx).append(" ")
                     }
                 }
@@ -569,6 +708,7 @@ class GeminiLiveClient(private val context: Context) {
 
                 if (serverContent.has("turnComplete") &&
                     serverContent.get("turnComplete").asBoolean) {
+                    flushPendingAssistantText()
                     val userTurn = currentUserTurnAccumulator.toString().trim()
                     val assistantTurn = currentAssistantTurnAccumulator.toString().trim()
                     if (userTurn.isNotBlank() || assistantTurn.isNotBlank()) {
@@ -581,7 +721,9 @@ class GeminiLiveClient(private val context: Context) {
                     }
                     currentUserTurnAccumulator.clear()
                     currentAssistantTurnAccumulator.clear()
+                    _amplitudeFlow.value = 0.05f
                     _liveState.value = AuraLiveState.LISTENING
+                    Log.i(TAG, "Turn complete → back to LISTENING")
                 }
             }
 
@@ -592,36 +734,32 @@ class GeminiLiveClient(private val context: Context) {
                 _liveState.value = AuraLiveState.THINKING
 
                 scope.launch {
-                    try {
-                        val responseArray = JsonArray()
-                        for (j in 0 until fnCalls.size()) {
-                            val call = fnCalls.get(j).asJsonObject
-                            val name = call.get("name").asString
-                            val id = call.get("id").asString
-                            val args = call.getAsJsonObject("args") ?: JsonObject()
-                            val result = JarvisToolRegistry.executeTool(context, name, args)
-                            val fnResp = JsonObject().apply {
-                                addProperty("id", id)
-                                addProperty("name", name)
-                                val resp = JsonObject().apply {
-                                    add("output", result)
-                                }
-                                add("response", resp)
+                    val responseArray = JsonArray()
+                    for (j in 0 until fnCalls.size()) {
+                        val call = fnCalls.get(j).asJsonObject
+                        val name = call.get("name").asString
+                        val id = call.get("id").asString
+                        val args = call.getAsJsonObject("args") ?: JsonObject()
+                        val result = JarvisToolRegistry.executeTool(context, name, args)
+                        val fnResp = JsonObject().apply {
+                            addProperty("id", id)
+                            addProperty("name", name)
+                            val resp = JsonObject().apply {
+                                add("output", result)
                             }
-                            responseArray.add(fnResp)
+                            add("response", resp)
                         }
-
-                        val toolResponseObj = JsonObject().apply {
-                            val toolResponse = JsonObject().apply {
-                                add("functionResponses", responseArray)
-                            }
-                            add("toolResponse", toolResponse)
-                        }
-                        webSocket?.send(toolResponseObj.toString())
-                        Log.i(TAG, "Sent toolResponse to Gemini Live")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error executing tool for Gemini Live", e)
+                        responseArray.add(fnResp)
                     }
+
+                    val toolResponseObj = JsonObject().apply {
+                        val toolResponse = JsonObject().apply {
+                            add("functionResponses", responseArray)
+                        }
+                        add("toolResponse", toolResponse)
+                    }
+                    webSocket?.send(toolResponseObj.toString())
+                    Log.i(TAG, "Sent toolResponse to Gemini Live")
                 }
             }
         } catch (e: Exception) {
@@ -632,6 +770,11 @@ class GeminiLiveClient(private val context: Context) {
     private fun playAudioChunk(pcmBytes: ByteArray) {
         _liveState.value = AuraLiveState.SPEAKING
         try {
+            // 24kHz mono 16-bit PCM = 24000 samples/sec * 2 bytes = 48000 bytes/sec = 48 bytes/ms
+            val chunkDurationMs = (pcmBytes.size.toLong() * 1000L) / 48000L
+            val now = System.currentTimeMillis()
+            playbackEndTime = maxOf(playbackEndTime, now) + chunkDurationMs
+
             var sum = 0.0
             val numShorts = pcmBytes.size / 2
             for (i in 0 until numShorts) {

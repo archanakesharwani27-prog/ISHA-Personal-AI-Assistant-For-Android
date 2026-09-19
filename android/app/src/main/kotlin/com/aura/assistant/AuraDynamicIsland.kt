@@ -74,6 +74,8 @@ object AuraDynamicIsland {
     private val STROKE_THINKING = Color.parseColor("#80A855F7")  // Subtle Violet Glow
     private val STROKE_SPEAKING = Color.parseColor("#8010B981")  // Subtle Emerald Glow
 
+    @Volatile private var currentReason: String = "wake"
+
     /** Show the Dynamic Island bubble. Safe to call from any thread. */
     fun show(context: Context, reason: String = "wake") {
         handler.post { _show(context.applicationContext, reason) }
@@ -85,10 +87,13 @@ object AuraDynamicIsland {
     }
 
     private fun _show(ctx: Context, reason: String) {
+        currentReason = reason
         if (overlayView != null) {
-            // Already showing - update reason and reset timer
+            // Already showing - update reason
             updateStateFromReason(reason)
-            resetDismissTimer()
+            if (reason != "screen_share") {
+                resetDismissTimer()
+            }
             return
         }
 
@@ -106,7 +111,7 @@ object AuraDynamicIsland {
 
         val displayMetrics = ctx.resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
-        val pillWidth = (screenWidth * 0.45).toInt() // ~45% screen width
+        val pillWidth = if (reason == "screen_share") (screenWidth * 0.70).toInt() else (screenWidth * 0.45).toInt()
         val pillHeight = 48.dp(ctx) // Compact height
 
         val params = WindowManager.LayoutParams(
@@ -145,14 +150,15 @@ object AuraDynamicIsland {
 
         // 450ms settle delay after shake before opening SpeechRecognizer.
         // Prevents phone vibration motor and hand shake noise from triggering false speech!
-        handler.postDelayed({
-            if (overlayView != null) {
-                startSpeechListening(ctx, overlay)
-            }
-        }, 450L)
-
-        // Auto-dismiss after idle time
-        resetDismissTimer()
+        if (reason != "screen_share") {
+            handler.postDelayed({
+                if (overlayView != null) {
+                    startSpeechListening(ctx, overlay)
+                }
+            }, 450L)
+            // Auto-dismiss after idle time
+            resetDismissTimer()
+        }
     }
 
     private fun _hide() {
@@ -216,9 +222,14 @@ object AuraDynamicIsland {
             false
         }
 
-        // Tap: if currently idle/not-listening → restart speech; otherwise toggle expand
+        // Tap: if currently in screen_share -> return to Aura; if idle -> restart speech; otherwise toggle expand
         root.setOnClickListener {
-            if (!isListeningSpeech) {
+            if (currentReason == "screen_share") {
+                val intent = Intent(ctx, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                ctx.startActivity(intent)
+            } else if (!isListeningSpeech) {
                 // Re-arm speech so user can speak without re-shaking
                 startSpeechListening(ctx, root)
                 resetDismissTimer()
@@ -278,6 +289,32 @@ object AuraDynamicIsland {
         content.addView(stateText!!)
         content.addView(waveView!!)
 
+        if (reason == "screen_share") {
+            val stopBtn = TextView(ctx).apply {
+                text = "Stop"
+                textSize = 11f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#EF4444"))
+                val bg = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12.dp(ctx).toFloat()
+                    setColor(Color.parseColor("#33EF4444"))
+                    setStroke(1.dp(ctx), Color.parseColor("#80EF4444"))
+                }
+                background = bg
+                setPadding(8.dp(ctx), 4.dp(ctx), 8.dp(ctx), 4.dp(ctx))
+                setOnClickListener {
+                    try {
+                        val stopIntent = Intent("com.aura.screenshare.STOP")
+                        ctx.sendBroadcast(stopIntent)
+                    } catch (_: Exception) {}
+                    hide()
+                }
+            }
+            stopBtn.addMargin(6.dp(ctx))
+            content.addView(stopBtn)
+        }
+
         root.addView(content)
 
         return root
@@ -310,12 +347,16 @@ object AuraDynamicIsland {
 
     private fun updateStateFromReason(reason: String) {
         val stateText = when (reason) {
+            "screen_share" -> "Aura Viewing 👁️"
             "shake" -> "Listening..."
             "morning_reminder" -> "Good morning"
             else -> "Listening..."
         }
         this.stateText?.text = stateText
         updateBackgroundColor("Listening")
+        if (reason == "screen_share") {
+            waveView?.setListening(true)
+        }
     }
 
     private fun resetState() {
@@ -757,7 +798,8 @@ object AuraDynamicIsland {
 
     private fun resetDismissTimer(durationMs: Long = IDLE_DISMISS_MS) {
         handler.removeCallbacks(dismissRunnable)
-        handler.postDelayed(dismissRunnable, durationMs)
+        val timeout = if (currentReason == "screen_share") 120_000L else durationMs
+        handler.postDelayed(dismissRunnable, timeout)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

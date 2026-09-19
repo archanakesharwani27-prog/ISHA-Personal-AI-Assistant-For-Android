@@ -29,7 +29,8 @@ data class ChatMessage(
     val toolName: String? = null,
     val toolArgs: String? = null,
     val toolResult: String? = null,
-    var isStreaming: Boolean = false
+    var isStreaming: Boolean = false,
+    val imageUri: String? = null
 )
 
 /**

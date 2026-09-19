@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSIONS_REQUEST_CODE = 101
+        @Volatile var instance: MainActivity? = null
     }
 
     private val viewModel: AuraAssistantViewModel by viewModels()
@@ -84,6 +85,16 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     Log.i(TAG, "Wake word toggle sent to WakeWordService: enabled=$enabled")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to toggle WakeWordService", e)
+                }
+            }
+        }
+    }
+
+    private val screenShareStopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.aura.screenshare.STOP") {
+                mainHandler.post {
+                    viewModel.stopLiveScreenShare()
                 }
             }
         }
@@ -148,6 +159,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        instance = this
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
@@ -195,6 +207,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             mainHandler.postDelayed({
                 viewModel.onMicButtonPressed()
             }, 300)
+        } else if (intent.getBooleanExtra("open_voice_mode", false)) {
+            mainHandler.postDelayed({
+                if (!viewModel.isVoiceModeActive.value) {
+                    viewModel.startVoiceMode()
+                }
+            }, 200)
         }
     }
 
@@ -219,15 +237,42 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
     }
 
+    /**
+     * Instantly sets the window brightness of MainActivity with immediate visual feedback.
+     */
+    fun setScreenBrightness(percent: Int) {
+        val clamped = percent.coerceIn(1, 100)
+        runOnUiThread {
+            try {
+                val lp = window.attributes
+                lp.screenBrightness = clamped / 100.0f
+                window.attributes = lp
+                window.decorView.invalidate()
+                Log.i(TAG, "Window screenBrightness set to $clamped% (${lp.screenBrightness})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set window brightness", e)
+            }
+        }
+    }
+
     private fun checkAndRequestPermissions() {
         val perms = mutableListOf(
             android.Manifest.permission.RECORD_AUDIO,
             android.Manifest.permission.CALL_PHONE,
             android.Manifest.permission.READ_PHONE_STATE,
-            android.Manifest.permission.READ_CONTACTS
+            android.Manifest.permission.READ_CONTACTS,
+            android.Manifest.permission.READ_SMS,
+            android.Manifest.permission.RECEIVE_SMS,
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+            perms.add(android.Manifest.permission.READ_MEDIA_IMAGES)
+            perms.add(android.Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            perms.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            perms.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         val needed = perms.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isNotEmpty()) {
@@ -283,6 +328,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         } catch (e: Throwable) {
             Log.e(TAG, "wakeToggleReceiver registration error", e)
         }
+
+        try {
+            val stopFilter = IntentFilter("com.aura.screenshare.STOP")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenShareStopReceiver, stopFilter, RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(screenShareStopReceiver, stopFilter)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "screenShareStopReceiver registration error", e)
+        }
     }
 
     // ── Shake Sensor ──────────────────────────────────────────────────────────
@@ -296,6 +352,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
+        instance = this
         if (isShakeDetectionEnabled && accelerometer != null) {
             sensorManager?.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
         }
@@ -307,11 +364,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        if (instance == this) {
+            instance = null
+        }
         sensorManager?.unregisterListener(this)
         try { unregisterReceiver(wakeReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(callReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(shakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wakeToggleReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(screenShareStopReceiver) } catch (_: Exception) {}
         stopCallerAnnouncement()
         try { nativeTts?.shutdown() } catch (_: Exception) {}
         super.onDestroy()

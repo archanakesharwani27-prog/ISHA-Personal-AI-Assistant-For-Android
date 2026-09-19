@@ -17,14 +17,33 @@ import com.aura.assistant.data.AuraChatRepository
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.ChatSession
 import com.aura.assistant.data.MessageRole
+import android.content.ContentResolver
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.OpenableColumns
+import java.io.ByteArrayOutputStream
+import java.io.File
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.UUID
+
+data class AttachedMedia(
+    val uri: Uri,
+    val bytes: ByteArray,
+    val name: String,
+    val mimeType: String = "image/jpeg",
+    val isImage: Boolean = true
+)
 
 data class AuraChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
@@ -80,6 +99,15 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     val liveTranscript: StateFlow<String> = liveClient.transcriptFlow
     val audioAmplitude: StateFlow<Float> = liveClient.amplitudeFlow
 
+    // ── Attached Media State ──────────────────────────────────────────────────
+    private val _selectedAttachment = MutableStateFlow<AttachedMedia?>(null)
+    val selectedAttachment: StateFlow<AttachedMedia?> = _selectedAttachment.asStateFlow()
+
+    // ── Live Screen Share State ────────────────────────────────────────────────
+    private val _isLiveScreenSharing = MutableStateFlow(false)
+    val isLiveScreenSharing: StateFlow<Boolean> = _isLiveScreenSharing.asStateFlow()
+    private var screenShareJob: Job? = null
+
     // ── Quick Tools Bottom Sheet ───────────────────────────────────────────────
     private val _isToolsSheetVisible = MutableStateFlow(false)
     val isToolsSheetVisible: StateFlow<Boolean> = _isToolsSheetVisible.asStateFlow()
@@ -100,42 +128,39 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         // Sync completed Gemini Live turns into current chat session
         viewModelScope.launch {
             liveClient.turnCompletedFlow.collect { turn ->
-                var currentSessionId = _activeSessionId.value
-                if (currentSessionId.isBlank()) {
-                    val newSession = withContext(Dispatchers.IO) { repository.createSession("Voice Chat") }
-                    currentSessionId = newSession.id
-                    _activeSessionId.value = currentSessionId
-                }
-                val newMsgs = mutableListOf<ChatMessage>()
-                if (turn.userText.isNotBlank()) {
-                    newMsgs.add(
-                        ChatMessage(
-                            sessionId = currentSessionId,
-                            role = MessageRole.USER,
-                            text = turn.userText
+                val currentSessionId = _activeSessionId.value
+                if (currentSessionId.isNotBlank()) {
+                    val newMsgs = mutableListOf<ChatMessage>()
+                    if (turn.userText.isNotBlank()) {
+                        newMsgs.add(
+                            ChatMessage(
+                                sessionId = currentSessionId,
+                                role = MessageRole.USER,
+                                text = turn.userText
+                            )
                         )
-                    )
-                }
-                if (turn.assistantText.isNotBlank()) {
-                    newMsgs.add(
-                        ChatMessage(
-                            sessionId = currentSessionId,
-                            role = MessageRole.ASSISTANT,
-                            text = turn.assistantText
+                    }
+                    if (turn.assistantText.isNotBlank()) {
+                        newMsgs.add(
+                            ChatMessage(
+                                sessionId = currentSessionId,
+                                role = MessageRole.ASSISTANT,
+                                text = turn.assistantText
+                            )
                         )
-                    )
-                }
-                if (newMsgs.isNotEmpty()) {
-                    val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
-                    _chatMessages.value = updated
-                    withContext(Dispatchers.IO) {
+                    }
+                    if (newMsgs.isNotEmpty()) {
+                        val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
+                        _chatMessages.value = updated
                         repository.saveMessages(currentSessionId, updated)
-                        val session = repository.getAllSessions().find { it.id == currentSessionId }
-                        if (session != null && (session.title == "New Chat" || session.title == "Voice Chat") && turn.userText.isNotBlank()) {
+
+                        // If it's "New Chat", auto-title with the user prompt
+                        val session = _sessions.value.find { it.id == currentSessionId }
+                        if (session != null && session.title == "New Chat" && turn.userText.isNotBlank()) {
                             val autoTitle = if (turn.userText.length > 28) turn.userText.take(25) + "..." else turn.userText
                             repository.renameSession(currentSessionId, autoTitle)
+                            _sessions.value = repository.getAllSessions()
                         }
-                        _sessions.value = repository.getAllSessions()
                     }
                 }
             }
@@ -226,11 +251,84 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    // ── Attachment Handling ───────────────────────────────────────────────────
+
+    fun setAttachment(media: AttachedMedia?) {
+        _selectedAttachment.value = media
+    }
+
+    fun clearAttachment() {
+        _selectedAttachment.value = null
+    }
+
+    fun attachFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cr = getApplication<Application>().contentResolver
+                val mimeType = cr.getType(uri) ?: "image/jpeg"
+                val name = getFileNameFromUri(cr, uri) ?: "attachment.jpg"
+                val bytes = cr.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes != null && bytes.isNotEmpty()) {
+                    _selectedAttachment.value = AttachedMedia(
+                        uri = uri,
+                        bytes = bytes,
+                        name = name,
+                        mimeType = mimeType,
+                        isImage = mimeType.startsWith("image/")
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to attach from URI: $uri", e)
+            }
+        }
+    }
+
+    fun attachFromBitmap(bitmap: Bitmap) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val file = File(context.cacheDir, "camera_attachment_${System.currentTimeMillis()}.jpg")
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                val bytes = stream.toByteArray()
+                file.writeBytes(bytes)
+                val uri = Uri.fromFile(file)
+                _selectedAttachment.value = AttachedMedia(
+                    uri = uri,
+                    bytes = bytes,
+                    name = "Photo_${System.currentTimeMillis() % 10000}.jpg",
+                    mimeType = "image/jpeg",
+                    isImage = true
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to attach from Bitmap", e)
+            }
+        }
+    }
+
+    private fun getFileNameFromUri(cr: ContentResolver, uri: Uri): String? {
+        if (uri.scheme == "content") {
+            try {
+                cr.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) return cursor.getString(nameIndex)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return uri.lastPathSegment
+    }
+
     // ── Text Chat & Gemini Streaming Pipeline ──────────────────────────────────
 
     fun onSendTextMessage(prompt: String) {
         val trimmed = prompt.trim()
-        if (trimmed.isBlank() || _isGenerating.value) return
+        val attached = _selectedAttachment.value
+        if (trimmed.isBlank() && attached == null) return
+        if (_isGenerating.value) return
+
+        _selectedAttachment.value = null // consume attachment
 
         val currentSessionId = _activeSessionId.value.ifBlank {
             val newSess = repository.createSession()
@@ -238,11 +336,14 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             newSess.id
         }
 
+        val promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
+
         // 1. Append User Message
         val userMsg = ChatMessage(
             sessionId = currentSessionId,
             role = MessageRole.USER,
-            text = trimmed
+            text = trimmed.ifBlank { "Attached image" },
+            imageUri = attached?.uri?.toString()
         )
 
         // 2. Prepare streaming Assistant Message
@@ -267,7 +368,8 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         // 3. Initiate Stream
         chatService.sendChatStream(
             history = historySnapshot,
-            newPrompt = trimmed,
+            newPrompt = promptToSend,
+            imageBytes = attached?.bytes,
             callback = object : ChatStreamCallback {
                 override fun onToken(chunk: String) {
                     viewModelScope.launch(Dispatchers.Main) {
@@ -378,10 +480,18 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             }
             app.startService(pauseIntent)
         } catch (_: Exception) {}
-        liveClient.connect()
+        // CRITICAL FIX: ACTION_PAUSE is dispatched asynchronously via startService().
+        // We must wait for WakeWordService to fully release the AudioRecord mic resource
+        // before GeminiLiveClient tries to open it. 500ms is enough for the Binder IPC
+        // + OpenWakeWord engine.release() to complete on all Android OEMs.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(500)
+            liveClient.connect()
+        }
     }
 
     fun stopVoiceMode() {
+        stopLiveScreenShare()
         _isVoiceModeActive.value = false
         liveClient.disconnect()
         val app = getApplication<Application>()
@@ -420,24 +530,61 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun captureAndSendScreenToLive(onResult: (Boolean) -> Unit = {}) {
-        val a11y = com.aura.assistant.AuraAccessibilityService.instance
-        if (a11y != null) {
-            a11y.takeScreenCapture { bytes: ByteArray? ->
-                if (bytes != null) {
-                    liveClient.sendImageChunk(bytes)
-                    liveClient.sendTextMessage("Here is a screenshot of what is currently on my screen. Please analyze it and help me.")
-                    onResult(true)
-                } else {
-                    val screenText = a11y.getScreenTextHierarchy()
-                    liveClient.sendTextMessage("Here is the textual content on my current screen:\n$screenText\nPlease help me with this screen.")
-                    onResult(true)
-                }
-            }
-        } else {
-            liveClient.sendTextMessage("I attempted to share my screen, but Aura's Accessibility Service is currently not active. Please remind me to enable it in Android Settings.")
-            onResult(false)
+    // ── Gemini Live True Screen Share (Continuous Real-time View) ───────────────
+
+    fun startLiveScreenShare() {
+        if (_isLiveScreenSharing.value) return
+        _isLiveScreenSharing.value = true
+
+        // Ensure voice mode / Live connection is active
+        if (!_isVoiceModeActive.value) {
+            startVoiceMode()
         }
+
+        screenShareJob?.cancel()
+        screenShareJob = viewModelScope.launch(Dispatchers.IO) {
+            // Initial briefing to Gemini Live
+            liveClient.sendTextMessage("Boss has started live screen sharing. You are now seeing their device screen in real-time. Greet Boss briefly, tell them what you see on screen, and let them know you are watching and ready to help.")
+
+            while (isActive && _isLiveScreenSharing.value) {
+                val a11y = com.aura.assistant.AuraAccessibilityService.instance
+                if (a11y != null) {
+                    val frameDeferred = CompletableDeferred<ByteArray?>()
+                    a11y.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes ->
+                        frameDeferred.complete(bytes)
+                    }
+                    val bytes = withTimeoutOrNull(2500L) { frameDeferred.await() }
+                    if (bytes != null && bytes.isNotEmpty() && _isLiveScreenSharing.value) {
+                        liveClient.sendImageChunk(bytes)
+                    }
+                }
+                delay(1600L) // Continuous live stream at ~1.6s interval matching Gemini Live
+            }
+        }
+    }
+
+    fun stopLiveScreenShare() {
+        if (!_isLiveScreenSharing.value) return
+        _isLiveScreenSharing.value = false
+        screenShareJob?.cancel()
+        screenShareJob = null
+        try {
+            com.aura.assistant.AuraDynamicIsland.hide()
+        } catch (_: Exception) {}
+        liveClient.sendTextMessage("Boss has stopped screen sharing.")
+    }
+
+    fun toggleLiveScreenShare() {
+        if (_isLiveScreenSharing.value) {
+            stopLiveScreenShare()
+        } else {
+            startLiveScreenShare()
+        }
+    }
+
+    fun captureAndSendScreenToLive(onResult: (Boolean) -> Unit = {}) {
+        startLiveScreenShare()
+        onResult(true)
     }
 
     fun sendLivePrompt(prompt: String) {

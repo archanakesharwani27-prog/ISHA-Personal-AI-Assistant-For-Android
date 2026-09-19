@@ -52,18 +52,19 @@ class GeminiChatService(private val context: Context) {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**
-     * Sends a chat prompt along with previous conversation history to Gemini.
+     * Sends a chat prompt along with previous conversation history and optional image attachment to Gemini.
      */
     fun sendChatStream(
         history: List<ChatMessage>,
         newPrompt: String,
+        imageBytes: ByteArray? = null,
         callback: ChatStreamCallback
     ) {
         cancelCurrentGeneration()
 
         serviceScope.launch {
             try {
-                executeStreamRequest(history, newPrompt, callback)
+                executeStreamRequest(history, newPrompt, imageBytes, callback)
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     Log.e(TAG, "Stream execution failed", e)
@@ -76,10 +77,11 @@ class GeminiChatService(private val context: Context) {
     private suspend fun executeStreamRequest(
         history: List<ChatMessage>,
         newPrompt: String,
+        imageBytes: ByteArray?,
         callback: ChatStreamCallback
     ) {
         val apiKey = Secrets.getActiveGeminiKey()
-        val requestBodyJson = buildRequestBody(history, newPrompt)
+        val requestBodyJson = buildRequestBody(history, newPrompt, imageBytes)
         val bodyStr = requestBodyJson.toString()
 
         var lastErrorMsg = "Gemini API Error"
@@ -343,7 +345,11 @@ class GeminiChatService(private val context: Context) {
         }
     }
 
-    private fun buildRequestBody(history: List<ChatMessage>, newPrompt: String): JsonObject {
+    private fun buildRequestBody(
+        history: List<ChatMessage>,
+        newPrompt: String,
+        imageBytes: ByteArray? = null
+    ): JsonObject {
         val root = JsonObject()
 
         // 1. System Instruction (Persona & Tool Guidance)
@@ -354,6 +360,16 @@ class GeminiChatService(private val context: Context) {
         val userTurn = JsonObject().apply {
             addProperty("role", "user")
             val parts = JsonArray().apply {
+                if (imageBytes != null && imageBytes.isNotEmpty()) {
+                    val inlineData = JsonObject().apply {
+                        addProperty("mime_type", "image/jpeg")
+                        addProperty("data", android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP))
+                    }
+                    val imagePart = JsonObject().apply {
+                        add("inline_data", inlineData)
+                    }
+                    add(imagePart)
+                }
                 val part = JsonObject().apply { addProperty("text", newPrompt) }
                 add(part)
             }

@@ -57,7 +57,7 @@ class AuraAccessibilityService : AccessibilityService() {
         private const val PKG_YOUTUBE    = "com.google.android.youtube"
 
         // Hint lists for WhatsApp / install / uninstall (enhanced for multilingual & IDs)
-        private val SEND_HINTS     = listOf("send", "भेजें", "bhejo")
+        private val SEND_HINTS     = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "bhejo", "send message")
         private val LIKE_HINTS     = listOf("like", "heart", "favorite", "save to your library", "add to library")
         private val INSTALL_HINTS  = listOf(
             // English — Google Play Store button labels on all OEMs
@@ -327,23 +327,30 @@ class AuraAccessibilityService : AccessibilityService() {
 
     fun armWhatsappAutoSendPreFilled() {
         pendingWhatsappSend = true
-        // Try multiple timed taps in case window state event already fired
-        stepHandler.postDelayed({
-            val root = rootInActiveWindow
-            if (root != null && clickFirstMatch(root, SEND_HINTS)) {
-                pendingWhatsappSend = false
-                Log.i(TAG, "WhatsApp Send clicked via primary timer")
-            }
-        }, 1200)
-        stepHandler.postDelayed({
-            if (pendingWhatsappSend) {
-                val root = rootInActiveWindow
-                if (root != null && clickFirstMatch(root, SEND_HINTS)) {
-                    pendingWhatsappSend = false
-                    Log.i(TAG, "WhatsApp Send clicked via fallback timer")
+        val sendHints = listOf(
+            "send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send",
+            "भेजें", "bhejo", "send message"
+        )
+        val delays = listOf(800L, 1400L, 2200L, 3000L, 4200L)
+        delays.forEachIndexed { index, delay ->
+            stepHandler.postDelayed({
+                if (pendingWhatsappSend) {
+                    val root = rootInActiveWindow
+                    if (root != null && clickFirstMatch(root, sendHints)) {
+                        pendingWhatsappSend = false
+                        Log.i(TAG, "WhatsApp Send clicked via timer at ${delay}ms")
+                    } else if (index >= 2 && pendingWhatsappSend) {
+                        val pkg = root?.packageName?.toString() ?: ""
+                        if (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ || pkg.contains("whatsapp")) {
+                            val dm = resources.displayMetrics
+                            performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
+                            pendingWhatsappSend = false
+                            Log.i(TAG, "WhatsApp Send FAB tapped at bottom-right at ${delay}ms")
+                        }
+                    }
                 }
-            }
-        }, 2500)
+            }, delay)
+        }
     }
 
     fun armWhatsappSearchAndSend(contact: String, message: String) {
@@ -564,6 +571,80 @@ class AuraAccessibilityService : AccessibilityService() {
                 }, 1000L)
             }, 600L)
         }, 1000L)
+    }
+
+    /**
+     * Autonomously empties the Recycle Bin / Trash in Gallery or File Manager.
+     * Handles Samsung, Realme, ColorOS, Xiaomi, and Google Photos layouts.
+     */
+    fun armEmptyRecycleBin() {
+        val delays = listOf(500L, 1200L, 2200L, 3500L, 5000L)
+        val moreOptionsHints = listOf("more options", "more", "menu", "overflow", "अन्य विकल्प", "विकल्प")
+        val emptyHints = listOf("empty", "empty recycle bin", "empty trash", "clear", "clear all", "recycle bin खाली करें", "खाली करें", "delete all")
+        val selectHints = listOf("select", "चुनें")
+        val selectAllHints = listOf("all", "select all", "सभी", "सभी चुनें")
+        val deleteHints = listOf("delete", "delete all", "हटाएं", "सभी हटाएं")
+        val confirmHints = listOf("empty", "empty recycle bin", "delete", "permanently delete", "ok", "confirm", "खाली करें", "हटाएं")
+
+        delays.forEachIndexed { index, delay ->
+            stepHandler.postDelayed({
+                val root = rootInActiveWindow ?: return@postDelayed
+
+                // Stage 1: Check for confirmation dialog first if it popped up
+                if (clickFirstMatch(root, confirmHints)) {
+                    Log.i(TAG, "Clicked confirmation dialog button in Recycle Bin at ${delay}ms")
+                    return@postDelayed
+                }
+
+                // Stage 2: Direct 'Empty' or 'Empty Recycle bin' button
+                if (clickFirstMatch(root, emptyHints)) {
+                    Log.i(TAG, "Direct 'Empty' clicked at ${delay}ms")
+                    return@postDelayed
+                }
+
+                // Stage 3: Click '⋮' (more options) at top right, then click Empty
+                val moreClicked = clickFirstMatch(root, moreOptionsHints)
+                if (moreClicked) {
+                    stepHandler.postDelayed({
+                        val menuRoot = rootInActiveWindow
+                        if (menuRoot != null) {
+                            clickFirstMatch(menuRoot, emptyHints)
+                        }
+                    }, 400L)
+                    return@postDelayed
+                }
+
+                // Stage 4: 'Select' -> 'All' -> 'Delete'
+                val selectClicked = clickFirstMatch(root, selectHints)
+                if (selectClicked) {
+                    stepHandler.postDelayed({
+                        val selRoot = rootInActiveWindow
+                        if (selRoot != null) {
+                            clickFirstMatch(selRoot, selectAllHints)
+                            stepHandler.postDelayed({
+                                val delRoot = rootInActiveWindow
+                                if (delRoot != null) {
+                                    clickFirstMatch(delRoot, deleteHints)
+                                }
+                            }, 500L)
+                        }
+                    }, 500L)
+                    return@postDelayed
+                }
+
+                // Coordinate fallback for top-right 3-dots on typical screens
+                if (index == 2) {
+                    val dm = resources.displayMetrics
+                    performTap(dm.widthPixels * 0.94f, dm.heightPixels * 0.05f)
+                    stepHandler.postDelayed({
+                        val menuRoot = rootInActiveWindow
+                        if (menuRoot != null) {
+                            clickFirstMatch(menuRoot, emptyHints)
+                        }
+                    }, 500L)
+                }
+            }, delay)
+        }
     }
 
     fun armAutoInstall()      { pendingAutoInstall = true }
@@ -1111,6 +1192,67 @@ class AuraAccessibilityService : AccessibilityService() {
         }
         callback(null)
     }
+
+    fun takeOptimizedScreenCapture(maxDim: Int = 1024, quality: Int = 75, callback: (ByteArray?) -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    applicationContext.mainExecutor,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(screenshotResult: ScreenshotResult) {
+                            val buffer = screenshotResult.hardwareBuffer
+                            try {
+                                val colorSpace = screenshotResult.colorSpace
+                                val hwBitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)
+                                if (hwBitmap != null) {
+                                    val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    hwBitmap.recycle()
+                                    if (swBitmap != null) {
+                                        val width = swBitmap.width
+                                        val height = swBitmap.height
+                                        val finalBitmap = if (width > maxDim || height > maxDim) {
+                                            val ratio = minOf(maxDim.toFloat() / width, maxDim.toFloat() / height)
+                                            val newW = (width * ratio).toInt()
+                                            val newH = (height * ratio).toInt()
+                                            val scaled = Bitmap.createScaledBitmap(swBitmap, newW, newH, true)
+                                            swBitmap.recycle()
+                                            scaled
+                                        } else {
+                                            swBitmap
+                                        }
+                                        val stream = ByteArrayOutputStream()
+                                        finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+                                        finalBitmap.recycle()
+                                        val bytes = stream.toByteArray()
+                                        if (bytes.isNotEmpty()) {
+                                            callback(bytes)
+                                            return
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to process screenshot buffer: $e")
+                            } finally {
+                                try { buffer.close() } catch (_: Exception) {}
+                            }
+                            callback(null)
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            Log.e(TAG, "takeScreenshot failed code: $errorCode")
+                            callback(null)
+                        }
+                    }
+                )
+                return
+            } catch (e: Exception) {
+                Log.e(TAG, "takeScreenshot exception: $e")
+            }
+        }
+        callback(null)
+    }
+
 
     fun takeSystemScreenshot(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

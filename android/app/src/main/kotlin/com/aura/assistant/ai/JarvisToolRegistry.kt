@@ -2,25 +2,36 @@ package com.aura.assistant.ai
 
 import android.app.SearchManager
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
 import android.provider.AlarmClock
+import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
+import android.provider.Settings
+import android.provider.Telephony
 import android.telephony.SmsManager
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.aura.assistant.AuraAccessibilityService
 import com.aura.assistant.JarvisFileManager
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import java.io.File
+import java.io.FileOutputStream
 import java.net.URLEncoder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Registry of all 20+ Jarvis OS automation tools in official Google Gemini Live schema.
@@ -82,6 +93,27 @@ object JarvisToolRegistry {
                 "target" to "string"
             ),
             required = listOf("contact_name")
+        ))
+
+        // Screenshot Capture & Gallery Saver
+        toolsArray.add(createFunction(
+            name = "take_screenshot",
+            desc = "Capture a screenshot of the current Android screen using system accessibility and save it to the Gallery.",
+            params = mapOf(),
+            required = listOf()
+        ))
+
+        // Universal Media & Screenshot Sharer
+        toolsArray.add(createFunction(
+            name = "share_media",
+            desc = "Share media (latest screenshot, photo, image, video, document) directly to WhatsApp, Instagram, Telegram, Twitter/X, or system share menu.",
+            params = mapOf(
+                "target_app" to "string",
+                "type" to "string",
+                "caption" to "string",
+                "contact_name" to "string"
+            ),
+            required = listOf()
         ))
 
         // 4. Open Application
@@ -320,6 +352,158 @@ object JarvisToolRegistry {
             required = listOf("name", "phone_number")
         ))
 
+        // 32. Dedicated Recent Media / Screenshot Viewer
+        toolsArray.add(createFunction(
+            name = "show_recent_media",
+            desc = "Open and display the most recent screenshot or photo from device storage fullscreen in the default image viewer. Call this when the user says 'show screenshot', 'recent screenshot dikhao', 'open screenshot', 'show photo'.",
+            params = mapOf("media_type" to "string"),
+            required = emptyList()
+        ))
+
+        // 33. Gallery Recycle Bin / Trash Cleaner
+        toolsArray.add(createFunction(
+            name = "empty_recycle_bin",
+            desc = "Empty the Gallery Recycle Bin or Trash permanently deleting all trashed items hands-free. Call this when the user says 'empty recycle bin', 'trash clear karo', 'recycle bin saaf karo'.",
+            params = mapOf("target" to "string"),
+            required = emptyList()
+        ))
+
+        // 34. Clock Timer
+        toolsArray.add(createFunction(
+            name = "set_timer",
+            desc = "Set a timer/countdown using the Android Clock app for a specified number of minutes and seconds.",
+            params = mapOf(
+                "minutes" to "integer",
+                "seconds" to "integer",
+                "label" to "string"
+            ),
+            required = listOf("minutes")
+        ))
+
+        // 35. Maps & Navigation
+        toolsArray.add(createFunction(
+            name = "navigate_maps",
+            desc = "Open turn-by-turn navigation or search directions to a destination (address, landmark, restaurant, petrol pump, etc.) using Google Maps.",
+            params = mapOf(
+                "destination" to "string",
+                "mode" to "string"
+            ),
+            required = listOf("destination")
+        ))
+
+        // 36. Web Search
+        toolsArray.add(createFunction(
+            name = "web_search",
+            desc = "Perform a web search on Google or open search results in browser.",
+            params = mapOf("query" to "string"),
+            required = listOf("query")
+        ))
+
+        // 37. Open Camera
+        toolsArray.add(createFunction(
+            name = "open_camera",
+            desc = "Open the phone Camera app to take a photo, record video, or take a selfie ('photo', 'video', 'selfie').",
+            params = mapOf("mode" to "string"),
+            required = emptyList()
+        ))
+
+        // 38. Screen Brightness
+        toolsArray.add(createFunction(
+            name = "set_brightness",
+            desc = "Set screen brightness percentage (0 to 100).",
+            params = mapOf("level_percent" to "integer"),
+            required = listOf("level_percent")
+        ))
+
+        // 39. Do Not Disturb (DND)
+        toolsArray.add(createFunction(
+            name = "set_dnd",
+            desc = "Turn Do Not Disturb (DND) mode ON or OFF.",
+            params = mapOf("enable" to "boolean"),
+            required = listOf("enable")
+        ))
+
+        // 40. Open System Settings
+        toolsArray.add(createFunction(
+            name = "open_system_settings",
+            desc = "Open a specific Android System Settings page (e.g. wifi, bluetooth, display, sound, battery, apps, accessibility, developer, storage, date, airplane, location, nfc, notification).",
+            params = mapOf("setting_name" to "string"),
+            required = listOf("setting_name")
+        ))
+
+        // 41. Calendar Event
+        toolsArray.add(createFunction(
+            name = "add_calendar_event",
+            desc = "Create a calendar event or schedule a meeting in the default Calendar app.",
+            params = mapOf(
+                "title" to "string",
+                "description" to "string",
+                "location" to "string"
+            ),
+            required = listOf("title")
+        ))
+
+        // 42. Send Email
+        toolsArray.add(createFunction(
+            name = "send_email",
+            desc = "Compose an email in Gmail or default email app.",
+            params = mapOf(
+                "to" to "string",
+                "subject" to "string",
+                "body" to "string"
+            ),
+            required = listOf("to")
+        ))
+
+        // 43. Read Recent SMS
+        toolsArray.add(createFunction(
+            name = "read_recent_sms",
+            desc = "Read the latest received SMS text messages from the phone's inbox.",
+            params = mapOf("count" to "integer"),
+            required = emptyList()
+        ))
+
+        // 44. Query Contact Details
+        toolsArray.add(createFunction(
+            name = "query_contact",
+            desc = "Look up a person's contact number or details from phone contacts.",
+            params = mapOf("name" to "string"),
+            required = listOf("name")
+        ))
+
+        // 45. Emergency SOS
+        toolsArray.add(createFunction(
+            name = "emergency_sos",
+            desc = "Trigger emergency SOS call to 112 or emergency contact, and optionally send emergency alert SMS.",
+            params = mapOf(
+                "target" to "string",
+                "message" to "string"
+            ),
+            required = emptyList()
+        ))
+
+        // 46. Create Quick Note
+        toolsArray.add(createFunction(
+            name = "create_quick_note",
+            desc = "Save a quick personal note, reminder, or thought to the AURA permanent memory vault.",
+            params = mapOf(
+                "note_text" to "string",
+                "title" to "string"
+            ),
+            required = listOf("note_text")
+        ))
+
+        // 47. Read Status Bar Notifications
+        toolsArray.add(createFunction(
+            name = "read_notifications",
+            desc = "Read or check active status bar notifications (e.g. WhatsApp messages, SMS, OTPs, emails, food delivery, banking alerts) received on the device.",
+            params = mapOf(
+                "app_filter" to "string",
+                "count" to "integer"
+            ),
+            required = emptyList()
+        ))
+
         return toolsArray
     }
 
@@ -406,6 +590,7 @@ object JarvisToolRegistry {
                         val mediaArgs = JsonObject().apply {
                             addProperty("contact_name", cleanContact)
                             addProperty("media_type", "screenshot")
+                            addProperty("caption", if (!msg.contains("screenshot", ignoreCase = true)) msg else "")
                         }
                         return executeTool(context, "send_whatsapp_media", mediaArgs)
                     }
@@ -421,17 +606,24 @@ object JarvisToolRegistry {
                         msg = "Hello"
                     }
 
-                    val resolvedPhone = resolveContactNumber(context, contact)
+                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+                    val resolvedPhone = resolveContactNumber(context, if (cleanContact.isNotBlank()) cleanContact else contact)
                     val a11y = AuraAccessibilityService.instance
+                    val waPkg = try {
+                        context.packageManager.getPackageInfo("com.whatsapp", 0)
+                        "com.whatsapp"
+                    } catch (_: Exception) {
+                        "com.whatsapp.w4b"
+                    }
 
                     if (!resolvedPhone.isNullOrBlank()) {
                         val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
                         val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
                         try {
                             val encodedMsg = URLEncoder.encode(msg, "UTF-8")
-                            val uri = Uri.parse("https://api.whatsapp.com/send?phone=$waNumber&text=$encodedMsg")
+                            val uri = Uri.parse("https://wa.me/$waNumber?text=$encodedMsg")
                             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage("com.whatsapp")
+                                setPackage(waPkg)
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             context.startActivity(intent)
@@ -443,16 +635,16 @@ object JarvisToolRegistry {
                             result.addProperty("message", "Could not open WhatsApp: ${e.message}")
                         }
                     } else if (contact.isNotBlank() && a11y != null) {
-                        val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
+                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
                         if (intent != null) {
                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             context.startActivity(intent)
                         }
-                        a11y.armWhatsappSearchAndSend(contact, msg)
+                        a11y.armWhatsappSearchAndSend(cleanContact.ifBlank { contact }, msg)
                         result.addProperty("status", "success")
                         result.addProperty("message", "Opened WhatsApp chat for $contact and sent: \"$msg\"")
                     } else {
-                        val intent = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
+                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
                         if (intent != null) {
                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             context.startActivity(intent)
@@ -469,29 +661,52 @@ object JarvisToolRegistry {
                         ?: args.get("to")?.asString
                         ?: ""
                     val mediaType = (args.get("media_type")?.asString ?: "screenshot").lowercase()
-                    val caption = args.get("caption")?.asString ?: ""
+                    val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
 
                     val a11y = AuraAccessibilityService.instance
+                    var imageUri: Uri? = null
+
                     if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
-                        a11y?.performGlobalActionByKey("screenshot")
-                        try { Thread.sleep(1200) } catch (_: Exception) {}
+                        if (a11y != null) {
+                            val latch = CountDownLatch(1)
+                            a11y.takeScreenCapture { bytes ->
+                                if (bytes != null) {
+                                    imageUri = saveBytesToGallery(context, bytes)
+                                }
+                                latch.countDown()
+                            }
+                            try { latch.await(2000, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+                        }
+                        if (imageUri == null) {
+                            a11y?.performGlobalActionByKey("screenshot")
+                            try { Thread.sleep(1200) } catch (_: Exception) {}
+                            imageUri = getLatestScreenshotOrImageUri(context)
+                        }
+                    } else {
+                        imageUri = getLatestScreenshotOrImageUri(context)
                     }
 
-                    val imageUri = getLatestScreenshotOrImageUri(context)
                     if (imageUri == null) {
                         result.addProperty("status", "error")
                         result.addProperty("message", "Device par koi screenshot ya photo nahi mili Boss!")
                         return result
                     }
 
-                    val resolvedPhone = resolveContactNumber(context, contact)
+                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+                    val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
                     val digits = resolvedPhone?.replace(Regex("[^0-9]"), "") ?: ""
                     val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                    val waPkg = try {
+                        context.packageManager.getPackageInfo("com.whatsapp", 0)
+                        "com.whatsapp"
+                    } catch (_: Exception) {
+                        "com.whatsapp.w4b"
+                    }
 
                     try {
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "image/*"
-                            setPackage("com.whatsapp")
+                            setPackage(waPkg)
                             putExtra(Intent.EXTRA_STREAM, imageUri)
                             if (caption.isNotBlank()) {
                                 putExtra(Intent.EXTRA_TEXT, caption)
@@ -505,11 +720,132 @@ object JarvisToolRegistry {
                         context.startActivity(intent)
                         a11y?.armWhatsappSendImage()
                         result.addProperty("status", "success")
-                        result.addProperty("message", "Screenshot capture karke WhatsApp par $contact ko send kar diya gaya hai Boss! 📸💬")
+                        result.addProperty("message", "Screenshot capture karke WhatsApp par ${contact.ifBlank { "chat" }} ko send kar diya gaya hai Boss! 📸💬")
                     } catch (e: Exception) {
                         result.addProperty("status", "error")
                         result.addProperty("message", "WhatsApp me screenshot bhejne me issue aaya: ${e.message}")
                     }
+                }
+
+                "take_screenshot" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y != null) {
+                        var savedUri: Uri? = null
+                        val latch = CountDownLatch(1)
+                        a11y.takeScreenCapture { bytes ->
+                            if (bytes != null) {
+                                savedUri = saveBytesToGallery(context, bytes)
+                            }
+                            latch.countDown()
+                        }
+                        try { latch.await(2500, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+
+                        if (savedUri != null) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Screenshot taken and saved to Gallery! 📸")
+                            result.addProperty("uri", savedUri.toString())
+                        } else {
+                            val sysOk = a11y.takeSystemScreenshot()
+                            result.addProperty("status", if (sysOk) "success" else "error")
+                            result.addProperty("message", if (sysOk) "Screenshot captured successfully! 📸" else "Could not capture screenshot.")
+                        }
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Aura Accessibility Service is not active. Please enable it in Android Settings to capture screenshots.")
+                    }
+                }
+
+                "share_media" -> {
+                    val targetApp = (args.get("target_app")?.asString ?: args.get("app")?.asString ?: "whatsapp").lowercase()
+                    val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
+                    val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
+
+                    val a11y = AuraAccessibilityService.instance
+                    var imageUri = getLatestScreenshotOrImageUri(context)
+                    if (imageUri == null && a11y != null) {
+                        val latch = CountDownLatch(1)
+                        a11y.takeScreenCapture { bytes ->
+                            if (bytes != null) {
+                                imageUri = saveBytesToGallery(context, bytes)
+                            }
+                            latch.countDown()
+                        }
+                        try { latch.await(2000, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+                    }
+
+                    if (imageUri == null) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Device par koi screenshot ya image nahi mili share karne ke liye!")
+                        return result
+                    }
+
+                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+                    val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+                    val digits = resolvedPhone?.replace(Regex("[^0-9]"), "") ?: ""
+                    val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/*"
+                        putExtra(Intent.EXTRA_STREAM, imageUri)
+                        if (caption.isNotBlank()) putExtra(Intent.EXTRA_TEXT, caption)
+                        if (targetApp.contains("whatsapp")) {
+                            val waPkg = try {
+                                context.packageManager.getPackageInfo("com.whatsapp", 0)
+                                "com.whatsapp"
+                            } catch (_: Exception) {
+                                "com.whatsapp.w4b"
+                            }
+                            setPackage(waPkg)
+                            if (waNumber.isNotBlank()) putExtra("jid", "$waNumber@s.whatsapp.net")
+                        } else if (targetApp.contains("insta")) {
+                            setPackage("com.instagram.android")
+                        } else if (targetApp.contains("telegram")) {
+                            setPackage("org.telegram.messenger")
+                        }
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+
+                    try {
+                        context.startActivity(intent)
+                        if (targetApp.contains("whatsapp")) {
+                            a11y?.armWhatsappSendImage()
+                        }
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Shared media to $targetApp successfully! 📤")
+                    } catch (_: Exception) {
+                        val chooser = Intent.createChooser(intent, "Share media via AURA").apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(chooser)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Opened Share Menu for media! 📤")
+                    }
+                }
+
+                "send_bulk_whatsapp" -> {
+                    val msg = args.get("message")?.asString ?: "Hello"
+                    val contactsStr = args.get("contacts")?.asString ?: ""
+                    val contactsList = contactsStr.split(Regex("[,;\\n]+")).map { it.trim() }.filter { it.isNotBlank() }
+                    var sentCount = 0
+                    for (c in contactsList) {
+                        val num = resolveContactNumber(context, c)
+                        if (num != null) {
+                            val digits = num.replace(Regex("[^0-9]"), "")
+                            val waNum = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                            val uri = Uri.parse("https://wa.me/$waNum?text=${URLEncoder.encode(msg, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                setPackage("com.whatsapp")
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                            AuraAccessibilityService.instance?.armWhatsappAutoSendPreFilled()
+                            sentCount++
+                            try { Thread.sleep(1500) } catch (_: Exception) {}
+                        }
+                    }
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "WhatsApp message sent to $sentCount contacts!")
                 }
 
                 "delete_whatsapp_media" -> {
@@ -560,6 +896,46 @@ object JarvisToolRegistry {
                     result.addProperty("message", "WhatsApp par $contact ke last message/photos delete karne ki action execute kar di gayi hai Boss! 🗑️$detail")
                 }
 
+                "show_recent_media" -> {
+                    val uri = getLatestScreenshotOrImageUri(context)
+                    if (uri != null) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "image/*")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Recent screenshot opened fullscreen in image viewer! 📸")
+                        } catch (e: Exception) {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Could not open image viewer: ${e.message}")
+                        }
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Device par koi recent screenshot ya photo nahi mili Boss!")
+                    }
+                }
+
+                "empty_recycle_bin" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y != null) {
+                        a11y.armEmptyRecycleBin()
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Gallery ke Recycle Bin ko permanently clear kar diya gaya hai Boss! 🗑️✨")
+                    } else {
+                        val galleryPkg = resolveAppPackage(context, "Gallery") ?: "com.sec.android.gallery3d"
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(galleryPkg)
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            context.startActivity(launchIntent)
+                        }
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Gallery open kardi hai Boss, Accessibility on karke Recycle Bin automatically clear ho jayega!")
+                    }
+                }
+
                 "open_app" -> {
                     val appName = args.get("app_name")?.asString ?: ""
                     val pm = context.packageManager
@@ -594,13 +970,69 @@ object JarvisToolRegistry {
                 }
 
                 "set_volume" -> {
-                    val level = args.get("level_percent")?.asInt ?: 50
+                    val level = extractPercent(args, "level_percent", "level", "volume", "value", "percent")
                     val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                    val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    val target = (maxVol * (level.coerceIn(0, 100) / 100.0f)).toInt()
-                    am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
+                    val maxMusic = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    val targetMusic = (maxMusic * (level / 100.0f)).toInt().coerceIn(0, maxMusic)
+
+                    // Execute on UI thread if MainActivity is active for flawless Volume Dialog HUD display
+                    com.aura.assistant.MainActivity.instance?.runOnUiThread {
+                        try {
+                            am.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                targetMusic,
+                                AudioManager.FLAG_SHOW_UI or AudioManager.FLAG_PLAY_SOUND
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "UI thread setStreamVolume error: $e")
+                        }
+                    } ?: run {
+                        try {
+                            am.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                targetMusic,
+                                AudioManager.FLAG_SHOW_UI or AudioManager.FLAG_PLAY_SOUND
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Direct setStreamVolume error: $e")
+                        }
+                    }
+
+                    // Safely adjust system/notification streams without breaking on DND restrictions
+                    val secondaryStreams = listOf(
+                        AudioManager.STREAM_SYSTEM,
+                        AudioManager.STREAM_VOICE_CALL,
+                        AudioManager.STREAM_RING,
+                        AudioManager.STREAM_NOTIFICATION
+                    )
+                    for (stream in secondaryStreams) {
+                        try {
+                            val max = am.getStreamMaxVolume(stream)
+                            val target = (max * (level / 100.0f)).toInt().coerceIn(0, max)
+                            am.setStreamVolume(stream, target, 0)
+                        } catch (_: Throwable) {}
+                    }
+
                     result.addProperty("status", "success")
-                    result.addProperty("message", "Volume set to $level%")
+                    result.addProperty("volume_percent", level)
+                    result.addProperty("message", "Volume $level% par set kar diya hai Boss! 🔊")
+                }
+
+                "media_control" -> {
+                    val action = (args.get("action")?.asString ?: "play_pause").lowercase().trim()
+                    val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    val keyCode = when {
+                        action.contains("play") && !action.contains("pause") -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+                        action.contains("pause") || action.contains("stop") -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
+                        action.contains("next") || action.contains("forward") || action.contains("skip") -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                        action.contains("prev") || action.contains("back") -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        else -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                    }
+                    am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
+                    am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
+                    result.addProperty("status", "success")
+                    result.addProperty("action", action)
+                    result.addProperty("message", "Media playback $action kar diya hai Boss! 🎵")
                 }
 
                 "create_alarm" -> {
@@ -1083,9 +1515,368 @@ object JarvisToolRegistry {
                     }
                 }
 
+                // 34. Clock Timer
+                "set_timer" -> {
+                    val minutes = args.get("minutes")?.asInt ?: 0
+                    val seconds = args.get("seconds")?.asInt ?: 0
+                    val totalSeconds = (minutes * 60) + seconds
+                    val label = args.get("label")?.asString ?: "AURA Timer"
+
+                    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+                        putExtra(AlarmClock.EXTRA_LENGTH, totalSeconds)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    if (intent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(intent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "$minutes minute $seconds second ka timer shuru kar diya hai Boss! ⏱️")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Clock app timer intent support nahi kar raha.")
+                    }
+                }
+
+                // 35. Maps & Navigation
+                "navigate_maps" -> {
+                    val dest = args.get("destination")?.asString ?: ""
+                    val mode = args.get("mode")?.asString ?: "d"
+                    val navMode = when (mode.lowercase()) {
+                        "walking", "walk" -> "w"
+                        "transit", "bus", "train" -> "r"
+                        "two-wheeler", "bike", "motorcycle" -> "l"
+                        else -> "d"
+                    }
+                    val uri = Uri.parse("google.navigation:q=${URLEncoder.encode(dest, "UTF-8")}&mode=$navMode")
+                    val mapIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                        setPackage("com.google.android.apps.maps")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    if (mapIntent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(mapIntent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Google Maps par \"$dest\" ka navigation shuru ho gaya hai Boss! 📍")
+                    } else {
+                        val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${URLEncoder.encode(dest, "UTF-8")}")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(fallbackIntent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "\"$dest\" ke liye directions open ho gayi hain Boss! 🗺️")
+                    }
+                }
+
+                // 36. Web Search
+                "web_search" -> {
+                    val query = args.get("query")?.asString ?: ""
+                    val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                        putExtra(SearchManager.QUERY, query)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    if (intent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(intent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "\"$query\" web par search kiya ja raha hai Boss! 🔍")
+                    } else {
+                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(query, "UTF-8")}")).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(browserIntent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "\"$query\" Google search par open kar diya hai Boss! 🌐")
+                    }
+                }
+
+                // 37. Open Camera
+                "open_camera" -> {
+                    val mode = args.get("mode")?.asString?.lowercase() ?: "photo"
+                    val action = if (mode == "video") MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
+                    val intent = Intent(action).apply {
+                        if (mode == "selfie") {
+                            putExtra("android.intent.extras.CAMERA_FACING", 1)
+                            putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+                        }
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Camera open kar diya hai Boss! 📷")
+                }
+
+                // 38. Screen Brightness
+                "set_brightness" -> {
+                    val level = extractPercent(args, "level_percent", "level", "brightness", "value", "percent")
+                    val clamped = level.coerceIn(1, 100)
+                    val brightnessValue = (clamped * 255) / 100
+
+                    // 1. Instantly update window brightness on MainActivity for immediate visual change
+                    try {
+                        com.aura.assistant.MainActivity.instance?.setScreenBrightness(clamped)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Window brightness update error: $e")
+                    }
+
+                    // 2. Update persistent system settings if permitted
+                    val canWrite = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.System.canWrite(context)
+                    if (canWrite) {
+                        try {
+                            Settings.System.putInt(
+                                context.contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                            )
+                            Settings.System.putInt(
+                                context.contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS,
+                                brightnessValue
+                            )
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Settings.System brightness error", e)
+                        }
+                    } else {
+                        // Open Write Settings permission page in background so future system changes stick
+                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try { context.startActivity(intent) } catch (_: Exception) {}
+                    }
+
+                    result.addProperty("status", "success")
+                    result.addProperty("brightness_percent", clamped)
+                    result.addProperty("message", "Screen brightness $clamped% par set kar di hai Boss! ☀️")
+                }
+
+                // 39. Do Not Disturb (DND)
+                "set_dnd" -> {
+                    val enable = args.get("enable")?.asBoolean ?: true
+                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && notificationManager != null) {
+                        if (notificationManager.isNotificationPolicyAccessGranted) {
+                            val filter = if (enable) android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY else android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+                            notificationManager.setInterruptionFilter(filter)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", if (enable) "Do Not Disturb (DND) chalu kar diya hai Boss! 🔕" else "Do Not Disturb (DND) band kar diya hai Boss! 🔔")
+                        } else {
+                            val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                            result.addProperty("status", "permission_needed")
+                            result.addProperty("message", "DND toggle karne ke liye Notification Policy access chahiye, settings open kar di hai Boss.")
+                        }
+                    } else {
+                        result.addProperty("status", "unsupported")
+                        result.addProperty("message", "Is device par DND directly toggle nahi ho sakta.")
+                    }
+                }
+
+                // 40. Open System Settings
+                "open_system_settings" -> {
+                    val setting = args.get("setting_name")?.asString?.lowercase() ?: ""
+                    val intentAction = when {
+                        setting.contains("wifi") || setting.contains("wi-fi") -> Settings.ACTION_WIFI_SETTINGS
+                        setting.contains("bluetooth") || setting.contains("bt") -> Settings.ACTION_BLUETOOTH_SETTINGS
+                        setting.contains("display") || setting.contains("screen") || setting.contains("refresh") -> Settings.ACTION_DISPLAY_SETTINGS
+                        setting.contains("sound") || setting.contains("volume") || setting.contains("audio") -> Settings.ACTION_SOUND_SETTINGS
+                        setting.contains("battery") -> Intent.ACTION_POWER_USAGE_SUMMARY
+                        setting.contains("app") -> Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS
+                        setting.contains("accessibility") -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+                        setting.contains("developer") -> Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+                        setting.contains("storage") -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+                        setting.contains("date") || setting.contains("time") -> Settings.ACTION_DATE_SETTINGS
+                        setting.contains("airplane") || setting.contains("flight") -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
+                        setting.contains("location") || setting.contains("gps") -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                        setting.contains("nfc") -> Settings.ACTION_NFC_SETTINGS
+                        setting.contains("notification") -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS else Settings.ACTION_SETTINGS
+                        setting.contains("security") || setting.contains("lock") -> Settings.ACTION_SECURITY_SETTINGS
+                        else -> Settings.ACTION_SETTINGS
+                    }
+                    val intent = Intent(intentAction).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "${setting.ifBlank { "System" }} settings open kar di hai Boss! ⚙️")
+                }
+
+                // 41. Calendar Event
+                "add_calendar_event" -> {
+                    val title = args.get("title")?.asString ?: "Event"
+                    val description = args.get("description")?.asString ?: ""
+                    val location = args.get("location")?.asString ?: ""
+
+                    val intent = Intent(Intent.ACTION_INSERT).apply {
+                        data = CalendarContract.Events.CONTENT_URI
+                        putExtra(CalendarContract.Events.TITLE, title)
+                        putExtra(CalendarContract.Events.DESCRIPTION, description)
+                        putExtra(CalendarContract.Events.EVENT_LOCATION, location)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Calendar event \"$title\" schedule karne ke liye page open kar diya hai Boss! 📅")
+                }
+
+                // 42. Send Email
+                "send_email" -> {
+                    val to = args.get("to")?.asString ?: ""
+                    val subject = args.get("subject")?.asString ?: ""
+                    val body = args.get("body")?.asString ?: ""
+
+                    val intent = Intent(Intent.ACTION_SENDTO).apply {
+                        data = Uri.parse("mailto:$to")
+                        putExtra(Intent.EXTRA_SUBJECT, subject)
+                        putExtra(Intent.EXTRA_TEXT, body)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "$to ke liye email draft ready kar diya hai Boss! ✉️")
+                }
+
+                // 43. Read Recent SMS
+                "read_recent_sms" -> {
+                    val count = args.get("count")?.asInt ?: 1
+                    val smsList = JsonArray()
+                    try {
+                        val uri = Telephony.Sms.Inbox.CONTENT_URI
+                        val projection = arrayOf(
+                            Telephony.Sms.Inbox.ADDRESS,
+                            Telephony.Sms.Inbox.BODY,
+                            Telephony.Sms.Inbox.DATE
+                        )
+                        context.contentResolver.query(uri, projection, null, null, "${Telephony.Sms.Inbox.DATE} DESC")?.use { cursor ->
+                            var read = 0
+                            val addressCol = cursor.getColumnIndex(Telephony.Sms.Inbox.ADDRESS)
+                            val bodyCol = cursor.getColumnIndex(Telephony.Sms.Inbox.BODY)
+                            while (cursor.moveToNext() && read < count) {
+                                val address = if (addressCol != -1) cursor.getString(addressCol) ?: "Unknown" else "Unknown"
+                                val body = if (bodyCol != -1) cursor.getString(bodyCol) ?: "" else ""
+                                val contactName = lookupLocalContact(context, address) ?: address
+
+                                val smsObj = JsonObject().apply {
+                                    addProperty("from", contactName)
+                                    addProperty("body", body)
+                                }
+                                smsList.add(smsObj)
+                                read++
+                            }
+                        }
+                        result.addProperty("status", "success")
+                        result.add("messages", smsList)
+                        result.addProperty("message", "Aapke inbox se $count recent SMS read kiye gaye hain Boss.")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "SMS read karne mein error ya permission missing: ${e.message}")
+                    }
+                }
+
+                // 44. Query Contact Details
+                "query_contact" -> {
+                    val name = args.get("name")?.asString ?: ""
+                    val resolvedNumber = resolveContactNumber(context, name)
+                    if (!resolvedNumber.isNullOrBlank()) {
+                        result.addProperty("status", "success")
+                        result.addProperty("name", name)
+                        result.addProperty("phone_number", resolvedNumber)
+                        result.addProperty("message", "$name ka number $resolvedNumber hai Boss! 📞")
+                    } else {
+                        result.addProperty("status", "not_found")
+                        result.addProperty("message", "$name contacts mein nahi mila Boss.")
+                    }
+                }
+
+                // 45. Emergency SOS
+                "emergency_sos" -> {
+                    val target = args.get("target")?.asString?.trim() ?: "112"
+                    val msg = args.get("message")?.asString ?: "EMERGENCY: I need immediate help! This is an automated SOS alert from AURA."
+
+                    val emergencyNumber = if (target.matches(Regex("[0-9+]+"))) target else {
+                        resolveContactNumber(context, target) ?: "112"
+                    }
+
+                    if (emergencyNumber != "112" && emergencyNumber != "911" && emergencyNumber != "100") {
+                        try {
+                            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                context.getSystemService(SmsManager::class.java)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                SmsManager.getDefault()
+                            }
+                            smsManager.sendTextMessage(emergencyNumber, null, msg, null, null)
+                        } catch (_: Exception) {}
+                    }
+
+                    val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$emergencyNumber")).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(callIntent)
+
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "EMERGENCY SOS: $emergencyNumber ko call connect kiya ja raha hai Boss! 🚨")
+                }
+
+                // 46. Create Quick Note
+                "create_quick_note" -> {
+                    val noteText = args.get("note_text")?.asString ?: ""
+                    val title = args.get("title")?.asString ?: "Note ${System.currentTimeMillis()}"
+
+                    AuraMemoryManager.rememberFact(context, "note_$title", noteText)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Note \"$title\" save kar liya gaya hai Boss! 📝")
+                }
+
+                // 47. Read Status Bar Notifications
+                "read_notifications" -> {
+                    val isListenerEnabled = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+                    if (!isListenerEnabled && com.aura.assistant.AuraNotificationListenerService.instance == null) {
+                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try { context.startActivity(intent) } catch (_: Exception) {}
+                        result.addProperty("status", "permission_needed")
+                        result.addProperty("message", "Boss, notifications padhne ke liye 'Notification Access' permission allow karni hogi. Maine settings open kar di hai, please allow kar dijiye!")
+                    } else {
+                        val notifs = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                        if (notifs.isEmpty()) {
+                            result.addProperty("status", "empty")
+                            result.addProperty("message", "Filhaal status bar mein koi nayi notifications nahi hain Boss, sab clear hai! ✨")
+                        } else {
+                            val filter = args.get("app_filter")?.asString?.lowercase()?.trim() ?: ""
+                            val filtered = if (filter.isNotBlank()) {
+                                notifs.filter {
+                                    (it["appName"] as? String)?.contains(filter, ignoreCase = true) == true ||
+                                    (it["package"] as? String)?.contains(filter, ignoreCase = true) == true
+                                }
+                            } else notifs
+
+                            val count = args.get("count")?.asInt ?: 5
+                            val recent = filtered.take(count)
+                            val array = JsonArray()
+                            for (n in recent) {
+                                val item = JsonObject().apply {
+                                    addProperty("app", n["appName"]?.toString() ?: "App")
+                                    addProperty("title", n["title"]?.toString() ?: "")
+                                    addProperty("text", n["text"]?.toString() ?: "")
+                                }
+                                array.add(item)
+                            }
+                            result.addProperty("status", "success")
+                            result.add("notifications", array)
+                            result.addProperty("count", recent.size)
+                            result.addProperty("message", "${recent.size} notifications mili hain Boss.")
+                        }
+                    }
+                }
+
+                // Tier 4 Catch-All Safe Fallback Handler
                 else -> {
-                    result.addProperty("status", "unknown_tool")
-                    result.addProperty("message", "No native handler for $name")
+                    Log.w(TAG, "Tool $name requested but not natively registered")
+                    result.addProperty("status", "unsupported")
+                    result.addProperty("tool_name", name)
+                    result.addProperty("message", "Action \"$name\" is not directly supported natively yet. Politely explain this to the user in natural Hinglish and offer an alternative like web search, opening the app, or adjusting system settings.")
                 }
             }
         } catch (e: Exception) {
@@ -1095,6 +1886,25 @@ object JarvisToolRegistry {
         }
 
         return result
+    }
+
+    private fun extractPercent(args: JsonObject, vararg keys: String): Int {
+        for (k in keys) {
+            val elem = args.get(k) ?: continue
+            if (elem.isJsonPrimitive) {
+                val prim = elem.asJsonPrimitive
+                if (prim.isNumber) return prim.asInt.coerceIn(0, 100)
+                if (prim.isString) {
+                    val s = prim.asString.lowercase().trim()
+                    if (s.contains("full") || s.contains("max") || s.contains("hundred") || s.contains("100")) return 100
+                    if (s.contains("half") || s.contains("50")) return 50
+                    if (s.contains("min") || s.contains("zero") || s.contains("0") || s.contains("mute")) return 0
+                    val digits = s.replace(Regex("[^0-9]"), "")
+                    if (digits.isNotBlank()) return digits.toInt().coerceIn(0, 100)
+                }
+            }
+        }
+        return 100
     }
 
     private fun evaluateSimpleMath(expr: String): String {
@@ -1140,6 +1950,10 @@ object JarvisToolRegistry {
             return digitsOnly
         }
 
+        // Clean honorifics, prepositions, etc. (Hindi & English)
+        val cleanName = trimmed.replace(Regex("\\b(ko|ji|bhai|bhaiya|bro|sir|sahab|de|ka|ki|ke|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val queriesToTry = if (cleanName.isNotBlank() && cleanName != trimmed) listOf(cleanName, trimmed) else listOf(trimmed)
+
         try {
             val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
             val projection = arrayOf(
@@ -1148,27 +1962,29 @@ object JarvisToolRegistry {
             )
             val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
 
-            // 1. Full name match
-            context.contentResolver.query(uri, projection, selection, arrayOf("%$trimmed%"), null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                    if (numCol != -1) {
-                        val rawNum = cursor.getString(numCol)
-                        if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
+            for (target in queriesToTry) {
+                // 1. Full name match
+                context.contentResolver.query(uri, projection, selection, arrayOf("%$target%"), null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        if (numCol != -1) {
+                            val rawNum = cursor.getString(numCol)
+                            if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
+                        }
                     }
                 }
-            }
 
-            // 2. Token match (e.g. "Ansh Kesharwani" -> search "Ansh")
-            val tokens = trimmed.split(Regex("\\s+")).filter { it.length >= 2 }
-            if (tokens.size > 1) {
-                for (token in tokens) {
-                    context.contentResolver.query(uri, projection, selection, arrayOf("%$token%"), null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                            if (numCol != -1) {
-                                val rawNum = cursor.getString(numCol)
-                                if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
+                // 2. Token match (e.g. "Ansh Kesharwani" -> search "Ansh")
+                val tokens = target.split(Regex("\\s+")).filter { it.length >= 2 }
+                if (tokens.size > 1) {
+                    for (token in tokens) {
+                        context.contentResolver.query(uri, projection, selection, arrayOf("%$token%"), null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                                if (numCol != -1) {
+                                    val rawNum = cursor.getString(numCol)
+                                    if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
+                                }
                             }
                         }
                     }
@@ -1176,6 +1992,74 @@ object JarvisToolRegistry {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to resolve contact: $query", e)
+        }
+        return null
+    }
+
+    /**
+     * Saves raw JPEG/PNG image bytes into the system Gallery (Pictures/Screenshots or MediaStore)
+     * and returns a valid content Uri.
+     */
+    fun saveBytesToGallery(context: Context, bytes: ByteArray): Uri? {
+        val fileName = "AURA_SCREENSHOT_${System.currentTimeMillis()}.jpg"
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Screenshots")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(bytes)
+                        os.flush()
+                    }
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    context.contentResolver.update(uri, contentValues, null, null)
+                    Log.i(TAG, "Screenshot saved to MediaStore: $uri")
+                    return uri
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "MediaStore insert failed: $e, falling back to app storage")
+        }
+
+        // Fallback: save to external files and wrap with FileProvider
+        try {
+            val screenshotDir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "Screenshots").apply {
+                if (!exists()) mkdirs()
+            }
+            val file = File(screenshotDir, fileName)
+            FileOutputStream(file).use { fos ->
+                fos.write(bytes)
+                fos.flush()
+            }
+            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+            val fileUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            Log.i(TAG, "Screenshot saved to file: ${file.absolutePath}, uri: $fileUri")
+            return fileUri
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save screenshot to file", e)
+        }
+
+        // Final fallback: cache directory
+        try {
+            val cacheDir = File(context.cacheDir, "screenshots").apply {
+                if (!exists()) mkdirs()
+            }
+            val file = File(cacheDir, fileName)
+            FileOutputStream(file).use { fos ->
+                fos.write(bytes)
+                fos.flush()
+            }
+            val fileUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            Log.i(TAG, "Screenshot saved to cache: ${file.absolutePath}, uri: $fileUri")
+            return fileUri
+        } catch (e: Exception) {
+            Log.e(TAG, "All fallback saves failed", e)
         }
         return null
     }
@@ -1189,7 +2073,7 @@ object JarvisToolRegistry {
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_ADDED
         )
-        // 1. First look for screenshots specifically
+        // 1. First look for screenshots specifically in MediaStore
         try {
             val selection = "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ? OR ${MediaStore.Images.Media.DATA} LIKE ?"
             val selectionArgs = arrayOf("%Screenshot%", "%Screenshot%")
@@ -1234,6 +2118,37 @@ object JarvisToolRegistry {
         } catch (e: Exception) {
             Log.w(TAG, "Latest image fallback query failed: $e")
         }
+
+        // 3. Fallback: Check physical directories for latest screenshot file
+        try {
+            val candidateDirs = listOf(
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Screenshots"),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Screenshots"),
+                File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "Screenshots"),
+                File(context.cacheDir, "screenshots")
+            )
+            var latestFile: File? = null
+            var latestTime = 0L
+
+            for (dir in candidateDirs) {
+                if (dir.exists() && dir.isDirectory) {
+                    val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jpg", true) || f.name.endsWith(".png", true)) }
+                    files?.forEach { f ->
+                        if (f.lastModified() > latestTime) {
+                            latestTime = f.lastModified()
+                            latestFile = f
+                        }
+                    }
+                }
+            }
+
+            if (latestFile != null) {
+                return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", latestFile!!)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Physical file fallback search failed: $e")
+        }
+
         return null
     }
 

@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,23 +14,20 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.aura.assistant.ui.components.*
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
-import com.aura.assistant.ui.theme.ChatGptAccentCyan
 import com.aura.assistant.ui.theme.ChatGptBackground
-import com.aura.assistant.ui.theme.AuraCyberPurple
 import kotlinx.coroutines.launch
 
 /**
  * Main Screen for ChatGPT-style AURA Assistant.
- * Features ambient glow that follows user touch — inspired by Gemini's living UI.
+ * Pure black clean aesthetic.
  */
 @Composable
 fun AuraMainScreen(
@@ -50,56 +46,41 @@ fun AuraMainScreen(
     val liveState by viewModel.voiceState.collectAsState()
     val amplitude by viewModel.audioAmplitude.collectAsState()
     val liveTranscript by viewModel.liveTranscript.collectAsState()
+    val isLiveScreenSharing by viewModel.isLiveScreenSharing.collectAsState()
+
+    val selectedAttachment by viewModel.selectedAttachment.collectAsState()
 
     val isToolsSheetVisible by viewModel.isToolsSheetVisible.collectAsState()
     val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     val isShakeEnabled by viewModel.isShakeEnabled.collectAsState()
 
+    // Activity Launchers for Attachments
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.attachFromUri(uri)
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        if (bitmap != null) {
+            viewModel.attachFromBitmap(bitmap)
+        }
+    }
+
+    val documentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.attachFromUri(uri)
+        }
+    }
+
     val listState = rememberLazyListState()
-
-    // ── Ambient Glow State ──────────────────────────────────────────────────
-    // Tracks the current glow position (user touch or idle drift)
-    var glowCenter by remember { mutableStateOf(Offset(0.5f, 0.3f)) } // normalized 0..1
-    var glowColor by remember { mutableStateOf(ChatGptAccentCyan) }
-
-    // Idle ambient animation — slowly drifts in a figure-8 when not touched
-    val idleAnim = rememberInfiniteTransition(label = "ambient_idle")
-    val idleX by idleAnim.animateFloat(
-        initialValue = 0.2f, targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "idleX"
-    )
-    val idleY by idleAnim.animateFloat(
-        initialValue = 0.1f, targetValue = 0.5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "idleY"
-    )
-
-    // Smoothly animate glow center
-    val animGlowX by animateFloatAsState(
-        targetValue = glowCenter.x,
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
-        label = "glowX"
-    )
-    val animGlowY by animateFloatAsState(
-        targetValue = glowCenter.y,
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
-        label = "glowY"
-    )
-
-    // Color cycle: rotate between cyan and purple based on position
-    val ambientColors = listOf(
-        ChatGptAccentCyan.copy(alpha = 0.06f),
-        AuraCyberPurple.copy(alpha = 0.06f),
-        Color.Transparent
-    )
 
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
 
@@ -164,7 +145,9 @@ fun AuraMainScreen(
                         onVoiceClick = { viewModel.startVoiceMode() },
                         onStopGenerating = { viewModel.stopGeneration() },
                         onPlusClick = { viewModel.showToolsSheet() },
-                        isGenerating = isGenerating
+                        isGenerating = isGenerating,
+                        attachedMedia = selectedAttachment,
+                        onClearAttachment = { viewModel.clearAttachment() }
                     )
                 }
             ) { innerPadding ->
@@ -172,89 +155,7 @@ fun AuraMainScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                        // ── Signature Gemini Ambient Light Mesh Canvas ───────────────────
-                        .drawBehind {
-                            // Base deep background
-                            drawRect(ChatGptBackground)
-
-                            val w = size.width
-                            val h = size.height
-
-                            // 1. Top subtle ambient glow (Indigo/Violet)
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFF4F46E5).copy(alpha = 0.09f),
-                                        Color(0xFF7C3AED).copy(alpha = 0.04f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(w * 0.5f, h * 0.05f),
-                                    radius = w * 0.85f
-                                ),
-                                radius = w * 0.85f,
-                                center = Offset(w * 0.5f, h * 0.05f)
-                            )
-
-                            // 2. Bottom radiant ambient bloom (Electric Cyan & Sky Blue)
-                            val bottomGlowAlpha = if (isGenerating) 0.18f else 0.10f
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFF0284C7).copy(alpha = bottomGlowAlpha),
-                                        Color(0xFF00E5FF).copy(alpha = bottomGlowAlpha * 0.6f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(w * 0.5f, h * 0.95f),
-                                    radius = w * 0.95f
-                                ),
-                                radius = w * 0.95f,
-                                center = Offset(w * 0.5f, h * 0.95f)
-                            )
-
-                            // 3. Touch-reactive glow orb
-                            val cx = animGlowX * w
-                            val cy = animGlowY * h
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        ChatGptAccentCyan.copy(alpha = 0.08f),
-                                        AuraCyberPurple.copy(alpha = 0.05f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(cx, cy),
-                                    radius = size.minDimension * 0.65f
-                                ),
-                                radius = size.minDimension * 0.65f,
-                                center = Offset(cx, cy)
-                            )
-
-                            // 4. Idle secondary ambient drift
-                            val ix = idleX * w
-                            val iy = idleY * h
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        AuraCyberPurple.copy(alpha = 0.05f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(ix, iy),
-                                    radius = size.minDimension * 0.45f
-                                ),
-                                radius = size.minDimension * 0.45f,
-                                center = Offset(ix, iy)
-                            )
-                        }
-                        // ── Touch to move glow ───────────────────────────────
-                        .pointerInput(Unit) {
-                            detectTapGestures { offset ->
-                                val w = size.width.toFloat()
-                                val h = size.height.toFloat()
-                                glowCenter = Offset(
-                                    x = (offset.x / w).coerceIn(0f, 1f),
-                                    y = (offset.y / h).coerceIn(0f, 1f)
-                                )
-                            }
-                        }
+                        .background(ChatGptBackground)
                 ) {
                     if (chatMessages.isEmpty()) {
                         ChatGPTEmptyState(
@@ -297,15 +198,28 @@ fun AuraMainScreen(
                         viewModel.sendImageToLive(bytes, "Analyze what is in this camera frame")
                     },
                     onSendScreenCapture = {
-                        viewModel.captureAndSendScreenToLive()
+                        viewModel.startLiveScreenShare()
+                    },
+                    isScreenSharing = isLiveScreenSharing,
+                    onStopScreenSharing = {
+                        viewModel.stopLiveScreenShare()
                     },
                     userName = "Ansh"
                 )
             }
 
-            // ── Quick Device Tools Sheet ──────────────────────────────────────
+            // ── Modern Attachment & Quick Tools Bottom Sheet ──────────────────
             if (isToolsSheetVisible) {
-                QuickToolsBottomSheet(
+                AuraAttachmentBottomSheet(
+                    onTakePhoto = {
+                        try { cameraLauncher.launch(null) } catch (_: Exception) {}
+                    },
+                    onPickGallery = {
+                        try { galleryLauncher.launch("image/*") } catch (_: Exception) {}
+                    },
+                    onPickDocument = {
+                        try { documentLauncher.launch(arrayOf("*/*")) } catch (_: Exception) {}
+                    },
                     onToolSelected = { prompt -> viewModel.onSendTextMessage(prompt) },
                     onDismiss = { viewModel.hideToolsSheet() }
                 )

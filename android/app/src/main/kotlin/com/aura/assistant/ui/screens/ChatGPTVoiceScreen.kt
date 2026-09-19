@@ -1,8 +1,8 @@
 package com.aura.assistant.ui.screens
 
+import android.app.Activity
 import android.graphics.Bitmap
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -67,6 +67,8 @@ fun ChatGPTVoiceScreen(
     onStartListening: () -> Unit = {},
     onSendCameraImage: (ByteArray) -> Unit = {},
     onSendScreenCapture: () -> Unit = {},
+    isScreenSharing: Boolean = false,
+    onStopScreenSharing: () -> Unit = {},
     userName: String = "Ansh",
     modifier: Modifier = Modifier
 ) {
@@ -74,11 +76,6 @@ fun ChatGPTVoiceScreen(
     val coroutineScope = rememberCoroutineScope()
     var isMuted by remember { mutableStateOf(false) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
-
-    // Intercept system back gestures to gracefully exit voice mode
-    BackHandler {
-        onCloseVoiceMode()
-    }
 
     // Transient feedback auto-dismiss
     LaunchedEffect(feedbackMessage) {
@@ -166,8 +163,7 @@ fun ChatGPTVoiceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 18.dp, start = 24.dp, end = 24.dp),
+                .padding(top = 54.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Sparkling 4-point Gemini star
@@ -261,27 +257,6 @@ fun ChatGPTVoiceScreen(
                     )
                 )
             }
-
-            // Spoken transcript display
-            if (liveTranscript.isNotBlank()) {
-                Spacer(modifier = Modifier.height(14.dp))
-                Surface(
-                    color = Color.White.copy(alpha = 0.05f),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                ) {
-                    Text(
-                        text = liveTranscript,
-                        style = AuraTypography.bodyMedium.copy(
-                            color = Color.White.copy(alpha = 0.70f),
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 20.sp
-                        ),
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                    )
-                }
-            }
         }
 
         // ── 4. Transient Feedback Pill ──────────────────────────────────────────
@@ -291,8 +266,7 @@ fun ChatGPTVoiceScreen(
             exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 86.dp)
+                .padding(bottom = 120.dp)
         ) {
             Surface(
                 color = Color(0xFF1E293B).copy(alpha = 0.95f),
@@ -325,8 +299,7 @@ fun ChatGPTVoiceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 20.dp),
+                .padding(bottom = 44.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
@@ -356,14 +329,25 @@ fun ChatGPTVoiceScreen(
                         }
                     )
 
-                    // 2. Screen Share Button (Instant screen capture to Gemini Live)
+                    // 2. Screen Share Button (True Gemini Live Device Screen Sharing)
                     GeminiLiveCircleButton(
                         icon = Icons.AutoMirrored.Filled.ScreenShare,
-                        contentDescription = "Share Screen",
-                        isActive = false,
+                        contentDescription = if (isScreenSharing) "Stop Screen Sharing" else "Share Screen",
+                        isActive = isScreenSharing,
+                        activeColor = Color(0xFF00E5FF),
                         onClick = {
-                            feedbackMessage = "Screen captured & shared with Aura"
-                            onSendScreenCapture()
+                            if (isScreenSharing) {
+                                onStopScreenSharing()
+                                feedbackMessage = "Screen sharing stopped"
+                            } else {
+                                feedbackMessage = "Screen sharing active — show any screen to AURA"
+                                val activity = context as? Activity
+                                activity?.moveTaskToBack(true)
+                                try {
+                                    com.aura.assistant.AuraDynamicIsland.show(context, "screen_share")
+                                } catch (_: Exception) {}
+                                onSendScreenCapture()
+                            }
                         }
                     )
 

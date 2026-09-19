@@ -6,6 +6,16 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -697,15 +708,30 @@ fun ChatMessageItem(
                 ),
                 modifier = Modifier.widthIn(max = 295.dp)
             ) {
-                Text(
-                    text = message.text,
-                    style = AuraTypography.bodyLarge.copy(
-                        color = ChatGptTextPrimary,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp
-                    ),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    if (!message.imageUri.isNullOrBlank()) {
+                        AttachedImageThumbnail(
+                            uriString = message.imageUri,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                        if (message.text.isNotBlank() && message.text != "Attached image") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                    if (message.text.isNotBlank() && (message.text != "Attached image" || message.imageUri.isNullOrBlank())) {
+                        Text(
+                            text = message.text,
+                            style = AuraTypography.bodyLarge.copy(
+                                color = ChatGptTextPrimary,
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp
+                            )
+                        )
+                    }
+                }
             }
         }
     } else {
@@ -1081,6 +1107,44 @@ private fun PromptCard(
 }
 
 // ── 5. ChatGPT Capsule Bottom Input Bar ───────────────────────────────────────
+// ── Thumbnail Image Loader ──────────────────────────────────────────────────
+@Composable
+fun AttachedImageThumbnail(
+    uriString: String,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val bitmapState = produceState<Bitmap?>(initialValue = null, uriString) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                val uri = Uri.parse(uriString)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+                        val maxDim = 800
+                        val sample = maxOf(1, maxOf(info.size.width, info.size.height) / maxDim)
+                        decoder.setTargetSampleSize(sample)
+                    }
+                } else {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+    bitmapState.value?.let { bmp ->
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = "Attached Image",
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
+    }
+}
+
+// ── 5. ChatGPT Capsule Bottom Input Bar ───────────────────────────────────────
 @Composable
 fun ChatGPTBottomBar(
     onSendMessage: (String) -> Unit,
@@ -1088,19 +1152,76 @@ fun ChatGPTBottomBar(
     onStopGenerating: () -> Unit,
     onPlusClick: () -> Unit,
     isGenerating: Boolean,
+    attachedMedia: com.aura.assistant.ui.contract.AttachedMedia? = null,
+    onClearAttachment: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var text by remember { mutableStateOf("") }
 
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(ChatGptBackground)
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
+        // Attachment Thumbnail Preview Card (ChatGPT / Gemini style)
+        if (attachedMedia != null) {
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AttachedImageThumbnail(
+                        uriString = attachedMedia.uri.toString(),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = attachedMedia.name,
+                            style = AuraTypography.bodyMedium.copy(
+                                color = ChatGptTextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Ready to send with prompt",
+                            style = AuraTypography.bodySmall.copy(
+                                color = ChatGptAccentGreen,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                    IconButton(
+                        onClick = onClearAttachment,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove attachment",
+                            tint = ChatGptTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Input pill bar
         Surface(
             color = ChatGptInputBubble,
             shape = RoundedCornerShape(26.dp),
@@ -1113,15 +1234,15 @@ fun ChatGPTBottomBar(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Plus '+' tools button
+                // Plus '+' tools / attachment button
                 IconButton(
                     onClick = onPlusClick,
                     modifier = Modifier.size(38.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "Device Tools",
-                        tint = ChatGptTextSecondary,
+                        contentDescription = "Add Attachment",
+                        tint = if (attachedMedia != null) ChatGptAccentGreen else ChatGptTextSecondary,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -1134,7 +1255,7 @@ fun ChatGPTBottomBar(
                     onValueChange = { text = it },
                     placeholder = {
                         Text(
-                            text = "Message AURA...",
+                            text = if (attachedMedia != null) "Ask about this image..." else "Message AURA...",
                             color = ChatGptTextMuted,
                             fontSize = 15.sp
                         )
@@ -1150,7 +1271,7 @@ fun ChatGPTBottomBar(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(
                         onSend = {
-                            if (text.isNotBlank()) {
+                            if (text.isNotBlank() || attachedMedia != null) {
                                 onSendMessage(text)
                                 text = ""
                             }
@@ -1166,7 +1287,6 @@ fun ChatGPTBottomBar(
 
                 // Dynamic Action Button (Headphones / Stop / Send)
                 if (isGenerating) {
-                    // Stop generating button (Square)
                     IconButton(
                         onClick = onStopGenerating,
                         modifier = Modifier
@@ -1180,11 +1300,10 @@ fun ChatGPTBottomBar(
                                 .background(Color.Black, RoundedCornerShape(2.dp))
                         )
                     }
-                } else if (text.isNotBlank()) {
-                    // Send button (Up arrow circle)
+                } else if (text.isNotBlank() || attachedMedia != null) {
                     IconButton(
                         onClick = {
-                            if (text.isNotBlank()) {
+                            if (text.isNotBlank() || attachedMedia != null) {
                                 onSendMessage(text)
                                 text = ""
                             }
@@ -1202,7 +1321,6 @@ fun ChatGPTBottomBar(
                         )
                     }
                 } else {
-                    // Voice Mode button (Headphones icon)
                     IconButton(
                         onClick = onVoiceClick,
                         modifier = Modifier
@@ -1223,13 +1341,18 @@ fun ChatGPTBottomBar(
     }
 }
 
-// ── 6. Device Quick Tools Bottom Sheet ────────────────────────────────────────
+// ── 6. Attachment & Device Tools Bottom Sheet ─────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QuickToolsBottomSheet(
+fun AuraAttachmentBottomSheet(
+    onTakePhoto: () -> Unit,
+    onPickGallery: () -> Unit,
+    onPickDocument: () -> Unit,
     onToolSelected: (prompt: String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var showDeviceTools by remember { mutableStateOf(false) }
+
     val tools = remember {
         listOf(
             Triple("🔦 Flashlight", Icons.Default.FlashlightOn, "Toggle the flashlight"),
@@ -1238,8 +1361,7 @@ fun QuickToolsBottomSheet(
             Triple("⏰ Alarm", Icons.Default.Alarm, "Set an alarm for 7:00 AM"),
             Triple("🔊 Volume", Icons.Default.VolumeUp, "Set media volume to 80%"),
             Triple("📂 Files", Icons.Default.Folder, "Show recent downloaded files"),
-            Triple("⚡ Battery", Icons.Default.BatteryChargingFull, "Check device battery level"),
-            Triple("📷 Camera", Icons.Default.CameraAlt, "Open the camera app")
+            Triple("⚡ Battery", Icons.Default.BatteryChargingFull, "Check device battery level")
         )
     }
 
@@ -1253,43 +1375,179 @@ fun QuickToolsBottomSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            Text(
-                text = "Device Tools & Actions",
-                style = AuraTypography.titleMedium.copy(
-                    color = ChatGptTextPrimary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
+            if (!showDeviceTools) {
+                Text(
+                    text = "Add Attachment",
+                    style = AuraTypography.titleMedium.copy(
+                        color = ChatGptTextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 )
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(tools) { (label, icon, prompt) ->
-                    Surface(
-                        color = ChatGptSidebar,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onToolSelected(prompt)
-                                onDismiss()
-                            }
+                // 1. Camera
+                Surface(
+                    color = ChatGptSidebar,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismiss()
+                            onTakePhoto()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, tint = ChatGptAccentGreen, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column {
+                            Text(text = "Take Photo", style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+                            Text(text = "Capture a picture to analyze or ask about", style = AuraTypography.bodySmall.copy(color = ChatGptTextSecondary, fontSize = 12.sp))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 2. Photos / Gallery
+                Surface(
+                    color = ChatGptSidebar,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismiss()
+                            onPickGallery()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Image, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column {
+                            Text(text = "Photos & Gallery", style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+                            Text(text = "Choose an image from your device storage", style = AuraTypography.bodySmall.copy(color = ChatGptTextSecondary, fontSize = 12.sp))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 3. Document / Files
+                Surface(
+                    color = ChatGptSidebar,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismiss()
+                            onPickDocument()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Description, contentDescription = null, tint = Color(0xFFA855F7), modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column {
+                            Text(text = "Document & Files", style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+                            Text(text = "Pick file, screenshot, or document", style = AuraTypography.bodySmall.copy(color = ChatGptTextSecondary, fontSize = 12.sp))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 4. Device Controls Option
+                Surface(
+                    color = ChatGptSidebar,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            showDeviceTools = true
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = null, tint = Color(0xFFFFB74D), modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Device Tools & Controls", style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+                            Text(text = "Flashlight, volume, alarms, apps & system actions", style = AuraTypography.bodySmall.copy(color = ChatGptTextSecondary, fontSize = 12.sp))
+                        }
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = null, tint = ChatGptTextSecondary, modifier = Modifier.size(16.dp))
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showDeviceTools = false }) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ChatGptTextPrimary)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Device Tools & Actions",
+                        style = AuraTypography.titleMedium.copy(
+                            color = ChatGptTextPrimary,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(tools) { (label, icon, prompt) ->
+                        Surface(
+                            color = ChatGptSidebar,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onToolSelected(prompt)
+                                    onDismiss()
+                                }
                         ) {
-                            Icon(imageVector = icon, contentDescription = null, tint = ChatGptAccentGreen, modifier = Modifier.size(22.dp))
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Text(text = label, style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 14.sp))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = icon, contentDescription = null, tint = ChatGptAccentGreen, modifier = Modifier.size(22.dp))
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Text(text = label, style = AuraTypography.bodyLarge.copy(color = ChatGptTextPrimary, fontSize = 14.sp))
+                            }
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
+}
+
+// Backward compatibility wrapper
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QuickToolsBottomSheet(
+    onToolSelected: (prompt: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AuraAttachmentBottomSheet(
+        onTakePhoto = {},
+        onPickGallery = {},
+        onPickDocument = {},
+        onToolSelected = onToolSelected,
+        onDismiss = onDismiss
+    )
 }

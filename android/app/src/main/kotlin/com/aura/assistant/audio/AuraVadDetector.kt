@@ -16,13 +16,13 @@ import kotlin.math.sqrt
  */
 class AuraVadDetector(
     private val sampleRate: Int = 16000,
-    private val minSpeechEnergyDb: Float = -44.0f,   // Absolute floor for speech
-    private val speechMarginDb: Float = 9.0f,        // dB above ambient noise to qualify as speech
-    private val hangoverFrames: Int = 8             // Keeps gate open for ~250ms after speech ends
+    private val minSpeechEnergyDb: Float = -62.0f,   // Far-field sensitivity (picks up natural speech at 30-70 cm)
+    private val speechMarginDb: Float = 2.5f,        // 2.5 dB above ambient room noise
+    private val hangoverFrames: Int = 15             // Keeps gate open for ~450ms after speech ends
 ) {
     // Dynamic noise floor estimate (slow moving average)
-    private var noiseFloorDb: Float = -55.0f
-    private val noiseFloorAlpha = 0.05f // Adaptation speed
+    private var noiseFloorDb: Float = -62.0f
+    private val noiseFloorAlpha = 0.04f // Slower adaptation so speech isn't absorbed into floor
 
     // Hangover counter to prevent cutting off words
     private var hangoverCounter = 0
@@ -69,7 +69,7 @@ class AuraVadDetector(
         val energyAboveFloor = rmsDb - noiseFloorDb
         val rawSpeechDetected = (rmsDb > minSpeechEnergyDb) && 
                                 (energyAboveFloor > speechMarginDb) && 
-                                (zcr in 0.02f..0.60f)
+                                (zcr in 0.01f..0.75f)
 
         if (rawSpeechDetected) {
             hangoverCounter = hangoverFrames
@@ -84,8 +84,8 @@ class AuraVadDetector(
 
         val isSpeech = hangoverCounter > 0
 
-        // Normalized energy: map [-60 dB, -10 dB] to [0.0, 1.0] for glowing orb pulsing
-        val normalizedEnergy = ((rmsDb + 60.0f) / 50.0f).coerceIn(0.0f, 1.0f)
+        // Normalized energy: map [-65 dB, -10 dB] to [0.0, 1.0] for glowing orb pulsing
+        val normalizedEnergy = ((rmsDb + 65.0f) / 55.0f).coerceIn(0.0f, 1.0f)
 
         return VadResult(
             isSpeech = isSpeech,
@@ -95,7 +95,7 @@ class AuraVadDetector(
     }
 
     fun reset() {
-        noiseFloorDb = -55.0f
+        noiseFloorDb = -62.0f
         hangoverCounter = 0
     }
 }

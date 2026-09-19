@@ -58,3 +58,8 @@ app.*.map.json
 
 # Secrets & Environment
 *.env
+
+# Temporary build outputs & logs
+build_output.txt
+*.log
+scratch/
