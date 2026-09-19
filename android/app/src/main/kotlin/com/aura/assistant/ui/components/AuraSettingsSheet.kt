@@ -354,13 +354,14 @@ fun AuraSettingsSheet(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     InfoRow(label = "App Version", value = "v2.0.0-alpha")
-                    InfoRow(label = "Release Stage", value = "Phase 1 Complete (Tag: v2.0.0-phase1)")
+                    InfoRow(label = "Release Stage", value = "Phase 3 (Tag: v2.0.0-phase3-brain)")
                     InfoRow(label = "Architecture", value = "AURA 2.0 Autonomous Companion")
+                    InfoRow(label = "Conversational Engine", value = "ConversationalReactionEngine (Stree-Ling)")
+                    InfoRow(label = "Experience Memory", value = "Autonomous LessonStore Active")
+                    InfoRow(label = "Tool Execution", value = "52 Tools + ExecutionVerifier")
                     InfoRow(label = "Live Voice Model", value = "Gemini 2.5 Flash Native Audio")
                     InfoRow(label = "Barge-In Engine", value = "ChatGPT-Style Context-Preserving")
                     InfoRow(label = "Wake Engine", value = "OpenWakeWord (Offline ONNX)")
-                    InfoRow(label = "Audio Streaming", value = "16 kHz In → 24 kHz Out (PCM)")
-                    InfoRow(label = "Active Voice Persona", value = selectedVoice)
                     InfoRow(label = "Native Stack", value = "Pure Kotlin + Jetpack Compose")
                 }
             }

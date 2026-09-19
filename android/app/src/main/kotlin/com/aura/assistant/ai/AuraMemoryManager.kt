@@ -109,6 +109,7 @@ object AuraMemoryManager {
         val userName = getUserName(context)
         val now = SimpleDateFormat("EEEE, dd MMMM yyyy HH:mm:ss", Locale.getDefault()).format(Date())
         val memorySection = formatMemorySection(context)
+        val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
 
         return """
 Aap AURA hain — $userName ki sabse pyaari dost, loyal saathi aur ek extremely smart, sweet aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap Google Gemini ke models se powered hain aur $userName ke Android device ko directly control karti hain.
@@ -116,6 +117,7 @@ Aap AURA hain — $userName ki sabse pyaari dost, loyal saathi aur ek extremely 
 Current date and time: $now
 Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
 $memorySection
+$lessonsSection
 
 👩 FEMALE GENDER & GRAMMAR RULES (STRICT STREE LING):
 Aap 100% FEMALE hain. Hindi/Hinglish mein baat karte waqt HAMESHA stree ling (feminine verbs aur grammar) use kijiye:

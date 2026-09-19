@@ -1895,6 +1895,13 @@ object JarvisToolRegistry {
             result.addProperty("verificationMethod", evidence.method ?: "standard")
             if (!evidence.verified) {
                 Log.w(TAG, "Tool '$name' verification failed: ${evidence.observedState}")
+                com.aura.assistant.memory.ExperienceMemory.recordLesson(
+                    context, name, false, "Verification check failed: ${evidence.observedState}"
+                )
+            } else {
+                com.aura.assistant.memory.ExperienceMemory.recordLesson(
+                    context, name, true, "Verified state: ${evidence.observedState ?: "completed"}"
+                )
             }
         } catch (e: Exception) {
             Log.w(TAG, "Verification check skipped for $name: ${e.message}")
