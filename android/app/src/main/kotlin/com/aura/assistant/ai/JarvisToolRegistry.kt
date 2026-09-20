@@ -504,6 +504,86 @@ object JarvisToolRegistry {
             required = emptyList()
         ))
 
+        // 48. Screen Vision — Get Screen Context
+        toolsArray.add(createFunction(
+            name = "get_screen_context",
+            desc = "Inspect the current active screen and get a structured hierarchy of all visible buttons, labels, text messages, and interactive UI elements without touching or scrolling.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 49. Screen Vision — Find and Tap Element
+        toolsArray.add(createFunction(
+            name = "find_and_tap",
+            desc = "Find and tap any button, link, icon, or UI element on screen by its visible text label, content description, or view ID (e.g. 'Submit', 'Confirm', 'Skip Ad', 'Like', 'Send'). Uses semantic matching — no hardcoded coordinates required.",
+            params = mapOf("target" to "string"),
+            required = listOf("target")
+        ))
+
+        // 50. Screen Vision — Read Screen Text
+        toolsArray.add(createFunction(
+            name = "read_screen_text",
+            desc = "Extract and read all readable text, chat messages, articles, or bill details currently visible on the screen.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 51. Set Clipboard Text
+        toolsArray.add(createFunction(
+            name = "set_clipboard",
+            desc = "Copy text to the Android system clipboard.",
+            params = mapOf("text" to "string"),
+            required = listOf("text")
+        ))
+
+        // 52. Get Running / Installed Apps
+        toolsArray.add(createFunction(
+            name = "get_running_apps",
+            desc = "List installed applications or find apps matching a query.",
+            params = mapOf("query" to "string"),
+            required = emptyList()
+        ))
+
+        // 53. Get Geographic Location
+        toolsArray.add(createFunction(
+            name = "get_location",
+            desc = "Get the device's current GPS geographic location (latitude, longitude, and accuracy).",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 54. Get WiFi Network Status
+        toolsArray.add(createFunction(
+            name = "get_wifi_networks",
+            desc = "Check WiFi status and get the currently connected WiFi network name (SSID).",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 55. Check Internet Latency / Speed
+        toolsArray.add(createFunction(
+            name = "check_internet_speed",
+            desc = "Test internet latency and connection health (ping check to Google DNS).",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 56. Get Recent Calls
+        toolsArray.add(createFunction(
+            name = "get_recent_calls",
+            desc = "Read recent call logs (incoming, outgoing, missed calls) with contact names and timestamps.",
+            params = mapOf("count" to "integer"),
+            required = emptyList()
+        ))
+
+        // 57. Get Contacts List
+        toolsArray.add(createFunction(
+            name = "get_contacts_list",
+            desc = "Search and list contacts with their names and phone numbers.",
+            params = mapOf("query" to "string", "limit" to "integer"),
+            required = emptyList()
+        ))
+
         return toolsArray
     }
 
@@ -1868,6 +1948,224 @@ object JarvisToolRegistry {
                             result.addProperty("count", recent.size)
                             result.addProperty("message", "${recent.size} notifications mili hain Boss.")
                         }
+                    }
+                }
+
+                // ── Screen Vision & Semantic Node Tools ─────────────────────
+                "get_screen_context" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y != null) {
+                        val text = a11y.getScreenTextHierarchy()
+                        result.addProperty("status", "success")
+                        result.addProperty("screen_content", text)
+                        result.addProperty("message", "Screen hierarchy capture ho gayi Boss.")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "Accessibility Service is not enabled. Please enable AURA in Accessibility settings.")
+                    }
+                }
+
+                "find_and_tap" -> {
+                    val target = args.get("target")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y != null && target.isNotBlank()) {
+                        val tapped = a11y.performClickByText(target)
+                        if (tapped) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Screen par \"$target\" tap kar diya hai Boss!")
+                        } else {
+                            result.addProperty("status", "failed")
+                            result.addProperty("message", "Screen par \"$target\" nahi mila.")
+                        }
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "Accessibility Service not enabled or target blank.")
+                    }
+                }
+
+                "read_screen_text" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y != null) {
+                        val text = a11y.getScreenTextHierarchy()
+                        result.addProperty("status", "success")
+                        result.addProperty("screen_text", text)
+                        result.addProperty("message", "Screen text read kar liya hai Boss.")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "Accessibility Service not enabled.")
+                    }
+                }
+
+                // ── Expanded Native Productivity Tools ─────────────────────
+                "set_clipboard" -> {
+                    val textToCopy = args.get("text")?.asString ?: ""
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("AURA", textToCopy)
+                    clipboard?.setPrimaryClip(clip)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Text clipboard me copy kar diya hai Boss!")
+                }
+
+                "get_running_apps" -> {
+                    val q = args.get("query")?.asString?.lowercase() ?: ""
+                    val pm = context.packageManager
+                    val apps = pm.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
+                    val array = JsonArray()
+                    for (app in apps) {
+                        if ((app.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0 || q.isNotEmpty()) {
+                            val label = pm.getApplicationLabel(app).toString()
+                            if (q.isEmpty() || label.lowercase().contains(q) || app.packageName.lowercase().contains(q)) {
+                                val item = JsonObject().apply {
+                                    addProperty("name", label)
+                                    addProperty("package", app.packageName)
+                                }
+                                array.add(item)
+                                if (array.size() >= 25) break
+                            }
+                        }
+                    }
+                    result.addProperty("status", "success")
+                    result.add("apps", array)
+                    result.addProperty("count", array.size())
+                    result.addProperty("message", "${array.size()} apps mil gaye Boss.")
+                }
+
+                "get_location" -> {
+                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                    var loc: android.location.Location? = null
+                    try {
+                        loc = lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                            ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                    } catch (_: SecurityException) {}
+
+                    if (loc != null) {
+                        result.addProperty("status", "success")
+                        result.addProperty("latitude", loc.latitude)
+                        result.addProperty("longitude", loc.longitude)
+                        result.addProperty("accuracy", loc.accuracy)
+                        result.addProperty("message", "Location mil gayi: Lat ${loc.latitude}, Long ${loc.longitude}")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "Location unavailable or permission not granted.")
+                    }
+                }
+
+                "get_wifi_networks" -> {
+                    val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                    val isEnabled = wm?.isWifiEnabled ?: false
+                    val info = wm?.connectionInfo
+                    val ssid = info?.ssid?.replace("\"", "") ?: "Unknown"
+                    result.addProperty("status", "success")
+                    result.addProperty("wifi_enabled", isEnabled)
+                    result.addProperty("connected_ssid", if (ssid != "<unknown ssid>") ssid else "Not connected")
+                    result.addProperty("message", if (isEnabled) "WiFi ON hai (Connected: $ssid)" else "WiFi OFF hai")
+                }
+
+                "check_internet_speed" -> {
+                    val start = System.currentTimeMillis()
+                    val reachable = try {
+                        val sock = java.net.Socket()
+                        sock.connect(java.net.InetSocketAddress("8.8.8.8", 53), 2500)
+                        sock.close()
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    val latency = System.currentTimeMillis() - start
+                    result.addProperty("status", if (reachable) "success" else "failed")
+                    result.addProperty("reachable", reachable)
+                    result.addProperty("latency_ms", if (reachable) latency else -1)
+                    result.addProperty("message", if (reachable) "Internet active hai Boss! Latency: ${latency}ms" else "Internet disconnected hai Boss.")
+                }
+
+                "get_recent_calls" -> {
+                    val count = args.get("count")?.asInt ?: 10
+                    val array = JsonArray()
+                    try {
+                        val cr = context.contentResolver
+                        val cursor = cr.query(
+                            android.provider.CallLog.Calls.CONTENT_URI,
+                            arrayOf(
+                                android.provider.CallLog.Calls.NUMBER,
+                                android.provider.CallLog.Calls.CACHED_NAME,
+                                android.provider.CallLog.Calls.TYPE,
+                                android.provider.CallLog.Calls.DATE
+                            ),
+                            null, null,
+                            "${android.provider.CallLog.Calls.DATE} DESC LIMIT $count"
+                        )
+                        cursor?.use {
+                            val numIdx = it.getColumnIndex(android.provider.CallLog.Calls.NUMBER)
+                            val nameIdx = it.getColumnIndex(android.provider.CallLog.Calls.CACHED_NAME)
+                            val typeIdx = it.getColumnIndex(android.provider.CallLog.Calls.TYPE)
+                            val dateIdx = it.getColumnIndex(android.provider.CallLog.Calls.DATE)
+                            while (it.moveToNext()) {
+                                val item = JsonObject().apply {
+                                    addProperty("number", it.getString(numIdx) ?: "")
+                                    addProperty("name", it.getString(nameIdx) ?: "Unknown")
+                                    val typeStr = when (it.getInt(typeIdx)) {
+                                        android.provider.CallLog.Calls.INCOMING_TYPE -> "Incoming"
+                                        android.provider.CallLog.Calls.OUTGOING_TYPE -> "Outgoing"
+                                        android.provider.CallLog.Calls.MISSED_TYPE -> "Missed"
+                                        else -> "Other"
+                                    }
+                                    addProperty("type", typeStr)
+                                    addProperty("date", it.getLong(dateIdx))
+                                }
+                                array.add(item)
+                            }
+                        }
+                        result.addProperty("status", "success")
+                        result.add("calls", array)
+                        result.addProperty("count", array.size())
+                        result.addProperty("message", "${array.size()} recent calls load ho gayi Boss.")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to read call log")
+                    }
+                }
+
+                "get_contacts_list" -> {
+                    val q = args.get("query")?.asString?.lowercase() ?: ""
+                    val limit = args.get("limit")?.asInt ?: 20
+                    val array = JsonArray()
+                    try {
+                        val cr = context.contentResolver
+                        val cursor = cr.query(
+                            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                            arrayOf(
+                                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                                ContactsContract.CommonDataKinds.Phone.NUMBER
+                            ),
+                            null, null,
+                            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+                        )
+                        val seen = mutableSetOf<String>()
+                        cursor?.use {
+                            val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                            val numIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                            while (it.moveToNext() && array.size() < limit) {
+                                val name = it.getString(nameIdx) ?: ""
+                                val num = it.getString(numIdx) ?: ""
+                                val key = "$name:$num"
+                                if (seen.add(key)) {
+                                    if (q.isEmpty() || name.lowercase().contains(q) || num.contains(q)) {
+                                        val item = JsonObject().apply {
+                                            addProperty("name", name)
+                                            addProperty("number", num)
+                                        }
+                                        array.add(item)
+                                    }
+                                }
+                            }
+                        }
+                        result.addProperty("status", "success")
+                        result.add("contacts", array)
+                        result.addProperty("count", array.size())
+                        result.addProperty("message", "${array.size()} contacts load ho gaye Boss.")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to query contacts")
                     }
                 }
 

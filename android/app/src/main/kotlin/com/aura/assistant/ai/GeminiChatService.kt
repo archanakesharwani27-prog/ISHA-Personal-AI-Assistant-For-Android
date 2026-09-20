@@ -33,11 +33,13 @@ class GeminiChatService(private val context: Context) {
 
     companion object {
         private const val TAG = "GeminiChatService"
-        // Models verified from user backup zip (api_config.dart) & tested live on user API key:
+        // Models verified live on user API key:
         private val CANDIDATE_MODELS = listOf(
+            "gemini-flash-lite-latest",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
             "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
-            "gemini-3.6-flash"
+            "gemini-3.5-flash"
         )
     }
 
@@ -378,6 +380,8 @@ class GeminiChatService(private val context: Context) {
         contents.add(userTurn)
         root.add("contents", contents)
 
+        Log.i(TAG, "buildRequestBody: prompt='$newPrompt', historySize=${history.size}, totalTurns=${contents.size()}")
+
         // 3. Tools (Function Declarations)
         val tools = JsonArray().apply {
             val toolHolder = JsonObject()
@@ -411,12 +415,26 @@ class GeminiChatService(private val context: Context) {
 
     private fun createHistoryContents(history: List<ChatMessage>): JsonArray {
         val contents = JsonArray()
-        // Take last 16 messages for context
-        val contextSlice = history.takeLast(16)
+        // Only include completed USER and ASSISTANT messages, strictly alternating
+        val cleanHistory = history.filter {
+            (it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT) &&
+            it.text.isNotBlank() &&
+            !it.isStreaming
+        }.takeLast(12)
 
-        for (msg in contextSlice) {
-            if (msg.text.isBlank()) continue
+        var lastRole: String? = null
+        for (msg in cleanHistory) {
             val role = if (msg.role == MessageRole.USER) "user" else "model"
+            if (role == lastRole) {
+                // If consecutive messages of same role exist, append to previous turn
+                if (contents.size() > 0) {
+                    val lastTurn = contents.get(contents.size() - 1).asJsonObject
+                    val parts = lastTurn.getAsJsonArray("parts")
+                    val part = JsonObject().apply { addProperty("text", msg.text) }
+                    parts.add(part)
+                }
+                continue
+            }
             val turn = JsonObject().apply {
                 addProperty("role", role)
                 val parts = JsonArray().apply {
@@ -426,7 +444,17 @@ class GeminiChatService(private val context: Context) {
                 add("parts", parts)
             }
             contents.add(turn)
+            lastRole = role
         }
+
+        // Guarantee strict alternation: prior history must end with "model" turn before new "user" turn is appended
+        if (contents.size() > 0) {
+            val lastTurn = contents.get(contents.size() - 1).asJsonObject
+            if (lastTurn.get("role").asString == "user") {
+                contents.remove(contents.size() - 1)
+            }
+        }
+
         return contents
     }
 

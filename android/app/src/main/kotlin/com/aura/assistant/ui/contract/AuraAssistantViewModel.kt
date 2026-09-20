@@ -338,6 +338,35 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         val promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
 
+        // ── 0. Offline Fast Reflex Check (<20ms, zero network) ──────────────────
+        if (attached == null && trimmed.isNotBlank()) {
+            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(getApplication(), trimmed)
+            if (reflex != null) {
+                val userMsg = ChatMessage(
+                    sessionId = currentSessionId,
+                    role = MessageRole.USER,
+                    text = trimmed
+                )
+                val assistantMsg = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = currentSessionId,
+                    role = MessageRole.ASSISTANT,
+                    text = reflex.naturalResponse,
+                    isStreaming = false
+                )
+                val updated = _chatMessages.value.toMutableList().apply {
+                    add(userMsg)
+                    add(assistantMsg)
+                }
+                _chatMessages.value = updated
+                viewModelScope.launch(Dispatchers.IO) {
+                    repository.saveMessages(currentSessionId, updated)
+                }
+                speakText(reflex.naturalResponse)
+                return
+            }
+        }
+
         // 1. Append User Message
         val userMsg = ChatMessage(
             sessionId = currentSessionId,
@@ -356,6 +385,8 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             isStreaming = true
         )
 
+        val previousHistory = _chatMessages.value.filter { it.role != MessageRole.TOOL }
+
         val updatedList = _chatMessages.value.toMutableList().apply {
             add(userMsg)
             add(assistantMsg)
@@ -363,11 +394,9 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         _chatMessages.value = updatedList
         _isGenerating.value = true
 
-        val historySnapshot = updatedList.dropLast(1) // History prior to assistant answer
-
-        // 3. Initiate Stream
+        // 3. Initiate Stream with history prior to current prompt
         chatService.sendChatStream(
-            history = historySnapshot,
+            history = previousHistory,
             newPrompt = promptToSend,
             imageBytes = attached?.bytes,
             callback = object : ChatStreamCallback {

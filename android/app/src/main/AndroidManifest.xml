@@ -213,6 +213,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- ── Headless ADB Command & Training Receiver ── -->
+        <receiver
+            android:name=".training.AuraAdbReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.aura.assistant.ADB_INJECT" />
+                <action android:name="com.aura.assistant.RUN_TESTS" />
+                <action android:name="com.aura.assistant.RUN_1000_TRAINING" />
+            </intent-filter>
+        </receiver>
+
         <!--
           Accessibility service: Powers WhatsApp auto-send, Gmail compose,
           Instagram DM, Facebook post — full UI injection without the user

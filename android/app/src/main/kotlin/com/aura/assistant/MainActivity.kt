@@ -159,6 +159,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
     }
 
+    // ── External / ADB Command Injection ─────────────────────────────────────
+    fun injectUserMessage(text: String) {
+        runOnUiThread {
+            viewModel.onSendTextMessage(text)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         instance = this
         enableEdgeToEdge()
@@ -186,8 +193,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             try {
                 AuraTrainingEngine.seedIfNeeded(applicationContext)
                 Log.i(TAG, "AuraTrainingEngine seed complete.")
+                AuraTrainingEngine.runTestsIfNeeded(applicationContext)
             } catch (e: Exception) {
-                Log.e(TAG, "AuraTrainingEngine seed failed", e)
+                Log.e(TAG, "AuraTrainingEngine seed/test failed", e)
             }
         }.apply { name = "aura-training-seed"; isDaemon = true; start() }
 
@@ -352,6 +360,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             Log.e(TAG, "screenShareStopReceiver registration error", e)
         }
     }
+
 
     // ── Shake Sensor ──────────────────────────────────────────────────────────
     private fun initShakeSensor() {
