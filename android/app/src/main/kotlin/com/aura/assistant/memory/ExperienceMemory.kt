@@ -147,7 +147,21 @@ object ExperienceMemory {
                "Success: ${lessons.count { it.success }}, Warnings: ${lessons.count { !it.success }}."
     }
 
-    // ── Wipe ──────────────────────────────────────────────────────────
+    // ── Wipe / Cleanup ────────────────────────────────────────────────
+    
+    /**
+     * Purges stale false negative verification records (action_dispatched_unverified)
+     * from both SharedPreferences memory and SQLite database.
+     */
+    fun purgeStaleVerificationFailures(context: Context) {
+        try {
+            val all = getLessons(context).filter {
+                !it.lesson.contains("action_dispatched_unverified", ignoreCase = true)
+            }
+            saveLessons(context, all)
+            AuraExperienceDatabase.getInstance(context).purgeStaleVerificationFailures()
+        } catch (_: Exception) {}
+    }
 
     /**
      * Clears all lessons. Use only with explicit user confirmation.
@@ -167,6 +181,9 @@ object ExperienceMemory {
      *  - Capped at MAX_PROMPT_LESSONS to keep prompt concise
      */
     fun formatLessonsForPrompt(context: Context): String {
+        // Auto-sanitize any past false negative verification logs before building prompt
+        purgeStaleVerificationFailures(context)
+
         val dbLessons = try {
             AuraExperienceDatabase.getInstance(context).getLessonsForPrompt(MAX_PROMPT_LESSONS)
         } catch (_: Exception) { "" }

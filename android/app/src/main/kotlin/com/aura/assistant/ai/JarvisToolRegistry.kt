@@ -2672,7 +2672,7 @@ object JarvisToolRegistry {
 
         // Post-execution state verification via AURA 2.0 ExecutionVerifier
         try {
-            val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, name, args)
+            val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, name, args, result)
             result.addProperty("verified", evidence.verified)
             if (evidence.observedState != null) {
                 result.addProperty("observedState", evidence.observedState)
@@ -2993,16 +2993,19 @@ object JarvisToolRegistry {
         val trimmedQuery = query.trim()
         val appLower = targetApp.lowercase().trim()
 
-        // Map popular music apps to their package names
+        // 1. Dynamic lookup: Check installed apps dynamically by label or package on the user's phone
+        val dynamicPkg = resolveAppPackage(context, targetApp)
+
+        // 2. Standard universal fallback only if app is not found dynamically
         val packageName = when {
+            dynamicPkg != null -> dynamicPkg
             appLower.contains("youtube") && !appLower.contains("music") -> "com.google.android.youtube"
             appLower.contains("yt music") || appLower.contains("youtube music") -> "com.google.android.apps.youtube.music"
             appLower.contains("spotify") -> "com.spotify.music"
-            appLower.contains("melodify") -> "com.ansh.ytmusicpreimum"
             appLower.contains("saavn") || appLower.contains("jio") -> "com.jio.media.jiobeats"
             appLower.contains("wynk") -> "com.wynk.music"
             appLower.contains("gaana") -> "com.gaana"
-            else -> resolveAppPackage(context, targetApp) ?: "com.google.android.youtube"
+            else -> "com.google.android.youtube"
         }
 
         try {
@@ -3079,12 +3082,25 @@ object JarvisToolRegistry {
 
     private fun resolveAppPackage(context: Context, appName: String): String? {
         val pm = context.packageManager
+        val clean = appName.lowercase().trim()
         if (pm.getLaunchIntentForPackage(appName) != null) return appName
 
         try {
+            // 1. Check all launcher activities (user's app drawer)
+            val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val activities = pm.queryIntentActivities(launcherIntent, 0)
+            val matchedActivity = activities.firstOrNull {
+                val label = it.loadLabel(pm).toString()
+                label.contains(clean, ignoreCase = true) ||
+                it.activityInfo.packageName.contains(clean, ignoreCase = true)
+            }
+            if (matchedActivity != null) return matchedActivity.activityInfo.packageName
+
+            // 2. Check all installed applications by label or package
             val apps = pm.getInstalledApplications(0)
             val matched = apps.firstOrNull {
-                pm.getApplicationLabel(it).toString().contains(appName, ignoreCase = true)
+                pm.getApplicationLabel(it).toString().contains(clean, ignoreCase = true) ||
+                it.packageName.contains(clean, ignoreCase = true)
             }
             if (matched != null) return matched.packageName
         } catch (_: Exception) {}

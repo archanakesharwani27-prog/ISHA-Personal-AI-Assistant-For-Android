@@ -214,7 +214,9 @@ object OfflineReflexEngine {
                 "calculator" to "calculator",
                 "clock" to "clock",
                 "calendar" to "calendar",
-                "maps" to "maps"
+                "maps" to "maps",
+                "melodify" to "melodify",
+                "spotify" to "spotify"
             )
             for ((key, name) in appMap) {
                 if (clean.contains(key)) {
@@ -263,6 +265,35 @@ object OfflineReflexEngine {
             val result = if (execute) JarvisToolRegistry.executeTool(context, "get_current_time", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
             val msg = result.get("message")?.asString ?: "Abhi exact time check kar liya hai Boss!"
             return OfflineReflexResult("get_current_time", msg, true)
+        }
+
+        // 14. Media Playback (Melodify, Spotify, YouTube)
+        val isMediaPlay = (clean.contains("chalao") || clean.contains("play") || clean.contains("baja do") || clean.contains("chala do") || clean.contains("laga do")) &&
+                          (clean.contains("melodify") || clean.contains("spotify") || clean.contains("gaana") || clean.contains("youtube") || clean.contains("music") || clean.contains("song"))
+        if (isMediaPlay) {
+            val app = when {
+                clean.contains("melodify") -> "Melodify"
+                clean.contains("spotify") -> "Spotify"
+                clean.contains("gaana") -> "Gaana"
+                clean.contains("jio") || clean.contains("saavn") -> "JioSaavn"
+                clean.contains("wynk") -> "Wynk"
+                else -> "YouTube"
+            }
+            val songQuery = clean
+                .replace(Regex("(melodify|spotify|gaana|jiosaavn|wynk|youtube|music|app|pe|par|me|mein|song|gaana|chalao|play|karo|do|baja|laga|shuru)"), " ")
+                .trim()
+                .replace(Regex("\\s+"), " ")
+
+            if (songQuery.isNotBlank()) {
+                val args = JsonObject().apply {
+                    addProperty("app_name", app)
+                    addProperty("query", songQuery)
+                }
+                val result = if (execute) JarvisToolRegistry.executeTool(context, "play_media", args) else JsonObject().apply { addProperty("status", "success") }
+                val success = isSuccess(result)
+                val resp = if (success) "$app par \"$songQuery\" play kar rahi hoon Boss! 🎵" else "Boss, $app par gaana chalane me pareshani aayi."
+                return OfflineReflexResult("play_media", resp, success)
+            }
         }
 
         return null // Needs Gemini reasoning

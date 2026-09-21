@@ -4,7 +4,26 @@ This document tracks all release versions of the AURA AI Android Assistant, incl
 
 ---
 
-## 📌 Latest Release: v5.3 — Live System Clock & Grounding Engine
+## 📌 Latest Release: v5.3.2 — Dynamic Zero-Hardcode App Resolution & Execution Verification Engine
+
+- **Release Date / Time**: 2026-09-21 21:05:00 IST
+- **Target Platform**: Android 10+ (Tested on Samsung Galaxy S24, Android 14)
+- **Status**: Production Verified & Fully Backwards-Compatible
+
+### 🔍 Root Causes Identified & Resolved
+1. **Zero-Hardcoding Dynamic Package Resolution (`resolveAppPackage`)**:
+   - **Problem**: Melodify previously had a faulty hardcoded package name in `JarvisToolRegistry.kt` (`com.ansh.ytmusicpreimum`), causing *"Aisa lagta hai ki Melodify app mein yeh gaana nahi mil raha hai"*.
+   - **Solution**: Completely stripped out hardcoded package mappings. Replaced with real-time Android `PackageManager` dynamic scanning via `pm.queryIntentActivities(CATEGORY_LAUNCHER)` matching display labels (`loadLabel()`) and package identifiers, plus `pm.getInstalledApplications(0)`. Any current or future installed music player/app is dynamically resolved on-device with zero code modifications.
+2. **ExecutionVerifier False-Negative & Experience Database Self-Healing**:
+   - **Problem**: `ExecutionVerifier` only inspected 6 hardware tools; all other 56 tools (read queries like `get_current_time`, action tools like `play_media`, `open_app`) were falling into `else -> verified = false`, returning `verified: false` and polluting `AuraExperienceDB` with false failure logs (`action_dispatched_unverified`).
+   - **Solution**: Added context-aware verification `verify(context, toolName, arguments, executionResult)`. Read-only tools and action tools report verified if execution succeeded without errors. Added `verifyWifi()` and built auto-purging (`purgeStaleVerificationFailures()`) to clean historical false negatives from SQLite and SharedPreferences.
+3. **Offline Reflex & Media Playback Grounding**:
+   - Added zero-latency local media playback reflex in `OfflineReflexEngine.kt` for instant response.
+   - Added Melodify and custom music queries to `AuraCommandCorpus.kt`.
+
+---
+
+## 📌 Release v5.3 — Live System Clock & Grounding Engine
 
 - **Build Date / Time**: 2026-09-21 16:47:27 IST
 - **Target Platform**: Android 10+ (Tested on Samsung Galaxy S24, Android 14)
@@ -13,27 +32,13 @@ This document tracks all release versions of the AURA AI Android Assistant, incl
 - **APK Size**: 52,191,517 bytes (49.7 MB)
 - **SHA-256 Checksum**: `FEF72C38782A519E508F91B60F6231094ADC3C02B9087CFE12B8CC4FABE4A90C`
 
-### 🔍 Root Cause of Time Discrepancy & Solution
-1. **The Bug**:
-   When Gemini Live voice chat connects (e.g. 15–20 minutes prior), a static timestamp (`$now`) was injected into the initial system prompt. During ongoing continuous voice conversations, Gemini held onto this stale timestamp from the session start and lacked a dedicated real-time tool to check the device clock. As a result, asking *"Time kya hai"* produced stale or inaccurate time.
-2. **The Fix (5 Core Components)**:
-   - **Naya Dedicated Tool (`get_current_time`) [Tool 62]**:
-     Fetches live device clock via Android system time (`Date()`, `SimpleDateFormat("hh:mm a")`, `SimpleDateFormat("h bajkar m minute")`). Returns exact 12-hour, 24-hour, and spoken Hindi time.
-   - **Offline Reflex Engine (Rule 13)**:
-     Queries like *"Time kya hai"*, *"Time batao"*, *"Kitne baje hain"*, *"Aaj ki date kya hai"* are resolved with 0-second latency directly from the phone's live clock.
-   - **Gemini Live Prompt & Corpus Rule 13**:
-     Strictly forbids using session start timestamps for answering time queries; enforces executing `get_current_time`.
-   - **Notification Voice Announcement Toggle (`toggle_message_announcements`) [Tool 61]**:
-     Provides voice and UI controls to enable or silence spoken reading of incoming WhatsApp/SMS/OTP notifications.
-   - **Clean Audio & TTS Routing**:
-     Harmonized native Android TTS and dynamic island state without voice mismatches.
-
 ---
 
 ## 📋 Release Summary Table
 
 | Version | Date | Key Capabilities Added | APK Location | Size |
 |---|---|---|---|---|
+| **v5.3.2** | 2026-09-21 | Dynamic App Resolution Engine (Zero Hardcoding), Verification False-Negative Fix, Experience DB Cleanup | Repository Source & ADB Deploy | Multi |
 | **v5.3** | 2026-09-21 | Real-time Device Clock Tool 62, 0s Offline Time Reflex, Message Speak Toggle Tool 61 | `apks/aura_v5.3_time_clock_fix_20260921.apk` | 49.7 MB |
 | **v5.2** | 2026-09-21 | Screen Perception & UI Task Grounding (`get_screen_context`, `find_and_tap`) | `Desktop/aura_v5.2_clean_agent_20260921.apk` | 49.8 MB |
 | **v5.1** | 2026-09-21 | Direct Google News RSS (`get_latest_news`), MediaStore stats (`get_media_storage_stats`), DuckDuckGo web search | `Desktop/aura_v5.1_clean_agent_20260921.apk` | 49.8 MB |

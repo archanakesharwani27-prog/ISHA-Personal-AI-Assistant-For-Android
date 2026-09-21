@@ -140,6 +140,15 @@ class ExperienceDao(private val dbHelper: AuraExperienceDatabase.Helper) {
         return records
     }
 
+    fun purgeStaleVerificationFailures(): Int {
+        val db = dbHelper.writableDatabase
+        return db.delete(
+            "experience_records",
+            "failure_reason LIKE '%action_dispatched_unverified%' OR failure_reason LIKE '%Verification check failed%'",
+            null
+        )
+    }
+
     fun getHistoricalSuccessRates(): Map<String, Float> {
         val db = dbHelper.readableDatabase
         val rates = mutableMapOf<String, Float>()
@@ -331,6 +340,17 @@ class AuraExperienceDatabase private constructor(context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to format lessons for prompt", e)
             ""
+        }
+    }
+
+    fun purgeStaleVerificationFailures(): Int {
+        return try {
+            val count = experienceDao.purgeStaleVerificationFailures()
+            Log.i(TAG, "Purged $count stale unverified records from experience DB")
+            count
+        } catch (e: Exception) {
+            Log.w(TAG, "Error purging stale unverified records: ${e.message}")
+            0
         }
     }
 }

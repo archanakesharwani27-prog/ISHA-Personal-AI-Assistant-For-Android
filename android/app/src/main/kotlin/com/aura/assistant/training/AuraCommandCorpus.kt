@@ -475,6 +475,10 @@ object AuraCommandCorpus {
         add(cmd("Gaana app pe Arijit Singh", "music", "play_media",
             mp("query","Arijit Singh songs","app_name","Gaana"),
             "Gaana app → play_media."))
+        add(cmd("Melodify par Akhiyaan Gulaab chalao", "music", "play_media",
+            mp("query","Akhiyaan Gulaab","app_name","Melodify"),
+            "Melodify app + song → play_media with app_name Melodify.",
+            v("Melodify par gaana chalao","Melodify mein song play karo","Melodify pe Akhiyaan Gulaab play karo")))
 
         // ────────────────────────────────────────────────────────────
         // TOOL 25 ── play_youtube
