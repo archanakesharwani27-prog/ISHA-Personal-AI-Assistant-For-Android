@@ -194,15 +194,20 @@ class WakeWordService : Service(), SensorEventListener {
     private fun updateForegroundNotification() {
         try {
             val notif = buildSilentNotification()
+            val hasMicPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val fgsType = if (wakeEnabled) {
+                val fgsType = if (hasMicPerm) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 }
                 startForeground(NOTIF_ID, notif, fgsType)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val fgsType = if (wakeEnabled) {
+                val fgsType = if (hasMicPerm) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 } else {
                     0

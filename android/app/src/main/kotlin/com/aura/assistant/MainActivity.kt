@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.telephony.TelephonyManager
 import android.util.Log
@@ -193,9 +194,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             try {
                 AuraTrainingEngine.seedIfNeeded(applicationContext)
                 Log.i(TAG, "AuraTrainingEngine seed complete.")
-                AuraTrainingEngine.runTestsIfNeeded(applicationContext)
             } catch (e: Exception) {
-                Log.e(TAG, "AuraTrainingEngine seed/test failed", e)
+                Log.e(TAG, "AuraTrainingEngine seed failed", e)
             }
         }.apply { name = "aura-training-seed"; isDaemon = true; start() }
 
@@ -305,6 +305,19 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (needed.isNotEmpty()) {
             requestPermissions(needed.toTypedArray(), PERMISSIONS_REQUEST_CODE)
         }
+
+        // Overlay permission for Dynamic Island background presence
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            try {
+                val overlayIntent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(overlayIntent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch overlay permission screen: ${e.message}")
+            }
+        }
     }
 
     private fun registerReceivers() {
@@ -384,11 +397,38 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (isShakeDetectionEnabled && accelerometer != null) {
             sensorManager?.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
         }
+        if (!viewModel.isLiveScreenSharing.value) {
+            AuraDynamicIsland.hide()
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        try {
+            if (Settings.canDrawOverlays(this)) {
+                val isVoiceActive = viewModel.isVoiceModeActive.value
+                val isScreenShareActive = viewModel.isLiveScreenSharing.value
+                if (isScreenShareActive) {
+                    AuraDynamicIsland.show(this, "screen_share")
+                } else if (isVoiceActive) {
+                    AuraDynamicIsland.show(this, "voice_mode")
+                } else {
+                    AuraDynamicIsland.show(this, "auto_overlay")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show Dynamic Island on leave", e)
+        }
     }
 
     override fun onPause() {
         sensorManager?.unregisterListener(this)
         super.onPause()
+        try {
+            if (Settings.canDrawOverlays(this) && viewModel.isVoiceModeActive.value) {
+                AuraDynamicIsland.show(this, "voice_mode")
+            }
+        } catch (_: Exception) {}
     }
 
     override fun onDestroy() {

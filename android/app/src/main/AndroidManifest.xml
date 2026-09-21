@@ -150,7 +150,9 @@
     <application
         android:label="Aura"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:allowBackup="true"
+        android:fullBackupContent="true">
 
         <!-- ── Main Activity ─────────────────────────────────────────────── -->
         <activity

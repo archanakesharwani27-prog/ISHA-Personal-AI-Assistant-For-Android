@@ -31,7 +31,8 @@ data class AuraSettingsState(
     val selectedVoice: String = "Aoede",
     val selectedLanguage: String = "Auto-detect",
     val textSize: String = "Default",
-    val isSoundEnabled: Boolean = true
+    val isSoundEnabled: Boolean = true,
+    val isMessageSpeakEnabled: Boolean = true
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,8 +40,10 @@ data class AuraSettingsState(
 fun AuraSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
+    isMessageSpeakEnabled: Boolean = true,
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,
+    onMessageSpeakToggle: (Boolean) -> Unit = {},
     onClearAllChats: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onDismiss: () -> Unit
@@ -152,6 +155,18 @@ fun AuraSettingsSheet(
                 subtitle = "Play a chime when AURA wakes up",
                 checked = soundEnabled,
                 onCheckedChange = { soundEnabled = it }
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Announce Incoming Messages
+            SettingsToggleRow(
+                icon = Icons.Default.Notifications,
+                iconTint = ChatGptAccentCyan,
+                title = "Announce Incoming Messages",
+                subtitle = if (isMessageSpeakEnabled) "Speaks WhatsApp, SMS & OTP aloud (TTS)" else "Muted (No speaking aloud on incoming msgs)",
+                checked = isMessageSpeakEnabled,
+                onCheckedChange = onMessageSpeakToggle
             )
 
             Spacer(modifier = Modifier.height(20.dp))

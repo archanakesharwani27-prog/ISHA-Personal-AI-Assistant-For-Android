@@ -182,6 +182,23 @@ class GeminiLiveClient(private val context: Context) {
     init {
         initAudioTrack()
         startAudioPlaybackWorker()
+        scope.launch {
+            _liveState.collect { state ->
+                try {
+                    com.aura.assistant.AuraDynamicIsland.updateLiveState(context, state, _amplitudeFlow.value)
+                } catch (_: Exception) {}
+            }
+        }
+        scope.launch {
+            _amplitudeFlow.collect { amp ->
+                try {
+                    val st = _liveState.value
+                    if (st == AuraLiveState.LISTENING || st == AuraLiveState.SPEAKING) {
+                        com.aura.assistant.AuraDynamicIsland.updateLiveState(context, st, amp)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun initAudioTrack() {
@@ -537,15 +554,20 @@ class GeminiLiveClient(private val context: Context) {
                         val vadResult = vadDetector.process(shortBuf, readShorts)
 
                         // ── 1. Acoustic Echo Gate & Intentional Barge-In ─────────────────
-                        if (_liveState.value == AuraLiveState.SPEAKING) {
-                            if ((vadResult.isSpeech && rms > 0.06) || rms > 0.12) {
+                        val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 350L)
+                        if (isActivelyPlayingAudio) {
+                            // Phone speaker output easily reaches RMS 0.08 - 0.25 at the mic.
+                            // To prevent speaker echo from falsely interrupting Aura, require deliberate user speech (RMS > 0.38)
+                            // and sustained energy over at least 8 frames (~320ms).
+                            if ((vadResult.isSpeech && rms > 0.38) || rms > 0.48) {
                                 bargeInConsecutiveFrames++
-                                if (bargeInConsecutiveFrames >= 2) {
+                                if (bargeInConsecutiveFrames >= 8) {
                                     Log.i(TAG, "Real user barge-in detected (RMS=$rms). Flushing playback & preserving context.")
                                     flushAudioPlayback()
+                                    playbackEndTime = 0L
                                     val partialUser = currentUserTurnAccumulator.toString().trim()
                                     val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
-                                    if (partialUser.isNotBlank() || partialAssistant.isNotBlank()) {
+                                    if (partialUser.isNotBlank() && partialAssistant.length >= 25) {
                                         interruptedContext = InterruptedContext(
                                             userSaid = partialUser,
                                             assistantWasSaying = partialAssistant
@@ -553,8 +575,8 @@ class GeminiLiveClient(private val context: Context) {
                                         Log.i(TAG, "Client barge-in saved interrupted context: user='${partialUser.take(40)}', aura='${partialAssistant.take(40)}'")
                                         _turnCompletedFlow.tryEmit(
                                             LiveVoiceTurn(
-                                                userText = if (partialUser.isNotBlank()) partialUser else "Spoken query",
-                                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant…" else ""
+                                                userText = partialUser,
+                                                assistantText = "$partialAssistant…"
                                             )
                                         )
                                     }
@@ -804,13 +826,15 @@ class GeminiLiveClient(private val context: Context) {
                         Log.i(TAG, "Interrupted context saved — user='${partialUser.take(60)}' " +
                                 "assistant='${partialAssistant.take(60)}'")
 
-                        // Emit partial turn for chat history UI (marked as interrupted)
-                        _turnCompletedFlow.tryEmit(
-                            LiveVoiceTurn(
-                                userText = if (partialUser.isNotBlank()) partialUser else "Spoken query",
-                                assistantText = if (partialAssistant.isNotBlank()) "$partialAssistant…" else ""
+                        // Emit partial turn for chat history UI ONLY if meaningful text exists (avoids single-word fragments)
+                        if (partialUser.isNotBlank() && partialAssistant.length >= 25) {
+                            _turnCompletedFlow.tryEmit(
+                                LiveVoiceTurn(
+                                    userText = partialUser,
+                                    assistantText = "$partialAssistant…"
+                                )
                             )
-                        )
+                        }
                     }
                     // Reset accumulators for the NEXT turn (context is in interruptedContext)
                     currentUserTurnAccumulator.clear()
@@ -888,9 +912,23 @@ class GeminiLiveClient(private val context: Context) {
                     }
                     currentUserTurnAccumulator.clear()
                     currentAssistantTurnAccumulator.clear()
-                    _amplitudeFlow.value = 0.05f
-                    _liveState.value = AuraLiveState.LISTENING
-                    Log.i(TAG, "Turn complete → back to LISTENING")
+
+                    val remainingPlayback = playbackEndTime - System.currentTimeMillis()
+                    if (remainingPlayback > 0) {
+                        _liveState.value = AuraLiveState.SPEAKING
+                        scope.launch {
+                            delay(remainingPlayback + 200L)
+                            if (_liveState.value == AuraLiveState.SPEAKING) {
+                                _amplitudeFlow.value = 0.05f
+                                _liveState.value = AuraLiveState.LISTENING
+                                Log.i(TAG, "Audio playback finished → back to LISTENING")
+                            }
+                        }
+                    } else {
+                        _amplitudeFlow.value = 0.05f
+                        _liveState.value = AuraLiveState.LISTENING
+                        Log.i(TAG, "Turn complete → back to LISTENING")
+                    }
                 }
             }
 

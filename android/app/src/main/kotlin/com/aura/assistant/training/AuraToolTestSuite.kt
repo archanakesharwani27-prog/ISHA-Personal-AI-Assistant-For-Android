@@ -424,7 +424,7 @@ object AuraToolTestSuite {
             "screenshot lo" to "take_screenshot"
         )
         for ((phrase, expectedTool) in testPhrases) {
-            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(context, phrase)
+            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(context, phrase, execute = false)
             if (reflex != null && reflex.toolName == expectedTool) {
                 results += pass("S11_reflex_${expectedTool}", "Offline match: \"$phrase\"", "Resolved instantly to $expectedTool without network: ${reflex.naturalResponse}", expectedTool)
             } else {

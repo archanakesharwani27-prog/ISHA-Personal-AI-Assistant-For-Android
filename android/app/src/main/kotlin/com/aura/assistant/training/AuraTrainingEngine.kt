@@ -161,7 +161,7 @@ object AuraTrainingEngine {
             var handled = false
 
             // 1. Test Offline Reflex Engine (<20ms, zero network)
-            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(context, task)
+            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(context, task, execute = false)
             if (reflex != null) {
                 reflexCount++
                 handled = true

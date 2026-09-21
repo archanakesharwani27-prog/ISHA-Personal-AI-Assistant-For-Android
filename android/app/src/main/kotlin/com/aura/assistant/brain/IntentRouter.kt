@@ -53,11 +53,16 @@ object IntentRouter {
         }
 
         // 4. Device Controls
-        if (clean.contains("flashlight") || clean.contains("torch")) {
+        val isNegative = clean.contains("kharab") || clean.contains("problem") || clean.contains("dikkat") || clean.contains("issue")
+        val isTorchAction = !isNegative && (clean.contains("flashlight") || clean.contains("torch")) &&
+                (clean.contains("on") || clean.contains("chalu") || clean.contains("jala") || clean.contains("chala") ||
+                 clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok"))
+        if (isTorchAction) {
+            val isOff = clean.contains("off") || clean.contains("band") || clean.contains("bujha") || clean.contains("rok")
             return RoutedIntent(
                 type = IntentType.DEVICE_CONTROL,
                 recommendedTool = "toggle_flashlight",
-                extractedEntities = mapOf("enable" to (!clean.contains("off") && !clean.contains("band")).toString())
+                extractedEntities = mapOf("enable" to (!isOff).toString())
             )
         }
         if (clean.contains("volume") || clean.contains("awaaz")) {

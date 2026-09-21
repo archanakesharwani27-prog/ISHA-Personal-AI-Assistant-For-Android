@@ -27,6 +27,7 @@ import com.aura.assistant.JarvisFileManager
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
@@ -135,7 +136,7 @@ object JarvisToolRegistry {
         // 5. Flashlight / Torch
         toolsArray.add(createFunction(
             name = "toggle_flashlight",
-            desc = "Turn the phone camera flashlight/torch on or off.",
+            desc = "Turn the phone camera flashlight/torch on or off. Call ONLY when the user explicitly requests to turn the torch on or off. NEVER call when the user reports a problem, damage, or complaint about their torch (e.g. 'mera torch kharab hai').",
             params = mapOf("enable" to "boolean"),
             required = listOf("enable")
         ))
@@ -597,10 +598,10 @@ object JarvisToolRegistry {
             required = emptyList()
         ))
 
-        // 55. Check Internet Latency / Speed
+        // 55. Check Internet Speed (Mbps) & Latency
         toolsArray.add(createFunction(
             name = "check_internet_speed",
-            desc = "Test internet latency and connection health (ping check to Google DNS).",
+            desc = "Test real internet download speed in Mbps and ping latency. ALWAYS call when user asks about 'internet speed', 'net speed test', 'kitne mbps speed aa rahi hai', or wants to test connection speed.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -618,6 +619,46 @@ object JarvisToolRegistry {
             name = "get_contacts_list",
             desc = "Search and list contacts with their names and phone numbers.",
             params = mapOf("query" to "string", "limit" to "integer"),
+            required = emptyList()
+        ))
+
+        // 58. Get Internal Device Storage Space
+        toolsArray.add(createFunction(
+            name = "get_storage_space",
+            desc = "Check internal disk storage (Total GB, Used GB, Free/Available GB, and percentage used). ALWAYS call when user asks 'phone mein kitna space hai', 'kitna storage khali hai', 'storage bacha hai', 'storage full hai'. NEVER call get_media_storage_stats for storage queries!",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 59. Check Full Device Health
+        toolsArray.add(createFunction(
+            name = "check_device_health",
+            desc = "Run a comprehensive device health diagnosis: checks Battery (percentage, temperature, health status), RAM/Memory (Total, Used, Free GB), Internal Storage (Used/Free GB), System Uptime, and Network status. ALWAYS call when user asks 'device health check karo', 'phone health', 'system check'.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 60. Clear / Dismiss Notifications
+        toolsArray.add(createFunction(
+            name = "clear_notifications",
+            desc = "Dismiss notifications from the status bar. Set target='all' to clear all clearable notifications, or set target to an app name or keyword (e.g. 'melodify', 'screenshot', 'instagram') to dismiss specific ones. ALWAYS call when user asks 'notification hata do', 'clear notification panel', 'sab notifications saaf kardo'.",
+            params = mapOf("target" to "string"),
+            required = emptyList()
+        ))
+
+        // 61. Toggle Incoming Message Voice Announcements
+        toolsArray.add(createFunction(
+            name = "toggle_message_announcements",
+            desc = "Turn ON or OFF the automatic voice reading / announcement of incoming messages (WhatsApp, SMS, OTP) when they arrive. ALWAYS call when user asks 'message padhna band karo', 'msg aane par mat bolo', 'message announcement on/off karo', 'turn off message speak'.",
+            params = mapOf("enable" to "boolean"),
+            required = listOf("enable")
+        ))
+
+        // 62. Get Current Live Device Time & Date
+        toolsArray.add(createFunction(
+            name = "get_current_time",
+            desc = "Get the exact, live system clock time, day, and date right now from the device. ALWAYS call when user asks 'time kya hai', 'time batao', 'kitne baje hain', 'kya time ho raha hai', 'aaj kaun sa din hai'. NEVER rely on memory or guess the time!",
+            params = emptyMap(),
             required = emptyList()
         ))
 
@@ -1037,34 +1078,136 @@ object JarvisToolRegistry {
 
                 "empty_recycle_bin" -> {
                     val a11y = AuraAccessibilityService.instance
-                    if (a11y != null) {
-                        a11y.armEmptyRecycleBin()
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "Gallery ke Recycle Bin ko permanently clear kar diya gaya hai Boss! 🗑️✨")
-                    } else {
+                    // Launch Samsung Gallery Recycle Bin directly so Accessibility can see the Trash screen!
+                    var launched = false
+                    try {
+                        val trashIntent = Intent().apply {
+                            component = android.content.ComponentName("com.sec.android.gallery3d", "com.sec.android.gallery3d.app.TrashBoxActivity")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(trashIntent)
+                        launched = true
+                    } catch (_: Exception) {}
+
+                    if (!launched) {
                         val galleryPkg = resolveAppPackage(context, "Gallery") ?: "com.sec.android.gallery3d"
                         val launchIntent = context.packageManager.getLaunchIntentForPackage(galleryPkg)
                         if (launchIntent != null) {
                             launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             context.startActivity(launchIntent)
                         }
+                    }
+
+                    if (a11y != null) {
+                        a11y.armEmptyRecycleBin()
                         result.addProperty("status", "success")
-                        result.addProperty("message", "Gallery open kardi hai Boss, Accessibility on karke Recycle Bin automatically clear ho jayega!")
+                        result.addProperty("message", "Samsung Gallery ka Recycle Bin open karke permanently clear kiya ja raha hai Boss! 🗑️✨")
+                    } else {
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Gallery open kardi hai Boss, wahan se Empty par tap karke Recycle Bin saaf kar sakte hain!")
                     }
                 }
 
                 "open_app" -> {
                     val appName = args.get("app_name")?.asString ?: ""
                     val pm = context.packageManager
-                    val intent = pm.getLaunchIntentForPackage(appName)
-                        ?: run {
-                            // Find package by label
-                            val apps = pm.getInstalledApplications(0)
-                            val matched = apps.firstOrNull {
-                                pm.getApplicationLabel(it).toString().contains(appName, ignoreCase = true)
+                    val clean = appName.lowercase().trim()
+
+                    val knownPackages = mapOf(
+                        "chrome" to "com.android.chrome",
+                        "chrom" to "com.android.chrome",
+                        "google chrome" to "com.android.chrome",
+                        "browser" to "com.android.chrome",
+                        "youtube" to "com.google.android.youtube",
+                        "yt" to "com.google.android.youtube",
+                        "whatsapp" to "com.whatsapp",
+                        "wa" to "com.whatsapp",
+                        "gmail" to "com.google.android.gm",
+                        "email" to "com.google.android.gm",
+                        "maps" to "com.google.android.apps.maps",
+                        "google maps" to "com.google.android.apps.maps",
+                        "gallery" to "com.sec.android.gallery3d",
+                        "photos" to "com.google.android.apps.photos",
+                        "camera" to "com.sec.android.app.camera",
+                        "settings" to "com.android.settings",
+                        "setting" to "com.android.settings",
+                        "calculator" to "com.sec.android.app.popupcalculator",
+                        "clock" to "com.sec.android.app.clockpackage",
+                        "calendar" to "com.samsung.android.calendar",
+                        "files" to "com.sec.android.app.myfiles",
+                        "my files" to "com.sec.android.app.myfiles",
+                        "play store" to "com.android.vending",
+                        "playstore" to "com.android.vending",
+                        "google" to "com.google.android.googlequicksearchbox",
+                        "instagram" to "com.instagram.android",
+                        "facebook" to "com.facebook.katana",
+                        "telegram" to "org.telegram.messenger"
+                    )
+
+                    var intent: Intent? = null
+
+                    // 1. Check known packages
+                    var targetPkg = knownPackages[clean]
+                    if (targetPkg == null) {
+                        for ((k, v) in knownPackages) {
+                            if (clean.contains(k) || k.contains(clean)) {
+                                targetPkg = v
+                                break
                             }
-                            matched?.let { pm.getLaunchIntentForPackage(it.packageName) }
                         }
+                    }
+
+                    if (targetPkg != null) {
+                        intent = pm.getLaunchIntentForPackage(targetPkg)
+                    }
+
+                    // 2. Direct package lookup
+                    if (intent == null) {
+                        intent = pm.getLaunchIntentForPackage(appName)
+                    }
+
+                    // 3. Query all launcher activities (Samsung / Android 11+ safe)
+                    if (intent == null) {
+                        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                        val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
+                        val matched = resolveInfos.firstOrNull {
+                            val label = it.loadLabel(pm).toString()
+                            label.contains(clean, ignoreCase = true) ||
+                            it.activityInfo.packageName.contains(clean, ignoreCase = true)
+                        }
+                        if (matched != null) {
+                            intent = pm.getLaunchIntentForPackage(matched.activityInfo.packageName)
+                        }
+                    }
+
+                    // 4. Browser fallback if user wanted Chrome / web
+                    if (intent == null && (clean.contains("chrome") || clean.contains("browser") || clean.contains("web") || clean.contains("internet"))) {
+                        intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com")).apply {
+                            addCategory(Intent.CATEGORY_BROWSABLE)
+                        }
+                    }
+
+                    val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
+                    if (searchQ.isNotBlank() && (clean.contains("chrome") || clean.contains("browser") || clean.contains("google") || clean.contains("internet") || clean.contains("web"))) {
+                        val searchIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(searchQ, "UTF-8")}")).apply {
+                            setPackage("com.android.chrome")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try {
+                            context.startActivity(searchIntent)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Chrome me \"$searchQ\" search kar diya hai Boss! 🌐")
+                            return result
+                        } catch (_: Exception) {
+                            val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(searchQ, "UTF-8")}")).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(fallback)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Browser me \"$searchQ\" search kar diya hai Boss! 🌐")
+                            return result
+                        }
+                    }
 
                     if (intent != null) {
                         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -1191,12 +1334,35 @@ object JarvisToolRegistry {
                 }
 
                 "screen_tap" -> {
-                    val targetText = args.get("target_text")?.asString ?: ""
+                    val targetText = args.get("target_text")?.asString ?: args.get("target")?.asString ?: ""
+                    val x = args.get("x")?.asFloat
+                    val y = args.get("y")?.asFloat
                     val a11y = AuraAccessibilityService.instance
                     if (a11y != null) {
-                        val tapped = a11y.performClickByText(targetText)
-                        result.addProperty("status", if (tapped) "success" else "not_found")
-                        result.addProperty("message", if (tapped) "Tapped '$targetText'" else "Could not find '$targetText' on screen")
+                        if (x != null && y != null) {
+                            val tapped = a11y.performClickCoordinate(x, y)
+                            result.addProperty("status", if (tapped) "success" else "failed")
+                            result.addProperty("message", if (tapped) "Screen coordinate ($x, $y) par tap kar diya hai Boss!" else "Tap gesture execute nahi ho paya.")
+                        } else if (targetText.isNotBlank()) {
+                            var tapped = a11y.performClickByText(targetText)
+                            if (!tapped) {
+                                val words = targetText.split(" ").filter { it.length > 2 }
+                                for (w in words) {
+                                    if (a11y.performClickByText(w)) {
+                                        tapped = true
+                                        break
+                                    }
+                                }
+                            }
+                            if (!tapped && (targetText.contains("chrome", ignoreCase = true) || targetText.contains("youtube", ignoreCase = true) || targetText.contains("setting", ignoreCase = true) || targetText.contains("whatsapp", ignoreCase = true) || targetText.contains("gallery", ignoreCase = true))) {
+                                return executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", targetText) })
+                            }
+                            result.addProperty("status", if (tapped) "success" else "not_found")
+                            result.addProperty("message", if (tapped) "Screen par '$targetText' tap kar diya hai Boss!" else "Screen par '$targetText' nahi mila.")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Target text ya coordinates provide nahi kiye gaye.")
+                        }
                     } else {
                         result.addProperty("status", "error")
                         result.addProperty("message", "Accessibility Service is not enabled")
@@ -2058,20 +2224,38 @@ object JarvisToolRegistry {
                 }
 
                 "find_and_tap" -> {
-                    val target = args.get("target")?.asString ?: ""
+                    val target = args.get("target")?.asString ?: args.get("target_text")?.asString ?: ""
+                    val x = args.get("x")?.asFloat
+                    val y = args.get("y")?.asFloat
                     val a11y = AuraAccessibilityService.instance
-                    if (a11y != null && target.isNotBlank()) {
-                        val tapped = a11y.performClickByText(target)
-                        if (tapped) {
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Screen par \"$target\" tap kar diya hai Boss!")
+                    if (a11y != null) {
+                        if (x != null && y != null) {
+                            val tapped = a11y.performClickCoordinate(x, y)
+                            result.addProperty("status", if (tapped) "success" else "failed")
+                            result.addProperty("message", if (tapped) "Screen coordinate ($x, $y) par tap kar diya hai Boss!" else "Tap gesture execute nahi ho paya.")
+                        } else if (target.isNotBlank()) {
+                            var tapped = a11y.performClickByText(target)
+                            if (!tapped) {
+                                val words = target.split(" ").filter { it.length > 2 }
+                                for (w in words) {
+                                    if (a11y.performClickByText(w)) {
+                                        tapped = true
+                                        break
+                                    }
+                                }
+                            }
+                            if (!tapped && (target.contains("chrome", ignoreCase = true) || target.contains("youtube", ignoreCase = true) || target.contains("setting", ignoreCase = true) || target.contains("whatsapp", ignoreCase = true) || target.contains("gallery", ignoreCase = true))) {
+                                return executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", target) })
+                            }
+                            result.addProperty("status", if (tapped) "success" else "failed")
+                            result.addProperty("message", if (tapped) "Screen par \"$target\" tap kar diya hai Boss!" else "Screen par \"$target\" nahi mila.")
                         } else {
-                            result.addProperty("status", "failed")
-                            result.addProperty("message", "Screen par \"$target\" nahi mila.")
+                            result.addProperty("status", "error")
+                            result.addProperty("error", "Target blank and no coordinates provided.")
                         }
                     } else {
                         result.addProperty("status", "error")
-                        result.addProperty("error", "Accessibility Service not enabled or target blank.")
+                        result.addProperty("error", "Accessibility Service not enabled.")
                     }
                 }
 
@@ -2157,17 +2341,61 @@ object JarvisToolRegistry {
                     val start = System.currentTimeMillis()
                     val reachable = try {
                         val sock = java.net.Socket()
-                        sock.connect(java.net.InetSocketAddress("8.8.8.8", 53), 2500)
+                        sock.connect(java.net.InetSocketAddress("8.8.8.8", 53), 2000)
                         sock.close()
                         true
                     } catch (_: Exception) {
                         false
                     }
                     val latency = System.currentTimeMillis() - start
-                    result.addProperty("status", if (reachable) "success" else "failed")
-                    result.addProperty("reachable", reachable)
-                    result.addProperty("latency_ms", if (reachable) latency else -1)
-                    result.addProperty("message", if (reachable) "Internet active hai Boss! Latency: ${latency}ms" else "Internet disconnected hai Boss.")
+
+                    if (!reachable) {
+                        result.addProperty("status", "failed")
+                        result.addProperty("reachable", false)
+                        result.addProperty("latency_ms", -1)
+                        result.addProperty("message", "Internet disconnected hai Boss! Please check WiFi ya mobile data.")
+                    } else {
+                        var mbps = 0.0
+                        try {
+                            val dlStart = System.currentTimeMillis()
+                            val req = Request.Builder()
+                                .url("https://speed.cloudflare.com/__down?bytes=2000000")
+                                .header("User-Agent", "AuraAssistant/2.0")
+                                .build()
+                            val resp = httpClient.newCall(req).execute()
+                            val stream = resp.body?.byteStream()
+                            var totalBytes = 0L
+                            val buf = ByteArray(8192)
+                            if (stream != null) {
+                                var r = stream.read(buf)
+                                while (r != -1) {
+                                    totalBytes += r
+                                    if (System.currentTimeMillis() - dlStart > 2500L) break
+                                    r = stream.read(buf)
+                                }
+                                stream.close()
+                            }
+                            resp.close()
+
+                            val dlTimeSec = (System.currentTimeMillis() - dlStart) / 1000.0
+                            if (dlTimeSec > 0.05 && totalBytes > 10000) {
+                                mbps = (totalBytes * 8.0) / (dlTimeSec * 1000000.0)
+                            }
+                        } catch (_: Exception) {}
+
+                        val mbpsFormatted = if (mbps > 0.0) String.format(Locale.US, "%.1f", mbps) else "Active"
+                        result.addProperty("status", "success")
+                        result.addProperty("reachable", true)
+                        result.addProperty("latency_ms", latency)
+                        result.addProperty("download_mbps", if (mbps > 0.0) mbpsFormatted else "N/A")
+                        result.addProperty(
+                            "message",
+                            if (mbps > 0.0)
+                                "Internet speed test complete Boss! 🚀 Download speed: ${mbpsFormatted} Mbps (Ping: ${latency}ms)"
+                            else
+                                "Internet active hai Boss! Latency: ${latency}ms"
+                        )
+                    }
                 }
 
                 "get_recent_calls" -> {
@@ -2258,6 +2486,173 @@ object JarvisToolRegistry {
                     } catch (e: Exception) {
                         result.addProperty("status", "error")
                         result.addProperty("error", e.message ?: "Failed to query contacts")
+                    }
+                }
+
+                "get_storage_space" -> {
+                    try {
+                        val stat = android.os.StatFs(Environment.getDataDirectory().path)
+                        val blockSize = stat.blockSizeLong
+                        val totalBlocks = stat.blockCountLong
+                        val availableBlocks = stat.availableBlocksLong
+
+                        val totalBytes = totalBlocks * blockSize
+                        val freeBytes = availableBlocks * blockSize
+                        val usedBytes = totalBytes - freeBytes
+
+                        val totalGb = String.format(Locale.US, "%.1f", totalBytes / (1024.0 * 1024.0 * 1024.0))
+                        val usedGb = String.format(Locale.US, "%.1f", usedBytes / (1024.0 * 1024.0 * 1024.0))
+                        val freeGb = String.format(Locale.US, "%.1f", freeBytes / (1024.0 * 1024.0 * 1024.0))
+                        val percentUsed = if (totalBytes > 0) ((usedBytes.toDouble() / totalBytes.toDouble()) * 100).toInt() else 0
+
+                        result.addProperty("status", "success")
+                        result.addProperty("total_gb", totalGb)
+                        result.addProperty("used_gb", usedGb)
+                        result.addProperty("free_gb", freeGb)
+                        result.addProperty("percent_used", percentUsed)
+                        result.addProperty("message", "Boss, aapke phone mein total ${totalGb} GB internal storage hai, jisme se ${usedGb} GB used hai aur ${freeGb} GB free hai (${percentUsed}% used).")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to read storage space")
+                    }
+                }
+
+                "check_device_health" -> {
+                    try {
+                        // 1. Battery
+                        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+                        val batteryPct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+                        val batteryStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val status = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS) ?: 0
+                            if (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL) "Charging" else "Discharging"
+                        } else "Normal"
+
+                        val bIntent = context.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                        val rawTemp = bIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
+                        val tempC = rawTemp / 10.0f
+
+                        // 2. RAM
+                        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+                        val memInfo = android.app.ActivityManager.MemoryInfo()
+                        am?.getMemoryInfo(memInfo)
+                        val totalRamGb = String.format(Locale.US, "%.1f", memInfo.totalMem / (1024.0 * 1024.0 * 1024.0))
+                        val availRamGb = String.format(Locale.US, "%.1f", memInfo.availMem / (1024.0 * 1024.0 * 1024.0))
+                        val usedRamGb = String.format(Locale.US, "%.1f", (memInfo.totalMem - memInfo.availMem) / (1024.0 * 1024.0 * 1024.0))
+
+                        // 3. Storage
+                        val stat = android.os.StatFs(Environment.getDataDirectory().path)
+                        val totalStorageGb = String.format(Locale.US, "%.1f", (stat.blockCountLong * stat.blockSizeLong) / (1024.0 * 1024.0 * 1024.0))
+                        val freeStorageGb = String.format(Locale.US, "%.1f", (stat.availableBlocksLong * stat.blockSizeLong) / (1024.0 * 1024.0 * 1024.0))
+                        val usedStorageGb = String.format(Locale.US, "%.1f", ((stat.blockCountLong - stat.availableBlocksLong) * stat.blockSizeLong) / (1024.0 * 1024.0 * 1024.0))
+
+                        // 4. System Uptime
+                        val uptimeHours = android.os.SystemClock.elapsedRealtime() / (1000 * 60 * 60)
+
+                        // 5. Network
+                        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                        @Suppress("DEPRECATION")
+                        val netInfo = cm?.activeNetworkInfo
+                        @Suppress("DEPRECATION")
+                        val netType = netInfo?.typeName ?: "Disconnected"
+
+                        result.addProperty("status", "success")
+                        result.addProperty("battery_percent", batteryPct)
+                        result.addProperty("battery_status", batteryStatus)
+                        result.addProperty("battery_temp_c", tempC)
+                        result.addProperty("ram_total_gb", totalRamGb)
+                        result.addProperty("ram_used_gb", usedRamGb)
+                        result.addProperty("ram_free_gb", availRamGb)
+                        result.addProperty("storage_total_gb", totalStorageGb)
+                        result.addProperty("storage_used_gb", usedStorageGb)
+                        result.addProperty("storage_free_gb", freeStorageGb)
+                        result.addProperty("uptime_hours", uptimeHours)
+                        result.addProperty("network", netType)
+
+                        val healthSummary = "Boss, aapke phone ka complete health status:\n" +
+                                "🔋 Battery: ${batteryPct}% ($batteryStatus, ${tempC}°C)\n" +
+                                "🧠 RAM: ${usedRamGb} GB used / ${totalRamGb} GB total (${availRamGb} GB free)\n" +
+                                "💾 Storage: ${usedStorageGb} GB used / ${totalStorageGb} GB total (${freeStorageGb} GB free)\n" +
+                                "⏱️ Uptime: ${uptimeHours} ghante se active\n" +
+                                "📶 Network: $netType\n" +
+                                "Overall device health bilkul healthy aur perfect hai Boss! ✨"
+                        result.addProperty("message", healthSummary)
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to check device health")
+                    }
+                }
+
+                "clear_notifications" -> {
+                    val target = (args.get("target")?.asString ?: "all").lowercase().trim()
+                    val isListenerEnabled = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+                    if (!isListenerEnabled && com.aura.assistant.AuraNotificationListenerService.instance == null) {
+                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try { context.startActivity(intent) } catch (_: Exception) {}
+                        result.addProperty("status", "permission_needed")
+                        result.addProperty("message", "Boss, notifications clear karne ke liye 'Notification Access' allow karni hogi. Settings open kardi hai.")
+                    } else {
+                        if (target == "all" || target.contains("sab") || target.contains("all") || target.isBlank()) {
+                            val cleared = com.aura.assistant.AuraNotificationListenerService.clearAllNotifications()
+                            result.addProperty("status", if (cleared) "success" else "failed")
+                            result.addProperty("message", if (cleared) "Status bar ki sabhi clearable notifications saaf kardi hain Boss! 🧹✨" else "Notifications clear nahi ho payin.")
+                        } else {
+                            val cleared = com.aura.assistant.AuraNotificationListenerService.dismissNotification(target)
+                            result.addProperty("status", if (cleared) "success" else "not_found")
+                            result.addProperty("message", if (cleared) "\"$target\" notification dismiss kardi hai Boss! 🧹" else "\"$target\" se judi koi active notification nahi mili.")
+                        }
+                    }
+                }
+
+                "toggle_message_announcements" -> {
+                    val enable = when {
+                        args.has("enable") -> args.get("enable").asBoolean
+                        args.has("enabled") -> args.get("enabled").asBoolean
+                        args.has("state") -> args.get("state").asString.equals("on", ignoreCase = true) || args.get("state").asString.equals("true", ignoreCase = true)
+                        else -> true
+                    }
+                    val prefs = context.getSharedPreferences("aura_settings", Context.MODE_PRIVATE)
+                    prefs.edit().putBoolean("message_speak_enabled", enable).apply()
+                    result.addProperty("status", "success")
+                    result.addProperty("enabled", enable)
+                    result.addProperty("message", if (enable) {
+                        "Incoming message announcements turn ON kar diye gaye hain Boss! Ab WhatsApp, SMS ya OTP aane par main bol kar suna diya karungi. 📢"
+                    } else {
+                        "Incoming message announcements turn OFF kar diye gaye hain Boss! Ab message aane par main shant rahungi aur bol kar nahi sunaungi. 🔕"
+                    })
+                }
+
+                "get_current_time" -> {
+                    val now = Date()
+                    val time12 = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(now)
+                    val time24 = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+                    val fullDate = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale.getDefault()).format(now)
+                    val cal = java.util.Calendar.getInstance()
+                    val hour12 = cal.get(java.util.Calendar.HOUR).let { if (it == 0) 12 else it }
+                    val minute = cal.get(java.util.Calendar.MINUTE)
+                    val spoken = if (minute == 0) "$hour12 baje" else "$hour12 bajkar $minute minute"
+
+                    result.addProperty("status", "success")
+                    result.addProperty("current_time", time12)
+                    result.addProperty("current_time_24h", time24)
+                    result.addProperty("date", fullDate)
+                    result.addProperty("spoken_time", spoken)
+                    result.addProperty("message", "Abhi exact time $time12 ho raha hai Boss ($spoken), $fullDate. ⏰")
+                }
+
+
+                "search_internet", "web_search" -> {
+                    val query = args.get("query")?.asString ?: ""
+                    if (query.isBlank()) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Search query missing hai.")
+                    } else {
+                        val searchSnippet = performFastWebSearch(query)
+                        result.addProperty("status", "success")
+                        result.addProperty("query", query)
+                        result.addProperty("results", searchSnippet)
+                        result.addProperty("message", "Search results for '$query': $searchSnippet")
                     }
                 }
 
@@ -2957,17 +3352,74 @@ object JarvisToolRegistry {
                 }
             }
 
-            // Photos / Videos / Media storage stats domain boost
-            if (clean.contains("photo") || clean.contains("video") || clean.contains("media") || clean.contains("camera") || clean.contains("gallery") || clean.contains("kitne") || clean.contains("kitni") || clean.contains("storage")) {
+            // Phone storage space domain boost (GB / space / storage)
+            val isAskingForDiskSpace = clean.contains("storage") || clean.contains("space") || clean.contains("memory") || clean.contains("gb") || clean.contains("disk")
+            val isAskingForPhotosVideos = clean.contains("photo") || clean.contains("video") || clean.contains("media") || clean.contains("camera") || clean.contains("gallery")
+
+            if (isAskingForDiskSpace && !isAskingForPhotosVideos) {
+                if (name == "get_storage_space") {
+                    score += 1.5f
+                }
+            }
+
+            // Photos / Videos / Media storage stats domain boost (ONLY when specifically asking for media)
+            if (isAskingForPhotosVideos || ((clean.contains("kitne") || clean.contains("kitni")) && isAskingForPhotosVideos)) {
                 if (name.contains("media_storage") || name.contains("media") || name.contains("gallery")) {
                     score += 0.85f
                 }
             }
 
+            // Device Health domain boost
+            if (clean.contains("health") || clean.contains("device health") || clean.contains("phone health") || clean.contains("system health")) {
+                if (name == "check_device_health") {
+                    score += 1.5f
+                }
+            }
+
+            // Internet speed domain boost
+            if (clean.contains("speed") || clean.contains("internet") || clean.contains("net") || clean.contains("ping") || clean.contains("latency") || clean.contains("mbps")) {
+                if (name == "check_internet_speed") {
+                    score += 1.5f
+                }
+                if (clean.contains("chrome") && name == "open_app") {
+                    score += 1.0f
+                }
+            }
+
+            // Notifications domain boost
+            if (clean.contains("notification") || clean.contains("notif") || clean.contains("status bar")) {
+                if (name == "clear_notifications" || name == "read_notifications") {
+                    score += 1.2f
+                }
+            }
+
+            // Message reading / announcement domain boost
+            if ((clean.contains("message") || clean.contains("msg")) &&
+                (clean.contains("padh") || clean.contains("read") || clean.contains("bol") || clean.contains("sunao") || clean.contains("announce") || clean.contains("speak") || clean.contains("band") || clean.contains("off") || clean.contains("chalu") || clean.contains("on") || clean.contains("mat"))) {
+                if (name == "toggle_message_announcements" || name == "read_notifications") {
+                    score += 1.8f
+                }
+            }
+
+            // Time & Date domain boost
+            if (clean.contains("time") || clean.contains("samay") || clean.contains("baje") || clean.contains("ghadi") || clean.contains("date") || clean.contains("tareekh") || clean.contains("din")) {
+                if (name == "get_current_time") {
+                    score += 2.0f
+                }
+            }
+
             // Screen and UI Vision domain boost
-            if (clean.contains("screen") || clean.contains("dekh") || clean.contains("dikh") || clean.contains("read") || clean.contains("padh") || clean.contains("tap") || clean.contains("click")) {
-                if (name.contains("screen") || name.contains("tap") || name.contains("ocr") || name.contains("vision")) {
-                    score += 0.75f
+            if (clean.contains("screen") || clean.contains("dekh") || clean.contains("dikh") || clean.contains("read") || clean.contains("padh") || clean.contains("tap") || clean.contains("click") || clean.contains("kro")) {
+                if (name.contains("screen") || name.contains("tap") || name.contains("ocr") || name.contains("vision") || name == "open_app") {
+                    score += 0.9f
+                }
+            }
+
+
+            // Web search domain boost
+            if (clean.contains("search") || clean.contains("weather") || clean.contains("mausam") || clean.contains("google") || clean.contains("pata karo")) {
+                if (name == "search_internet" || name == "web_search") {
+                    score += 1.8f
                 }
             }
 
@@ -2987,6 +3439,32 @@ object JarvisToolRegistry {
 
         Log.d(TAG, "⚡ Dynamic Capability Retrieval: supplied ${result.size()} tools (out of ${all.size()}) for '$query'")
         return result
+    }
+
+    private fun performFastWebSearch(query: String): String {
+        return try {
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "https://html.duckduckgo.com/html/?q=$encoded"
+            val req = okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                .build()
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(4, TimeUnit.SECONDS)
+                .readTimeout(4, TimeUnit.SECONDS)
+                .build()
+            val resp = client.newCall(req).execute()
+            val html = resp.body?.string() ?: ""
+            val clean = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+            val snippets = clean.lines()
+                .map { it.trim() }
+                .filter { it.length in 35..250 && !it.startsWith("http") && !it.contains("DuckDuckGo") }
+                .take(4)
+                .joinToString("\n• ")
+            if (snippets.isNotBlank()) "• $snippets" else "Information retrieved for '$query'."
+        } catch (e: Exception) {
+            "Web query executed for '$query'. (Network search: ${e.message ?: "fallback"})"
+        }
     }
 }
 

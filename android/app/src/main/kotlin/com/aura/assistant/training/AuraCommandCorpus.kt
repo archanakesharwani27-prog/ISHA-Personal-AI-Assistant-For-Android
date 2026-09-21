@@ -1289,6 +1289,70 @@ object AuraCommandCorpus {
             "Morning → respond warmly, offer weather/news."))
         add(cmd("Meeting khatam ho gayi", "context", "set_dnd", p("enable","false"),
             "Meeting done → suggest turning off DND."))
+
+        // TOOL 58 ── get_storage_space
+        add(cmd("Phone mein kitna storage hai", "storage", "get_storage_space", emptyMap(),
+            "Phone storage space in GB → get_storage_space. NEVER get_media_storage_stats unless specifically asking for photo/video count.",
+            v("Storage kitna khali hai", "Kitna GB storage bacha hai", "Phone ka space kitna bacha hai", "Disk storage check karo", "Memory kitna bacha hai phone ka")))
+
+        // TOOL 59 ── check_device_health
+        add(cmd("Device health check karo", "system", "check_device_health", emptyMap(),
+            "Comprehensive device health (RAM, Storage, Battery temp/level, Uptime) → check_device_health. NEVER report only battery!",
+            v("Phone ki health check karo", "Device status btao", "Phone ka overall health kaisa hai", "System health report do")))
+
+        // TOOL 55 ── check_internet_speed
+        add(cmd("Internet speed btao", "network", "check_internet_speed", emptyMap(),
+            "Internet speed / ping / download throughput in Mbps → check_internet_speed.",
+            v("Net ki speed check karo", "Download speed test karo", "Net speed kitni hai", "WiFi speed test karo")))
+
+        // TOOL 60 ── clear_notifications
+        add(cmd("Notification panel saaf kardo", "notifications", "clear_notifications", p("target", "all"),
+            "Clear all dismissible notifications → clear_notifications(target='all').",
+            v("Notification hata do", "Status bar clear karo", "Clear all notifications")))
+
+        // APP SEARCH / CHROME INTEGRATION
+        add(cmd("Chrome pr search kro ki internet speed test aur run kro", "app_launch", "open_app",
+            mp("app_name", "chrome", "query", "internet speed test"),
+            "Search query on Chrome → open_app with query parameter."))
+
+        // SCREEN TAP / GROUNDING
+        add(cmd("Screen par tap karo", "vision", "find_and_tap", p("target_text", "Chrome"),
+            "Tap screen element or app icon → find_and_tap or open_app. NEVER say 'tap kar rahi hoon' without calling tool!",
+            v("Ispe tap karo", "Chrome icon pe tap karo", "Kro")))
+
+        // TOOL 61 ── toggle_message_announcements
+        add(cmd("Message padhna band karo", "notifications", "toggle_message_announcements", p("enable", "false"),
+            "Turn off message voice announcements → toggle_message_announcements(enable='false').",
+            v("Msg aane par mat bolo", "Message announcement off karo", "Msg read band karo", "Message bol kar mat sunao", "Turn off message speak")))
+
+        add(cmd("Message padhna shuru karo", "notifications", "toggle_message_announcements", p("enable", "true"),
+            "Turn on message voice announcements → toggle_message_announcements(enable='true').",
+            v("Msg aane par bola karo", "Message announcement on karo", "Msg read on karo", "Message sunana chalu karo")))
+
+        // TOOL 62 ── get_current_time
+        add(cmd("Time kya hai", "productivity", "get_current_time", emptyMap(),
+            "Current live time query → get_current_time. NEVER use stale session start time!",
+            v("Time batao", "Kitne baje hain", "Kya time hua", "Kya samay hua hai", "Ghadi me kya time hai", "What time is it", "Aaj ki date kya hai", "Tareekh kya hai aaj")))
+
+
+        // TOOL 66 ── search_internet / web_search
+        add(cmd("Internet pe search karo aaj ki news", "search", "search_internet", p("query", "aaj ki news"),
+            "Fast internet web search (4s timeout) → search_internet.",
+            v("Google pe search karo", "Web search karo latest tech news", "Online khojo", "Internet se dhoondh ke batao")))
+
+        // TOOL 67 ── accept_call & decline_call
+        add(cmd("Call uthao", "call", "accept_call", emptyMap(),
+            "Voice incoming call accept decision → accept_call.",
+            v("Utha lo phone", "Phone receive karo", "Accept call", "Pick up the call", "Haan baat karao")))
+
+        add(cmd("Call kaat do", "call", "decline_call", emptyMap(),
+            "Voice incoming call decline decision → decline_call.",
+            v("Phone mat uthao", "Call reject karo", "Decline call", "Kaat do", "Disconnect call", "Band kar do")))
+
+        // DEVELOPER IDENTITY ── Ansh Kesharwani
+        add(cmd("Tumhe kisne banaya hai", "system", "get_device_status", emptyMap(),
+            "Developer is hardcoded Ansh Kesharwani. Respond warmly: 'Mujhe Ansh Kesharwani ne develop kiya hai Boss!'",
+            v("Who is your developer", "Aura tumhara creator kaun hai", "Tumhe kisne develop kiya", "Who made you")))
     }
 
     // ── HELPER BUILDERS ──────────────────────────────────────────────

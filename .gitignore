@@ -38,7 +38,8 @@ captures/
 *.tar.gz
 *.rar
 *.7z
-apks/
+apks/*
+!apks/aura_v5.3_time_clock_fix_20260921.apk
 
 # Flutter / Dart
 **/doc/api/
@@ -62,4 +63,7 @@ app.*.map.json
 # Temporary build outputs & logs
 build_output.txt
 *.log
+*.png
+*.txt
 scratch/
+scratch_*.py

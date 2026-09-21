@@ -97,6 +97,14 @@ object AuraCommandTrainer {
         appendLine("│ 'X baje' subah: hour=X,min=0       Raat 11=23:00        │")
         appendLine("│ 'Half past X' = X:30               'Quarter to X' = X-1:45 │")
         appendLine("└──────────────────────────────────────────────────────────┘")
+        appendLine("┌─ STORAGE & HEALTH ROUTING RULES ─────────────────────────┐")
+        appendLine("│ 'Phone storage kitna hai' → get_storage_space (GB/Disk) │")
+        appendLine("│ 'Photos/videos kitne hain' → get_media_storage_stats     │")
+        appendLine("│ 'Device health check karo' → check_device_health (Full)  │")
+        appendLine("│ 'Internet speed btao' → check_internet_speed (Mbps+Ping) │")
+        appendLine("│ 'Chrome pe search karo X' → open_app(chrome, query=X)    │")
+        appendLine("│ 'Screen pe tap karo / kro' → find_and_tap (NEVER talk!) │")
+        appendLine("└──────────────────────────────────────────────────────────┘")
         appendLine()
 
         appendLine("┌─ EMERGENCY RULES (EXECUTE IMMEDIATELY, NO CONFIRMATION) ┐")
@@ -188,6 +196,14 @@ object AuraCommandTrainer {
             "get_clipboard_text"   to "Clipboard mein kya?",
             "open_system_settings" to "Settings [section]",
             "set_navigation_mode"  to "Gesture/button navigation",
+            "get_storage_space"    to "Phone storage/free GB/disk space [NEVER photos/videos!]",
+            "check_device_health"  to "Device health/RAM/storage/temp/uptime",
+            "check_internet_speed" to "Internet speed/Mbps/ping/latency",
+            "clear_notifications"  to "Clear/dismiss all notifications",
+            "toggle_message_announcements" to "Message read on/off [enable=true/false]",
+            "get_current_time"     to "Current live time/ghadi/kitne baje/date [NEVER prompt start time!]",
+
+            "search_internet"      to "Live fast web search (4s timeout) [query]",
         )
         for ((tool, desc) in quickRef) {
             appendLine("  $tool → $desc")

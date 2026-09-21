@@ -1302,8 +1302,20 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     fun performClickByText(text: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        return clickFirstMatch(root, listOf(text.lowercase()))
+        val root = rootInActiveWindow
+        if (root != null && clickFirstMatch(root, listOf(text.lowercase()))) {
+            return true
+        }
+        // Fallback across all active on-screen windows (system dialogs, launcher overlays)
+        try {
+            for (win in windows) {
+                val winRoot = win.root ?: continue
+                if (clickFirstMatch(winRoot, listOf(text.lowercase()))) {
+                    return true
+                }
+            }
+        } catch (_: Exception) {}
+        return false
     }
 
     fun scrollWindow(down: Boolean): Boolean {
@@ -1427,6 +1439,79 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Draws a continuous pattern gesture on a 3x3 (9-dot) unlock or payment grid.
+     * [dots] is a list of dot numbers 1 to 9:
+     *   1 (top-left)    2 (top-mid)    3 (top-right)
+     *   4 (mid-left)    5 (center)     6 (mid-right)
+     *   7 (bot-left)    8 (bot-mid)    9 (bot-right)
+     */
+    fun drawPattern(dots: List<Int>, durationMs: Long = 750L): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+        if (dots.size < 2) return false
+
+        val root = rootInActiveWindow
+        val targetBounds = android.graphics.Rect()
+        var foundPatternView = false
+
+        fun searchPatternNode(node: android.view.accessibility.AccessibilityNodeInfo?) {
+            if (node == null || foundPatternView) return
+            val cls = node.className?.toString()?.lowercase() ?: ""
+            val resId = node.viewIdResourceName?.lowercase() ?: ""
+            if (cls.contains("pattern") || resId.contains("pattern") || resId.contains("lock_pattern")) {
+                node.getBoundsInScreen(targetBounds)
+                if (targetBounds.width() > 200 && targetBounds.height() > 200) {
+                    foundPatternView = true
+                    return
+                }
+            }
+            for (i in 0 until node.childCount) {
+                searchPatternNode(node.getChild(i))
+                if (foundPatternView) return
+            }
+        }
+
+        searchPatternNode(root)
+
+        // Fallback: If view not explicitly tagged, standard Android lock/payment pattern is centered in lower half
+        val bounds = if (foundPatternView && targetBounds.width() > 200) {
+            targetBounds
+        } else {
+            val dm = resources.displayMetrics
+            val left = (dm.widthPixels * 0.12f).toInt()
+            val right = (dm.widthPixels * 0.88f).toInt()
+            val top = (dm.heightPixels * 0.44f).toInt()
+            val bottom = (dm.heightPixels * 0.82f).toInt()
+            android.graphics.Rect(left, top, right, bottom)
+        }
+
+        val cellW = bounds.width().toFloat() / 3f
+        val cellH = bounds.height().toFloat() / 3f
+
+        fun getDotCoord(dotIndex: Int): Pair<Float, Float> {
+            val clamped = dotIndex.coerceIn(1, 9)
+            val row = (clamped - 1) / 3
+            val col = (clamped - 1) % 3
+            val x = bounds.left + col * cellW + cellW / 2f
+            val y = bounds.top + row * cellH + cellH / 2f
+            return Pair(x, y)
+        }
+
+        val path = Path()
+        val (firstX, firstY) = getDotCoord(dots.first())
+        path.moveTo(firstX, firstY)
+
+        for (i in 1 until dots.size) {
+            val (x, y) = getDotCoord(dots[i])
+            path.lineTo(x, y)
+        }
+
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        Log.i("AuraAccessibility", "Drawing pattern across dots $dots within bounds $bounds (duration=${durationMs}ms)")
+        return dispatchGesture(gesture, null, null)
+    }
+
+    /**
      * Dispatches a real physical touch tap gesture at exact screen coordinates (x, y).
      * Simulates genuine human finger touch across all apps (Compose, Flutter, React Native, Unity).
      */
@@ -1456,7 +1541,10 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     fun performClickCoordinate(x: Float, y: Float): Boolean {
-        return performTap(x, y)
+        val dm = resources.displayMetrics
+        val realX = if (x in 0.0f..1.0f && x > 0f) x * dm.widthPixels else x
+        val realY = if (y in 0.0f..1.0f && y > 0f) y * dm.heightPixels else y
+        return performTap(realX, realY)
     }
 
     /**

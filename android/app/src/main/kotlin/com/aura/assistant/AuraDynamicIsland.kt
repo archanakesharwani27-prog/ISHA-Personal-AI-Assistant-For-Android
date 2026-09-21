@@ -3,6 +3,7 @@ package com.aura.assistant
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
+import java.util.Locale
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -74,11 +75,92 @@ object AuraDynamicIsland {
     private val STROKE_THINKING = Color.parseColor("#80A855F7")  // Subtle Violet Glow
     private val STROKE_SPEAKING = Color.parseColor("#8010B981")  // Subtle Emerald Glow
 
+    private var islandTts: android.speech.tts.TextToSpeech? = null
+    private var isIslandTtsReady = false
+
+    private fun initTts(ctx: Context) {
+        if (islandTts == null) {
+            try {
+                islandTts = android.speech.tts.TextToSpeech(ctx.applicationContext) { status ->
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        islandTts?.language = Locale("hi", "IN")
+                        islandTts?.setSpeechRate(0.95f)
+                        isIslandTtsReady = true
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun speakText(text: String) {
+        if (isIslandTtsReady && text.isNotBlank()) {
+            val clean = text.replace(Regex("[*#_`~]"), "").trim()
+            islandTts?.speak(clean, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "DynamicIslandTTS")
+        }
+    }
+
     @Volatile private var currentReason: String = "wake"
 
     /** Show the Dynamic Island bubble. Safe to call from any thread. */
     fun show(context: Context, reason: String = "wake") {
         handler.post { _show(context.applicationContext, reason) }
+    }
+
+    /** Real-time live state update from Gemini Live (Listening, Thinking, Speaking) */
+    fun updateLiveState(ctx: Context? = null, state: com.aura.assistant.ai.AuraLiveState, amplitude: Float = 0f) {
+        handler.post {
+            val targetCtx = ctx ?: overlayView?.context
+            // If Aura is engaged in background and island is not visible, spawn it immediately
+            if (overlayView == null && targetCtx != null && state in listOf(
+                    com.aura.assistant.ai.AuraLiveState.LISTENING,
+                    com.aura.assistant.ai.AuraLiveState.THINKING,
+                    com.aura.assistant.ai.AuraLiveState.SPEAKING,
+                    com.aura.assistant.ai.AuraLiveState.CONNECTED
+                )) {
+                if (android.provider.Settings.canDrawOverlays(targetCtx)) {
+                    _show(targetCtx, "voice_mode")
+                }
+            }
+            if (overlayView == null) return@post
+
+            when (state) {
+                com.aura.assistant.ai.AuraLiveState.LISTENING -> {
+                    handler.removeCallbacks(dismissRunnable)
+                    stateText?.text = "Listening... 🎙️"
+                    updateBackgroundColor("Listening")
+                    sparkleIcon?.setTextColor(Color.parseColor("#38BDF8"))
+                    waveView?.setListening(true)
+                    waveView?.updateAmplitude(amplitude)
+                }
+                com.aura.assistant.ai.AuraLiveState.THINKING -> {
+                    handler.removeCallbacks(dismissRunnable)
+                    stateText?.text = "Thinking... 🧠"
+                    updateBackgroundColor("Thinking")
+                    sparkleIcon?.setTextColor(Color.parseColor("#A855F7"))
+                    waveView?.setListening(false)
+                }
+                com.aura.assistant.ai.AuraLiveState.SPEAKING -> {
+                    handler.removeCallbacks(dismissRunnable)
+                    stateText?.text = "Speaking... 💬"
+                    updateBackgroundColor("Speaking")
+                    sparkleIcon?.setTextColor(Color.parseColor("#10B981"))
+                    waveView?.setListening(true)
+                    waveView?.updateAmplitude(amplitude)
+                }
+                com.aura.assistant.ai.AuraLiveState.IDLE,
+                com.aura.assistant.ai.AuraLiveState.ERROR -> {
+                    stateText?.text = "AURA ✦"
+                    updateBackgroundColor("Idle")
+                    waveView?.setListening(false)
+                    resetDismissTimer()
+                }
+                else -> {
+                    stateText?.text = "Aura Live ✦"
+                    updateBackgroundColor("Idle")
+                    waveView?.setListening(false)
+                }
+            }
+        }
     }
 
     /** Hide and remove from WindowManager. */
@@ -88,11 +170,14 @@ object AuraDynamicIsland {
 
     private fun _show(ctx: Context, reason: String) {
         currentReason = reason
+        initTts(ctx)
         if (overlayView != null) {
             // Already showing - update reason
             updateStateFromReason(reason)
-            if (reason != "screen_share") {
+            if (reason != "screen_share" && reason != "voice_mode") {
                 resetDismissTimer()
+            } else {
+                handler.removeCallbacks(dismissRunnable)
             }
             return
         }
@@ -150,7 +235,7 @@ object AuraDynamicIsland {
 
         // 450ms settle delay after shake before opening SpeechRecognizer.
         // Prevents phone vibration motor and hand shake noise from triggering false speech!
-        if (reason != "screen_share") {
+        if (reason != "screen_share" && reason != "voice_mode" && reason != "auto_overlay") {
             handler.postDelayed({
                 if (overlayView != null) {
                     startSpeechListening(ctx, overlay)
@@ -158,6 +243,10 @@ object AuraDynamicIsland {
             }, 450L)
             // Auto-dismiss after idle time
             resetDismissTimer()
+        } else if (reason == "voice_mode") {
+            waveView?.setListening(true)
+        } else if (reason == "auto_overlay") {
+            waveView?.setListening(false)
         }
     }
 
@@ -222,11 +311,11 @@ object AuraDynamicIsland {
             false
         }
 
-        // Tap: if currently in screen_share -> return to Aura; if idle -> restart speech; otherwise toggle expand
+        // Tap: if currently in screen_share, voice_mode or auto_overlay -> return to Aura; if idle -> restart speech; otherwise toggle expand
         root.setOnClickListener {
-            if (currentReason == "screen_share") {
+            if (currentReason == "screen_share" || currentReason == "voice_mode" || currentReason == "auto_overlay") {
                 val intent = Intent(ctx, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
                 ctx.startActivity(intent)
             } else if (!isListeningSpeech) {
@@ -350,11 +439,18 @@ object AuraDynamicIsland {
             "screen_share" -> "Aura Viewing 👁️"
             "shake" -> "Listening..."
             "morning_reminder" -> "Good morning"
+            "voice_mode" -> "Aura Live 🎙️"
+            "auto_overlay" -> "AURA ✦"
             else -> "Listening..."
         }
         this.stateText?.text = stateText
-        updateBackgroundColor("Listening")
-        if (reason == "screen_share") {
+        if (reason == "auto_overlay") {
+            updateBackgroundColor("Idle")
+            waveView?.setListening(false)
+        } else {
+            updateBackgroundColor("Listening")
+        }
+        if (reason == "screen_share" || reason == "voice_mode") {
             waveView?.setListening(true)
         }
     }
@@ -582,17 +678,51 @@ object AuraDynamicIsland {
         // Process command via accessibility service (A11y) for instant execution
         val a11y = AuraAccessibilityService.instance
         when {
-            lower.contains("screen") || lower.contains("photo") || lower.contains("dekho") -> {
-                // Screen share / analyze
-                a11y?.takeScreenCapture { bytes ->
+            lower.contains("screen") || lower.contains("photo") || lower.contains("dekho") || lower.contains("analyze") -> {
+                // Background screen analysis via Gemini AI
+                stateText?.text = "Screen analyzing..."
+                updateBackgroundColor("Thinking")
+                waveView?.setThinking(true)
+
+                a11y?.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes ->
                     handler.post {
                         if (bytes != null && bytes.isNotEmpty()) {
-                            // Show brief confirmation then resume listening
-                            stateText?.text = "Screen captured"
-                            handler.postDelayed({
-                                updateStateUI("Listening")
-                                // Continue listening for follow-up questions about screen
-                            }, 1200L)
+                            val chatService = GeminiChatService(ctx)
+                            val prompt = if (command.length < 15) "Boss ne kaha hai screen dekho aur batao kya dikh raha hai. Screen ko analyze karke short me batao." else command
+                            chatService.sendChatStream(
+                                history = emptyList(),
+                                newPrompt = prompt,
+                                imageBytes = bytes,
+                                callback = object : com.aura.assistant.ai.ChatStreamCallback {
+                                    val responseBuf = StringBuilder()
+                                    override fun onToken(chunk: String) {
+                                        responseBuf.append(chunk)
+                                    }
+                                    override fun onToolExecution(toolName: String, args: String, result: String) {
+                                        handler.post { stateText?.text = "$toolName ✓" }
+                                    }
+                                    override fun onComplete(fullText: String) {
+                                        handler.post {
+                                            val shortResp = fullText.lines().firstOrNull { it.isNotBlank() } ?: "Done ✓"
+                                            val display = if (shortResp.length > 28) shortResp.take(25) + "..." else shortResp
+                                            stateText?.text = display
+                                            updateBackgroundColor("Speaking")
+                                            waveView?.setThinking(false)
+                                            waveView?.setSpeaking(true)
+                                            speakText(fullText)
+                                            handler.postDelayed({ hide() }, 4500L)
+                                        }
+                                    }
+                                    override fun onError(errorMessage: String) {
+                                        handler.post {
+                                            stateText?.text = "Analysis error"
+                                            updateBackgroundColor("Idle")
+                                            waveView?.reset()
+                                            handler.postDelayed({ hide() }, 1500L)
+                                        }
+                                    }
+                                }
+                            )
                         } else {
                             stateText?.text = "Screen capture failed"
                             handler.postDelayed({ hide() }, 1500L)
@@ -680,7 +810,8 @@ object AuraDynamicIsland {
                                 updateBackgroundColor("Speaking")
                                 waveView?.setThinking(false)
                                 waveView?.setSpeaking(true)
-                                handler.postDelayed({ hide() }, 2500L)
+                                speakText(fullText)
+                                handler.postDelayed({ hide() }, 4000L)
                             }
                         }
                         override fun onError(errorMessage: String) {
@@ -862,6 +993,15 @@ object AuraDynamicIsland {
             } else {
                 idleAnimator.end()
             }
+        }
+
+        fun updateAmplitude(amplitude: Float) {
+            val clamped = amplitude.coerceIn(0f, 1f)
+            for (i in barHeights.indices) {
+                val jitter = (rng.nextFloat() - 0.5f) * 0.12f
+                barHeights[i] = (clamped * 0.85f + 0.15f + jitter).coerceIn(0.1f, 1.0f)
+            }
+            invalidate()
         }
 
         fun reset() {

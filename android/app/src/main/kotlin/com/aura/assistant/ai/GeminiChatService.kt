@@ -210,7 +210,7 @@ class GeminiChatService(private val context: Context) {
         if (pendingFunctionCalls.isNotEmpty()) {
             val executedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
             for (fnCall in pendingFunctionCalls) {
-                val fnName = fnCall.get("name").asString
+                val fnName = fnCall.get("name")?.asString ?: continue
                 val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
 
                 Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
@@ -245,7 +245,9 @@ class GeminiChatService(private val context: Context) {
         originalPrompt: String,
         executedTools: List<Triple<String, JsonObject, JsonObject>>,
         modelTurnContent: JsonObject?,
-        callback: ChatStreamCallback
+        callback: ChatStreamCallback,
+        currentStep: Int = 1,
+        priorContents: JsonArray? = null
     ) {
         val apiKey = Secrets.getActiveGeminiKey()
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
@@ -254,19 +256,21 @@ class GeminiChatService(private val context: Context) {
             // System instruction with rich persona and permanent memory
             add("system_instruction", createSystemInstruction())
 
-            // Contents with user prompt, model functionCalls, and functionResponses
-            val contents = createHistoryContents(history)
-
-            // User turn
-            val userTurn = JsonObject().apply {
-                addProperty("role", "user")
-                val parts = JsonArray().apply {
-                    val textPart = JsonObject().apply { addProperty("text", originalPrompt) }
-                    add(textPart)
+            val contents = if (priorContents != null) {
+                priorContents
+            } else {
+                val initContents = createHistoryContents(history)
+                val userTurn = JsonObject().apply {
+                    addProperty("role", "user")
+                    val parts = JsonArray().apply {
+                        val textPart = JsonObject().apply { addProperty("text", originalPrompt) }
+                        add(textPart)
+                    }
+                    add("parts", parts)
                 }
-                add("parts", parts)
+                initContents.add(userTurn)
+                initContents
             }
-            contents.add(userTurn)
 
             // Model turn calling the functions
             val modelTurn = modelTurnContent ?: JsonObject().apply {
@@ -336,6 +340,8 @@ class GeminiChatService(private val context: Context) {
         val stream = response.body?.byteStream() ?: return
         val reader = BufferedReader(InputStreamReader(stream))
         val postToolAccumulator = StringBuilder()
+        val nextPendingFunctionCalls = mutableListOf<JsonObject>()
+        var nextExactModelTurnContent: JsonObject? = null
 
         try {
             var line: String?
@@ -359,6 +365,10 @@ class GeminiChatService(private val context: Context) {
                                         postToolAccumulator.append(token)
                                         callback.onToken(token)
                                     }
+                                    if (part.has("functionCall")) {
+                                        nextPendingFunctionCalls.add(part.getAsJsonObject("functionCall"))
+                                        nextExactModelTurnContent = content
+                                    }
                                 }
                             }
                         }
@@ -367,6 +377,33 @@ class GeminiChatService(private val context: Context) {
             }
         } finally {
             try { reader.close() } catch (_: Exception) {}
+        }
+
+        // Multi-Step Autonomous ReAct Planning:
+        // If the model chained another function call (e.g. open_app -> get_screen_context -> find_and_tap)
+        if (nextPendingFunctionCalls.isNotEmpty() && currentStep < 4) {
+            Log.i(TAG, "Multi-step tool chaining: Step $currentStep complete, executing next ${nextPendingFunctionCalls.size} tools")
+            val nextExecutedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
+            for (fnCall in nextPendingFunctionCalls) {
+                val fnName = fnCall.get("name")?.asString ?: continue
+                val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
+                val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
+                val summary = toolResult.get("message")?.asString ?: toolResult.get("status")?.asString ?: "OK"
+                callback.onToolExecution(fnName, fnArgs.toString(), summary)
+                nextExecutedTools.add(Triple(fnName, fnArgs, toolResult))
+            }
+
+            executeToolResponsesStream(
+                model = model,
+                history = history,
+                originalPrompt = originalPrompt,
+                executedTools = nextExecutedTools,
+                modelTurnContent = nextExactModelTurnContent,
+                callback = callback,
+                currentStep = currentStep + 1,
+                priorContents = root.getAsJsonArray("contents")
+            )
+            return
         }
 
         val fullSpokenText = postToolAccumulator.toString().trim()

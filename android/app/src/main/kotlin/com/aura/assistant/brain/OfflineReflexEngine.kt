@@ -21,15 +21,26 @@ object OfflineReflexEngine {
     /**
      * Checks if the user prompt can be executed offline.
      * Returns an OfflineReflexResult if handled, or null if cloud LLM reasoning is required.
+     * If [execute] is false, simulates success without invoking hardware actions (useful for test suites & training batches).
      */
-    fun tryExecute(context: Context, prompt: String): OfflineReflexResult? {
+    fun tryExecute(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? {
         val clean = prompt.lowercase().trim()
 
-        // 1. Flashlight / Torch
-        if (clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")) {
+        // Guard: Never trigger offline reflex on complaints, questions, or problem descriptions
+        val isNegativeOrComplaint = clean.contains("kharab") || clean.contains("problem") ||
+                                   clean.contains("nahi chal") || clean.contains("dikkat") ||
+                                   clean.contains("issue") || clean.contains("toot") ||
+                                   clean.contains("kya hua") || clean.contains("kyu")
+        if (isNegativeOrComplaint) return null
+
+        // 1. Flashlight / Torch (Requires explicit action verb)
+        val isTorchCommand = (clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")) &&
+                             (clean.contains("on") || clean.contains("chalu") || clean.contains("jala") || clean.contains("chala") ||
+                              clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok"))
+        if (isTorchCommand) {
             val isOff = clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
-            val result = JarvisToolRegistry.executeTool(context, "toggle_flashlight", args)
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_flashlight", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
             val resp = if (success) {
                 if (!isOff) "Torch chala di hai Boss! Roshan ho gaya! 🔦" else "Torch band kar di hai Boss!"
@@ -41,7 +52,7 @@ object OfflineReflexEngine {
 
         // 2. Battery Status
         if (clean.contains("battery") || clean.contains("charge kitna") || clean.contains("charging")) {
-            val result = JarvisToolRegistry.executeTool(context, "get_battery_status", JsonObject())
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "get_battery_status", JsonObject()) else JsonObject().apply { addProperty("level", 85); addProperty("is_charging", false); addProperty("status", "success") }
             val level = result.get("level")?.asInt ?: 50
             val isCharging = result.get("is_charging")?.asBoolean ?: false
             val chargingText = if (isCharging) " (charger plugged in hai ⚡)" else ""
@@ -62,7 +73,7 @@ object OfflineReflexEngine {
             }
             if (percent != null) {
                 val args = JsonObject().apply { addProperty("percent", percent) }
-                val result = JarvisToolRegistry.executeTool(context, "set_volume", args)
+                val result = if (execute) JarvisToolRegistry.executeTool(context, "set_volume", args) else JsonObject().apply { addProperty("status", "success") }
                 val success = isSuccess(result)
                 val resp = if (success) {
                     "Awaaz $percent% par set kar di hai Boss! 🔊"
@@ -85,7 +96,7 @@ object OfflineReflexEngine {
             }
             if (percent != null) {
                 val args = JsonObject().apply { addProperty("percent", percent) }
-                val result = JarvisToolRegistry.executeTool(context, "set_brightness", args)
+                val result = if (execute) JarvisToolRegistry.executeTool(context, "set_brightness", args) else JsonObject().apply { addProperty("status", "success") }
                 val success = isSuccess(result)
                 val resp = if (success) {
                     "Screen brightness $percent% par set kar di hai Boss! ☀️"
@@ -100,7 +111,7 @@ object OfflineReflexEngine {
         if (clean.contains("wifi") || clean.contains("wi-fi")) {
             val isOff = clean.contains("band") || clean.contains("off") || clean.contains("disconnect")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
-            val result = JarvisToolRegistry.executeTool(context, "toggle_wifi", args)
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_wifi", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
             val resp = if (success) {
                 if (!isOff) "WiFi on kar diya hai Boss! 📶" else "WiFi band kar diya hai Boss!"
@@ -114,7 +125,7 @@ object OfflineReflexEngine {
         if (clean.contains("bluetooth")) {
             val isOff = clean.contains("band") || clean.contains("off") || clean.contains("disconnect")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
-            val result = JarvisToolRegistry.executeTool(context, "toggle_bluetooth", args)
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_bluetooth", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
             val resp = if (success) {
                 if (!isOff) "Bluetooth chalu kar diya hai Boss! ᛒ" else "Bluetooth band kar diya hai Boss!"
@@ -128,7 +139,7 @@ object OfflineReflexEngine {
         if (clean.contains("hotspot")) {
             val isOff = clean.contains("band") || clean.contains("off")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
-            val result = JarvisToolRegistry.executeTool(context, "toggle_hotspot", args)
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_hotspot", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
             val resp = if (!isOff) "Hotspot shuru kar diya hai Boss!" else "Hotspot band kar diya hai Boss!"
             return OfflineReflexResult("toggle_hotspot", resp, success)
@@ -136,7 +147,7 @@ object OfflineReflexEngine {
 
         // 8. Screenshot
         if (clean.contains("screenshot") || clean.contains("screen shot")) {
-            val result = JarvisToolRegistry.executeTool(context, "take_screenshot", JsonObject())
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "take_screenshot", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
             val resp = if (success) {
                 "Screenshot le liya hai Boss, gallery me save ho gaya! 📸"
@@ -156,7 +167,7 @@ object OfflineReflexEngine {
                     addProperty("minute", minute)
                     addProperty("message", "AURA Alarm")
                 }
-                val result = JarvisToolRegistry.executeTool(context, "create_alarm", args)
+                val result = if (execute) JarvisToolRegistry.executeTool(context, "create_alarm", args) else JsonObject().apply { addProperty("status", "success") }
                 val success = isSuccess(result)
                 val minStr = if (minute > 0) ":${minute.toString().padStart(2, '0')}" else ""
                 val resp = if (success) {
@@ -176,7 +187,7 @@ object OfflineReflexEngine {
                     addProperty("seconds", seconds)
                     addProperty("message", "AURA Timer")
                 }
-                val result = JarvisToolRegistry.executeTool(context, "set_timer", args)
+                val result = if (execute) JarvisToolRegistry.executeTool(context, "set_timer", args) else JsonObject().apply { addProperty("status", "success") }
                 val success = isSuccess(result)
                 val mins = seconds / 60
                 val durStr = if (mins > 0) "$mins minute" else "$seconds second"
@@ -208,7 +219,7 @@ object OfflineReflexEngine {
             for ((key, name) in appMap) {
                 if (clean.contains(key)) {
                     val args = JsonObject().apply { addProperty("app_name", name) }
-                    val result = JarvisToolRegistry.executeTool(context, "open_app", args)
+                    val result = if (execute) JarvisToolRegistry.executeTool(context, "open_app", args) else JsonObject().apply { addProperty("status", "success") }
                     val success = isSuccess(result)
                     val resp = if (success) {
                         "${name.replaceFirstChar { it.uppercase() }} open kar diya hai Boss!"
@@ -218,6 +229,40 @@ object OfflineReflexEngine {
                     return OfflineReflexResult("open_app", resp, success)
                 }
             }
+        }
+
+        // 12. Toggle Incoming Message Announcements (Read messages on arrival)
+        val isMsgSpeakCmd = (clean.contains("message") || clean.contains("msg")) &&
+                (clean.contains("padh") || clean.contains("read") || clean.contains("bol") || clean.contains("sunao") || clean.contains("announce") || clean.contains("speak"))
+        if (isMsgSpeakCmd) {
+            val isOff = clean.contains("band") || clean.contains("off") || clean.contains("mat") || clean.contains("stop") || clean.contains("mute")
+            val args = JsonObject().apply { addProperty("enable", !isOff) }
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_message_announcements", args) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val resp = if (success) {
+                if (isOff) "Incoming message announcements band kar diye hain Boss! Ab message aane par main shant rahungi. 🔕"
+                else "Incoming message announcements chalu kar diye hain Boss! Ab message aane par main bol kar sunaungi. 📢"
+            } else {
+                "Boss, setting update karne me dikkat aayi."
+            }
+            return OfflineReflexResult("toggle_message_announcements", resp, success)
+        }
+
+        // 13. Current Live Device Time & Date Check
+        val isTimeQuery = (
+            clean == "time" ||
+            clean.startsWith("time ") ||
+            clean.endsWith(" time") ||
+            clean.contains("what time") ||
+            clean.contains("what is the time") ||
+            ((clean.contains("time") || clean.contains("samay") || clean.contains("baje") || clean.contains("ghadi")) &&
+             (clean.contains("kya") || clean.contains("bata") || clean.contains("kitne") || clean.contains("dekho") || clean.contains("hua") || clean.contains("bolo") || clean.contains("batao") || clean.contains("bataiye"))) ||
+            ((clean.contains("date") || clean.contains("tareekh") || clean.contains("din")) && (clean.contains("kya") || clean.contains("aaj") || clean.contains("today") || clean.contains("bata")))
+        ) && !clean.contains("alarm") && !clean.contains("timer")
+        if (isTimeQuery) {
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "get_current_time", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val msg = result.get("message")?.asString ?: "Abhi exact time check kar liya hai Boss!"
+            return OfflineReflexResult("get_current_time", msg, true)
         }
 
         return null // Needs Gemini reasoning

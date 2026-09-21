@@ -118,6 +118,9 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     private val _isShakeEnabled = MutableStateFlow(prefs.getBoolean("shake_enabled", true))
     val isShakeEnabled: StateFlow<Boolean> = _isShakeEnabled.asStateFlow()
 
+    private val _isMessageSpeakEnabled = MutableStateFlow(prefs.getBoolean("message_speak_enabled", true))
+    val isMessageSpeakEnabled: StateFlow<Boolean> = _isMessageSpeakEnabled.asStateFlow()
+
     private val _isSettingsVisible = MutableStateFlow(false)
     val isSettingsVisible: StateFlow<Boolean> = _isSettingsVisible.asStateFlow()
 
@@ -130,6 +133,11 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             liveClient.turnCompletedFlow.collect { turn ->
                 val currentSessionId = _activeSessionId.value
                 if (currentSessionId.isNotBlank()) {
+                    // Filter out acoustic echo fragments or empty turns
+                    val cleanAsst = turn.assistantText.trim()
+                    if (turn.userText == "Spoken query" && (cleanAsst.length < 35 || cleanAsst.endsWith("…") || cleanAsst.split(" ").size < 4)) {
+                        return@collect
+                    }
                     val newMsgs = mutableListOf<ChatMessage>()
                     if (turn.userText.isNotBlank()) {
                         newMsgs.add(
@@ -170,7 +178,8 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     private fun initTts() {
         tts = TextToSpeech(getApplication()) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
+                tts?.language = Locale("hi", "IN")
+                tts?.setSpeechRate(0.95f)
                 isTtsReady = true
             }
         }
@@ -652,6 +661,11 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             putExtra("enabled", enabled)
             setPackage(app.packageName)
         })
+    }
+
+    fun setMessageSpeakEnabled(enabled: Boolean) {
+        _isMessageSpeakEnabled.value = enabled
+        prefs.edit().putBoolean("message_speak_enabled", enabled).apply()
     }
 
     override fun onCleared() {

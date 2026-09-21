@@ -25,6 +25,7 @@ import java.util.Locale
 class AuraNotificationListenerService : NotificationListenerService() {
 
     companion object {
+        private const val TAG = "AuraNotifService"
         const val ACTION_NOTIF = "com.aura.NOTIFICATION"
 
         const val ACTION_CALL_EVENT = "com.aura.CALL_EVENT"
@@ -77,7 +78,39 @@ class AuraNotificationListenerService : NotificationListenerService() {
             return false
         }
 
-        // Packages to ignore completely
+        fun clearAllNotifications(): Boolean {
+            val inst = instance ?: return false
+            return try {
+                inst.cancelAllNotifications()
+                postedNotificationCache.clear()
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to cancel all notifications", e)
+                false
+            }
+        }
+
+        fun dismissNotification(queryOrKey: String): Boolean {
+            val inst = instance ?: return false
+            return try {
+                val active = inst.activeNotifications ?: return false
+                val clean = queryOrKey.lowercase().trim()
+                val target = active.firstOrNull { sbn ->
+                    sbn.key == queryOrKey ||
+                    sbn.packageName.contains(clean, ignoreCase = true) ||
+                    sbn.notification.extras.getString(Notification.EXTRA_TITLE)?.contains(clean, ignoreCase = true) == true ||
+                    sbn.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.contains(clean, ignoreCase = true) == true
+                }
+                if (target != null) {
+                    inst.cancelNotification(target.key)
+                    postedNotificationCache.remove(target.key)
+                    true
+                } else false
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to dismiss notification for query: $queryOrKey", e)
+                false
+            }
+        }
         private val BLOCKED_PACKAGES = setOf(
             "android",
             "com.android.systemui",
@@ -178,6 +211,7 @@ class AuraNotificationListenerService : NotificationListenerService() {
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    @Volatile private var lastAnnouncedCallTime: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -214,8 +248,8 @@ class AuraNotificationListenerService : NotificationListenerService() {
                 } catch (_: Exception) {
                     tts?.language = Locale.getDefault()
                 }
-                tts?.setSpeechRate(0.92f) // Relaxed, natural human pace
-                tts?.setPitch(1.0f)       // Natural conversational pitch
+                tts?.setSpeechRate(0.92f)
+                tts?.setPitch(1.0f)
                 ttsReady = true
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -366,8 +400,10 @@ class AuraNotificationListenerService : NotificationListenerService() {
         }
         sendBroadcast(broadcast)
 
-        // Announce important notifications via TTS
-        if (priority in listOf(PRIORITY_PERSONAL, PRIORITY_DELIVERY, PRIORITY_PAYMENT, PRIORITY_OTP)) {
+        // Announce important notifications via TTS (only if enabled in settings)
+        val prefs = applicationContext.getSharedPreferences("aura_settings", android.content.Context.MODE_PRIVATE)
+        val isMessageSpeakEnabled = prefs.getBoolean("message_speak_enabled", true)
+        if (isMessageSpeakEnabled && priority in listOf(PRIORITY_PERSONAL, PRIORITY_DELIVERY, PRIORITY_PAYMENT, PRIORITY_OTP)) {
             announceNotification(appName, title, text, priority)
         }
     }
@@ -489,12 +525,14 @@ class AuraNotificationListenerService : NotificationListenerService() {
             return
         }
 
+        val now = System.currentTimeMillis()
+        if (now - lastAnnouncedCallTime < 2500L) return
+        lastAnnouncedCallTime = now
+
         val utteranceId = "AURA_VOIP_CALL_${System.currentTimeMillis()}"
-        val callerLabel = if (caller.isNotBlank()) caller else appName
+        val callerLabel = caller.ifBlank { "Unknown caller" }
         val appLabel = when {
             appName.contains("WhatsApp", ignoreCase = true) -> "WhatsApp"
-            appName.contains("Meet", ignoreCase = true) -> "Google Meet"
-            appName.contains("Zoom", ignoreCase = true) -> "Zoom"
             appName.contains("Telegram", ignoreCase = true) -> "Telegram"
             else -> appName
         }
