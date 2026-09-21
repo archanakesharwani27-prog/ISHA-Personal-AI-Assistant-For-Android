@@ -30,6 +30,14 @@ import com.google.gson.JsonObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
+import java.io.StringReader
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -391,11 +399,40 @@ object JarvisToolRegistry {
             required = listOf("destination")
         ))
 
-        // 36. Web Search
+        // 36. Web Search / Search Internet
+        toolsArray.add(createFunction(
+            name = "search_internet",
+            desc = "Search the internet in real-time to answer questions, look up facts, scores, people, definitions, or current information. Returns titles and informative snippets directly so Aura can synthesize the answer without opening a browser.",
+            params = mapOf("query" to "string"),
+            required = listOf("query")
+        ))
+
+        // 36b. Live News Feed
+        toolsArray.add(createFunction(
+            name = "get_latest_news",
+            desc = "Fetch latest top news headlines, breaking news, or news on a specific topic (e.g. India, sports, technology, world) directly via live news feeds. Returns headlines and summaries for direct spoken synthesis without opening a browser.",
+            params = mapOf(
+                "topic" to "string",
+                "language" to "string"
+            ),
+            required = emptyList()
+        ))
+
+        // 36c. Media Storage Stats
+        toolsArray.add(createFunction(
+            name = "get_media_storage_stats",
+            desc = "Query the device's camera and media storage to count how many photos, videos, and audio files are stored on the phone, along with recent media dates. Call this when user asks how many photos, videos, or camera items they have.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
         toolsArray.add(createFunction(
             name = "web_search",
-            desc = "Perform a web search on Google or open search results in browser.",
-            params = mapOf("query" to "string"),
+            desc = "Perform a web search for live internet information or open search results in browser.",
+            params = mapOf(
+                "query" to "string",
+                "open_browser" to "boolean"
+            ),
             required = listOf("query")
         ))
 
@@ -1647,24 +1684,79 @@ object JarvisToolRegistry {
                     }
                 }
 
-                // 36. Web Search
-                "web_search" -> {
+                // 36. Web Search / Live Internet Search
+                "web_search", "search_internet" -> {
                     val query = args.get("query")?.asString ?: ""
-                    val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                        putExtra(SearchManager.QUERY, query)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    if (intent.resolveActivity(context.packageManager) != null) {
-                        context.startActivity(intent)
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "\"$query\" web par search kiya ja raha hai Boss! 🔍")
-                    } else {
+                    val openBrowser = args.get("open_browser")?.asBoolean ?: false
+                    if (openBrowser) {
                         val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(query, "UTF-8")}")).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
                         context.startActivity(browserIntent)
                         result.addProperty("status", "success")
-                        result.addProperty("message", "\"$query\" Google search par open kar diya hai Boss! 🌐")
+                        result.addProperty("message", "\"$query\" browser me open kar diya hai Boss! 🌐")
+                    } else {
+                        val searchData = performDirectWebSearch(query)
+                        result.addProperty("status", searchData.get("status")?.asString ?: "success")
+                        result.addProperty("query", query)
+                        result.add("search_results", searchData.get("results") ?: JsonArray())
+                        result.addProperty("message", "Internet search results mil gaye hain Boss.")
+                    }
+                }
+
+                // 36b. Live News Feed
+                "get_latest_news" -> {
+                    val topic = args.get("topic")?.asString
+                    val lang = args.get("language")?.asString
+                    val newsData = fetchLiveGoogleNews(topic, lang)
+                    result.addProperty("status", newsData.get("status")?.asString ?: "success")
+                    result.add("headlines", newsData.get("headlines") ?: JsonArray())
+                    result.addProperty("topic", newsData.get("topic")?.asString ?: "Top News")
+                    result.addProperty("message", newsData.get("message")?.asString ?: "Latest news fetched.")
+                }
+
+                // 36c. Media Storage Stats (Photos, Videos, Audio Counts)
+                "get_media_storage_stats" -> {
+                    try {
+                        val cr = context.contentResolver
+                        var photoCount = 0
+                        var latestPhotoDate = ""
+                        val imgProj = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DATE_ADDED)
+                        cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imgProj, null, null, "${MediaStore.Images.Media.DATE_ADDED} DESC")?.use { c ->
+                            photoCount = c.count
+                            if (c.moveToFirst()) {
+                                val d = c.getLong(c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED))
+                                latestPhotoDate = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(d * 1000L))
+                            }
+                        }
+
+                        var videoCount = 0
+                        var latestVideoDate = ""
+                        val vidProj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DATE_ADDED)
+                        cr.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, vidProj, null, null, "${MediaStore.Video.Media.DATE_ADDED} DESC")?.use { c ->
+                            videoCount = c.count
+                            if (c.moveToFirst()) {
+                                val d = c.getLong(c.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED))
+                                latestVideoDate = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(d * 1000L))
+                            }
+                        }
+
+                        var audioCount = 0
+                        cr.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Audio.Media._ID), null, null, null)?.use { c ->
+                            audioCount = c.count
+                        }
+
+                        result.addProperty("status", "success")
+                        result.addProperty("photos_count", photoCount)
+                        result.addProperty("videos_count", videoCount)
+                        result.addProperty("audio_count", audioCount)
+                        result.addProperty("total_media_count", photoCount + videoCount + audioCount)
+                        if (latestPhotoDate.isNotBlank()) result.addProperty("latest_photo_date", latestPhotoDate)
+                        if (latestVideoDate.isNotBlank()) result.addProperty("latest_video_date", latestVideoDate)
+                        result.addProperty("message", "Aapke device me $photoCount photos aur $videoCount videos hain Boss.")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "Media access error: ${e.message}")
                     }
                 }
 
@@ -2603,4 +2695,298 @@ object JarvisToolRegistry {
         } catch (_: Exception) {}
         return null
     }
+
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+    }
+
+    /**
+     * Fetches real-time RSS from Google News and parses top headlines.
+     */
+    fun fetchLiveGoogleNews(topic: String?, lang: String?): JsonObject {
+        val result = JsonObject()
+        try {
+            val isHindi = lang?.lowercase()?.contains("en") != true
+            val hl = if (isHindi) "hi" else "en-IN"
+            val gl = "IN"
+            val ceid = if (isHindi) "IN:hi" else "IN:en"
+
+            val url = if (!topic.isNullOrBlank() && topic.lowercase() != "general" && topic.lowercase() != "all") {
+                "https://news.google.com/rss/search?q=${URLEncoder.encode(topic, "UTF-8")}&hl=$hl&gl=$gl&ceid=$ceid"
+            } else {
+                "https://news.google.com/rss?hl=$hl&gl=$gl&ceid=$ceid"
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                result.addProperty("status", "error")
+                result.addProperty("error", "News server HTTP ${response.code}")
+                return result
+            }
+
+            val xml = response.body?.string() ?: ""
+            if (xml.isBlank()) {
+                result.addProperty("status", "error")
+                result.addProperty("error", "Empty news feed")
+                return result
+            }
+
+            // Parse RSS XML using Android's native XmlPullParser
+            val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = false
+            val xpp = factory.newPullParser()
+            xpp.setInput(StringReader(xml))
+
+            val articles = JsonArray()
+            var eventType = xpp.eventType
+            var inItem = false
+            var currentTitle = ""
+            var currentSource = ""
+            var currentPubDate = ""
+            var count = 0
+
+            while (eventType != XmlPullParser.END_DOCUMENT && count < 6) {
+                val tagName = xpp.name
+                when (eventType) {
+                    XmlPullParser.START_TAG -> {
+                        if (tagName.equals("item", ignoreCase = true)) {
+                            inItem = true
+                            currentTitle = ""
+                            currentSource = ""
+                            currentPubDate = ""
+                        } else if (inItem) {
+                            when {
+                                tagName.equals("title", ignoreCase = true) -> currentTitle = xpp.nextText().trim()
+                                tagName.equals("source", ignoreCase = true) -> currentSource = xpp.nextText().trim()
+                                tagName.equals("pubDate", ignoreCase = true) -> currentPubDate = xpp.nextText().trim()
+                            }
+                        }
+                    }
+                    XmlPullParser.END_TAG -> {
+                        if (tagName.equals("item", ignoreCase = true)) {
+                            if (currentTitle.isNotBlank()) {
+                                val itemObj = JsonObject().apply {
+                                    val dashIdx = currentTitle.lastIndexOf(" - ")
+                                    val headline = if (dashIdx != -1) currentTitle.substring(0, dashIdx).trim() else currentTitle
+                                    val src = if (dashIdx != -1 && currentSource.isBlank()) currentTitle.substring(dashIdx + 3).trim() else currentSource
+                                    addProperty("headline", headline)
+                                    if (src.isNotBlank()) addProperty("source", src)
+                                    if (currentPubDate.isNotBlank()) addProperty("published", currentPubDate)
+                                }
+                                articles.add(itemObj)
+                                count++
+                            }
+                            inItem = false
+                        }
+                    }
+                }
+                eventType = xpp.next()
+            }
+
+            result.addProperty("status", "success")
+            result.addProperty("topic", topic ?: "Aaj ki top khabarein")
+            result.addProperty("article_count", count)
+            result.add("headlines", articles)
+            result.addProperty("message", "Aapke liye $count taaza khabarein fetch ho gayi hain.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch live news", e)
+            result.addProperty("status", "error")
+            result.addProperty("error", "News fetch error: ${e.message}")
+        }
+        return result
+    }
+
+    /**
+     * Searches web in real-time using DuckDuckGo Instant Answers + Wikipedia for live facts.
+     */
+    fun performDirectWebSearch(query: String): JsonObject {
+        val result = JsonObject()
+        val snippets = JsonArray()
+        try {
+            // 1. DuckDuckGo Instant Answer API
+            val ddgUrl = "https://api.duckduckgo.com/?q=${URLEncoder.encode(query, "UTF-8")}&format=json&no_html=1&skip_disambig=1"
+            val ddgReq = Request.Builder().url(ddgUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
+            val ddgResp = httpClient.newCall(ddgReq).execute()
+            if (ddgResp.isSuccessful) {
+                val ddgJsonStr = ddgResp.body?.string() ?: ""
+                if (ddgJsonStr.isNotBlank()) {
+                    val parsed = com.google.gson.JsonParser.parseString(ddgJsonStr).asJsonObject
+                    val abstractText = parsed.get("AbstractText")?.asString ?: ""
+                    val heading = parsed.get("Heading")?.asString ?: ""
+                    val entity = parsed.get("Entity")?.asString ?: ""
+                    if (abstractText.isNotBlank()) {
+                        val snip = JsonObject().apply {
+                            addProperty("title", heading.ifBlank { query })
+                            addProperty("summary", abstractText)
+                            if (entity.isNotBlank()) addProperty("entity_type", entity)
+                        }
+                        snippets.add(snip)
+                    }
+                    val related = parsed.getAsJsonArray("RelatedTopics")
+                    if (related != null && related.size() > 0) {
+                        for (r in 0 until minOf(3, related.size())) {
+                            val rObj = related.get(r)
+                            if (rObj.isJsonObject && rObj.asJsonObject.has("Text")) {
+                                val relText = rObj.asJsonObject.get("Text").asString
+                                if (relText.isNotBlank()) {
+                                    snippets.add(JsonObject().apply {
+                                        addProperty("title", "Related Info")
+                                        addProperty("summary", relText)
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Wikipedia Search API as rich factual complement
+            if (snippets.size() < 2) {
+                val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${URLEncoder.encode(query, "UTF-8")}&utf8=&format=json"
+                val wikiReq = Request.Builder().url(wikiUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
+                val wikiResp = httpClient.newCall(wikiReq).execute()
+                if (wikiResp.isSuccessful) {
+                    val wikiJson = wikiResp.body?.string() ?: ""
+                    val parsedWiki = com.google.gson.JsonParser.parseString(wikiJson).asJsonObject
+                    val searchArr = parsedWiki.getAsJsonObject("query")?.getAsJsonArray("search")
+                    if (searchArr != null) {
+                        for (s in 0 until minOf(2, searchArr.size())) {
+                            val item = searchArr.get(s).asJsonObject
+                            val wTitle = item.get("title")?.asString ?: ""
+                            val wSnippet = item.get("snippet")?.asString
+                                ?.replace(Regex("<[^>]*>"), "")
+                                ?.replace("&quot;", "\"")
+                                ?.replace("&#039;", "'")
+                                ?.replace("&amp;", "&") ?: ""
+                            if (wSnippet.isNotBlank()) {
+                                snippets.add(JsonObject().apply {
+                                    addProperty("title", wTitle)
+                                    addProperty("summary", wSnippet)
+                                    addProperty("source", "Wikipedia")
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+
+            result.addProperty("status", "success")
+            result.addProperty("query", query)
+            result.add("results", snippets)
+            result.addProperty("message", "Search complete for \"$query\".")
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct web search error", e)
+            result.addProperty("status", "error")
+            result.addProperty("error", "Web search failed: ${e.message}")
+        }
+        return result
+    }
+
+    /**
+     * Dynamically filters all 62 tools to supply the top 5-15 relevant tools to Gemini
+     * based on user intent and multi-factor domain scoring.
+     * Conforms to Google's official recommendation for large tool catalogs.
+     */
+    fun getRelevantToolDeclarations(
+        query: String,
+        minCount: Int = 5,
+        maxCount: Int = 15
+    ): JsonArray {
+        val all = getGeminiToolDeclarations()
+        val clean = query.lowercase().trim()
+        val queryTokens = clean.split(Regex("[\\s,?.!]+")).filter { it.length > 2 }.toSet()
+
+        data class ScoredDecl(val json: JsonObject, val score: Float)
+        val scored = mutableListOf<ScoredDecl>()
+
+        for (i in 0 until all.size()) {
+            val fn = all.get(i).asJsonObject
+            val name = fn.get("name")?.asString?.lowercase() ?: ""
+            val desc = fn.get("description")?.asString?.lowercase() ?: ""
+
+            var score = 0f
+            // Direct name mention
+            if (clean.contains(name) || clean.contains(name.replace("_", " "))) {
+                score += 0.8f
+            }
+            // Token matches in name and description
+            for (t in queryTokens) {
+                if (name.contains(t)) score += 0.4f
+                if (desc.contains(t)) score += 0.2f
+            }
+
+            // Category domain boosts
+            if (clean.contains("whatsapp") || clean.contains("message") || clean.contains("bhejo") || clean.contains("sms") || clean.contains("call") || clean.contains("phone")) {
+                if (name.contains("whatsapp") || name.contains("call") || name.contains("sms") || name.contains("contact")) {
+                    score += 0.4f
+                }
+            }
+            if (clean.contains("alarm") || clean.contains("timer") || clean.contains("note") || clean.contains("calculate") || clean.contains("hisaab")) {
+                if (name.contains("alarm") || name.contains("timer") || name.contains("note") || name.contains("calc")) {
+                    score += 0.4f
+                }
+            }
+            if (clean.contains("youtube") || clean.contains("gana") || clean.contains("song") || clean.contains("music") || clean.contains("play")) {
+                if (name.contains("youtube") || name.contains("media") || name.contains("song") || name.contains("spotify")) {
+                    score += 0.4f
+                }
+            }
+            if (clean.contains("torch") || clean.contains("flashlight") || clean.contains("volume") || clean.contains("wifi") || clean.contains("bluetooth") || clean.contains("battery") || clean.contains("speed")) {
+                if (name.contains("torch") || name.contains("flash") || name.contains("volume") || name.contains("wifi") || name.contains("bluetooth") || name.contains("battery") || name.contains("speed") || name.contains("dnd")) {
+                    score += 0.4f
+                }
+            }
+            // News and live internet search domain boost
+            if (clean.contains("news") || clean.contains("khabar") || clean.contains("samachar") || clean.contains("aaj ki") || clean.contains("breaking")) {
+                if (name.contains("news") || name.contains("search")) {
+                    score += 0.85f
+                }
+            }
+            if (clean.contains("search") || clean.contains("google") || clean.contains("pata karo") || clean.contains("kya hai") || clean.contains("who is") || clean.contains("what is")) {
+                if (name.contains("search") || name.contains("news")) {
+                    score += 0.7f
+                }
+            }
+
+            // Photos / Videos / Media storage stats domain boost
+            if (clean.contains("photo") || clean.contains("video") || clean.contains("media") || clean.contains("camera") || clean.contains("gallery") || clean.contains("kitne") || clean.contains("kitni") || clean.contains("storage")) {
+                if (name.contains("media_storage") || name.contains("media") || name.contains("gallery")) {
+                    score += 0.85f
+                }
+            }
+
+            // Screen and UI Vision domain boost
+            if (clean.contains("screen") || clean.contains("dekh") || clean.contains("dikh") || clean.contains("read") || clean.contains("padh") || clean.contains("tap") || clean.contains("click")) {
+                if (name.contains("screen") || name.contains("tap") || name.contains("ocr") || name.contains("vision")) {
+                    score += 0.75f
+                }
+            }
+
+            scored.add(ScoredDecl(fn, score))
+        }
+
+        val sorted = scored.sortedByDescending { it.score }
+        val result = JsonArray()
+
+        for (item in sorted) {
+            if (result.size() < minCount || (result.size() < maxCount && item.score > 0.1f)) {
+                result.add(item.json)
+            } else {
+                break
+            }
+        }
+
+        Log.d(TAG, "⚡ Dynamic Capability Retrieval: supplied ${result.size()} tools (out of ${all.size()}) for '$query'")
+        return result
+    }
 }
+

@@ -1157,6 +1157,64 @@ object AuraCommandCorpus {
             mp("hour","7","minute","0","enable","true"),
             "Night routine: alarm + DND. Execute both."))
 
+        // ADVANCED TASKS: multi-step planning, state, verification, and safety
+        add(cmd("Kal subah 7 baje alarm lagao, DND on karo, aur Maa ko WhatsApp kar do ki main 8 baje nikalunga", "advanced_compound",
+            "create_alarm+set_dnd+send_whatsapp",
+            mp("hour","7","minute","0","enable","true","contact_name","Maa","message","Main 8 baje nikalunga"),
+            "Three-step morning plan: create alarm, enable DND, then send WhatsApp. Execute in order and report each result."))
+        add(cmd("Mera battery status check karo; agar 20 percent se kam ho to brightness 30 karo aur charger yaad dilane ke liye note banao", "advanced_conditional",
+            "get_battery_status+set_brightness+create_quick_note",
+            mp("threshold_percent","20","level_percent","30","note","Charge phone"),
+            "Conditional workflow: read real battery first; only dim and create the note when below 20%. Never invent the percentage."))
+        add(cmd("Screenshot lo, use Ansh ko WhatsApp par bhejo, phir confirm karo ki message successfully gaya", "advanced_verified",
+            "take_screenshot+send_whatsapp_media+verify_execution",
+            mp("contact_name","Ansh","media_type","screenshot"),
+            "Capture, send, then verify the send result before claiming success."))
+        add(cmd("YouTube par focus music chalao, volume 35 percent karo, aur 45 minute ka timer set karo", "advanced_compound",
+            "play_youtube+set_volume+set_timer",
+            mp("query","focus music","level_percent","35","minutes","45"),
+            "Focus session: play media, set volume, then start timer sequentially."))
+        add(cmd("Maps mein office ka route kholo aur Ansh ko bata do ki main nikal raha hoon", "advanced_compound",
+            "navigate_maps+send_whatsapp",
+            mp("destination","office","contact_name","Ansh","message","Main nikal raha hoon"),
+            "Navigation plus notification: ask for the office location if it is unknown, then navigate and message Ansh."))
+        add(cmd("Mere clipboard ka text padho aur usse ek quick note mein save kar do", "advanced_context",
+            "get_clipboard_text+create_quick_note",
+            emptyMap(),
+            "Read clipboard first, then save exactly that text as a note. If clipboard is empty, explain and do not create a blank note."))
+        add(cmd("Rahul ko SMS bhejo ki meeting 3 baje hai, lekin number confirm kiye bina send mat karna", "advanced_safety",
+            "query_contact+send_sms",
+            mp("contact_name","Rahul","message","Meeting 3 baje hai","requires_confirmation","true"),
+            "Resolve the contact and show the destination/message for confirmation before sending. Never guess a phone number."))
+        add(cmd("WhatsApp mein Priya ki last image delete kar do", "advanced_destructive",
+            "delete_whatsapp_media",
+            mp("contact_name","Priya","target","last_image","requires_confirmation","true"),
+            "Destructive action: identify the target, ask for one explicit confirmation, then delete only the last image."))
+        add(cmd("Phone ka cache clear karke Instagram uninstall kar do", "advanced_destructive",
+            "manage_app_storage+manage_app_storage",
+            mp("first_action","clear_cache","second_action","uninstall","app_name","Instagram","requires_confirmation","true"),
+            "Destructive multi-step request: explain both consequences, request confirmation, and stop if either action is unsupported."))
+        add(cmd("Pehle meri saved preferences yaad karo, phir uske hisaab se lofi music chalao", "advanced_memory",
+            "recall_memory+play_media",
+            mp("query","saved preferences","media_query","lofi music"),
+            "Recall relevant preference first, then use it to choose media; ask when no preference is stored."))
+        add(cmd("WiFi off karo, Bluetooth on karo, aur verify karo ki dono settings waise hi hain", "advanced_verified",
+            "toggle_wifi+toggle_bluetooth+verify_device_state",
+            mp("wifi","false","bluetooth","true"),
+            "Apply both settings sequentially, read back actual device state, and report any mismatch."))
+        add(cmd("Agar koi unknown caller aaye to uska number identify karo, mujhe batao, aur bina meri permission call mat uthana", "advanced_policy",
+            "identify_caller+CONDITIONAL_NO_ACTION",
+            mp("requires_permission","true"),
+            "Inspect and identify only. Do not accept or return the call without explicit permission."))
+        add(cmd("Factory reset kar do", "advanced_destructive", "CLARIFY",
+            emptyMap(),
+            "Never execute directly: explain that this erases device data and require triple explicit confirmation.",
+            isEdge = true))
+        add(cmd("Mujhe yaad nahi maine kya kaha tha, last action repeat karo", "advanced_followup",
+            "recall_last_action+repeat_action",
+            emptyMap(),
+            "Use conversation state to identify the last completed action; ask for clarification if there is no safe unambiguous action."))
+
         // AMBIGUOUS (need clarification)
         add(cmd("Band karo", "ambiguous", "CLARIFY", emptyMap(),
             "Too vague: 'Band karo' could be WiFi/volume/torch etc. ALWAYS ask first.",

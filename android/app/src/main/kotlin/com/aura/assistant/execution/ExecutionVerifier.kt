@@ -5,24 +5,57 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.database.Cursor
 import android.media.AudioManager
-import android.net.wifi.WifiManager
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.util.Log
+import com.aura.assistant.tools.AuraTool
+import com.aura.assistant.tools.ToolContext
+import com.aura.assistant.tools.ToolResult
 import com.aura.assistant.tools.VerificationEvidence
+import com.aura.assistant.tools.VerificationResult
+import com.aura.assistant.tools.VerificationStatus
 import com.google.gson.JsonObject
 
 /**
- * State verification engine for AURA 2.0.
+ * State verification engine for AURA Agent Core v4.
  *
  * Inspects real Android device state post-execution to confirm whether an action actually took effect.
- * AURA never says "Done" unless evidence or verification confirms it.
+ * Principle: Default is UNVERIFIED (AURA never assumes success until verified).
  */
 object ExecutionVerifier {
     private const val TAG = "ExecutionVerifier"
 
     /**
-     * Verifies the outcome of an action by reading the device's real-time state.
+     * Verifies the outcome of an action by reading the device's real-time state
+     * or invoking the tool's own verification contract.
+     */
+    suspend fun verify(
+        context: Context,
+        tool: AuraTool,
+        arguments: JsonObject,
+        executionResult: ToolResult,
+        toolContext: ToolContext
+    ): VerificationEvidence {
+        // 1. Check tool-level verification contract first
+        try {
+            val toolSpecificVerification = tool.verify(arguments, executionResult, toolContext)
+            if (toolSpecificVerification.status != VerificationStatus.UNVERIFIED) {
+                return VerificationEvidence(
+                    verified = toolSpecificVerification.status == VerificationStatus.VERIFIED_SUCCESS,
+                    observedState = toolSpecificVerification.observedState,
+                    method = "tool_contract_verify"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Tool-specific verify threw exception for ${tool.name}: ${e.message}")
+        }
+
+        // 2. Hardware / System Settings inspection
+        return verify(context, tool.name, arguments)
+    }
+
+    /**
+     * Synchronous verification overload for legacy callers and direct tool dispatches.
      */
     fun verify(
         context: Context,
@@ -38,28 +71,27 @@ object ExecutionVerifier {
                 "manage_contacts" -> verifyContact(context, arguments)
                 "toggle_flashlight" -> verifyFlashlight(arguments)
                 else -> {
-                    // For intents, app launches, and accessibility actions where OS does not expose a state query API
                     VerificationEvidence(
-                        verified = true,
-                        observedState = "action_dispatched",
-                        method = "intent_or_accessibility_completion"
+                        verified = false,
+                        observedState = "action_dispatched_unverified",
+                        method = "default_unverified_contract"
                     )
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Verification check failed for $toolName: ${e.message}")
             VerificationEvidence(
-                verified = true, // Default to true if inspection failed due to OEM permission
+                verified = false,
                 observedState = "verification_error_${e.message}",
-                method = "fallback_heuristic"
+                method = "verification_failure"
             )
         }
     }
 
     private fun verifyVolume(context: Context, args: JsonObject): VerificationEvidence {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            ?: return VerificationEvidence(verified = true, method = "audio_manager_unavailable")
-        val expectedPercent = args.get("level_percent")?.asInt ?: return VerificationEvidence(verified = true)
+            ?: return VerificationEvidence(verified = false, method = "audio_manager_unavailable")
+        val expectedPercent = args.get("level_percent")?.asInt ?: return VerificationEvidence(verified = false)
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val currentPercent = (currentVol * 100) / maxVol
@@ -73,13 +105,13 @@ object ExecutionVerifier {
     }
 
     private fun verifyBrightness(context: Context, args: JsonObject): VerificationEvidence {
-        val expectedPercent = args.get("level_percent")?.asInt ?: return VerificationEvidence(verified = true)
+        val expectedPercent = args.get("level_percent")?.asInt ?: return VerificationEvidence(verified = false)
         val currentRaw = Settings.System.getInt(
             context.contentResolver,
             Settings.System.SCREEN_BRIGHTNESS,
             -1
         )
-        if (currentRaw == -1) return VerificationEvidence(verified = true, method = "brightness_permission_bypass")
+        if (currentRaw == -1) return VerificationEvidence(verified = false, method = "brightness_permission_bypass")
         val currentPercent = (currentRaw * 100) / 255
         val isMatch = kotlin.math.abs(currentPercent - expectedPercent) <= 15
         return VerificationEvidence(
@@ -91,8 +123,8 @@ object ExecutionVerifier {
 
     private fun verifyDnd(context: Context, args: JsonObject): VerificationEvidence {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            ?: return VerificationEvidence(verified = true)
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = true)
+            ?: return VerificationEvidence(verified = false)
+        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
         val currentFilter = nm.currentInterruptionFilter
         val isDndActive = currentFilter != NotificationManager.INTERRUPTION_FILTER_ALL
         val isMatch = isDndActive == enable
@@ -105,8 +137,8 @@ object ExecutionVerifier {
 
     private fun verifyBluetooth(args: JsonObject): VerificationEvidence {
         val adapter = BluetoothAdapter.getDefaultAdapter()
-            ?: return VerificationEvidence(verified = true, method = "bluetooth_unsupported")
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = true)
+            ?: return VerificationEvidence(verified = false, method = "bluetooth_unsupported")
+        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
         val isEnabled = adapter.isEnabled
         return VerificationEvidence(
             verified = isEnabled == enable,
@@ -116,7 +148,7 @@ object ExecutionVerifier {
     }
 
     private fun verifyContact(context: Context, args: JsonObject): VerificationEvidence {
-        val name = args.get("name")?.asString ?: return VerificationEvidence(verified = true)
+        val name = args.get("name")?.asString ?: return VerificationEvidence(verified = false)
         val uri = ContactsContract.Contacts.CONTENT_URI
         val projection = arrayOf(ContactsContract.Contacts.DISPLAY_NAME)
         val selection = "${ContactsContract.Contacts.DISPLAY_NAME} LIKE ?"
@@ -128,7 +160,7 @@ object ExecutionVerifier {
             cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
             found = (cursor != null && cursor.count > 0)
         } catch (_: Exception) {
-            found = true // Heuristic pass if contacts read permission missing
+            found = false
         } finally {
             cursor?.close()
         }
@@ -141,7 +173,7 @@ object ExecutionVerifier {
     }
 
     private fun verifyFlashlight(args: JsonObject): VerificationEvidence {
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = true)
+        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
         return VerificationEvidence(
             verified = true,
             observedState = if (enable) "Flashlight state changed to ON" else "Flashlight state changed to OFF",

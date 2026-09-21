@@ -3,14 +3,15 @@ package com.aura.assistant.training
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Base64
 import android.util.Log
 import com.aura.assistant.MainActivity
-import com.aura.assistant.brain.OfflineReflexEngine
+import java.nio.charset.StandardCharsets
 
 /**
  * Headless ADB Command Injection & Training Receiver.
- * Declared in AndroidManifest.xml so it can execute even when
- * MainActivity is paused or backgrounded.
+ * Forwards user commands directly into AURA's chat interface
+ * so AURA herself processes and executes them live on the device.
  */
 class AuraAdbReceiver : BroadcastReceiver() {
 
@@ -27,29 +28,43 @@ class AuraAdbReceiver : BroadcastReceiver() {
 
         when (action) {
             ACTION_ADB_INJECT -> {
-                val text = intent.getStringExtra("text")
+                val rawText = intent.getStringExtra("text")
                     ?: intent.getStringExtra("command")
                     ?: intent.getStringExtra("cmd")
+
+                val text = if (!rawText.isNullOrBlank()) {
+                    rawText.trim()
+                } else {
+                    val b64 = intent.getStringExtra("b64")
+                    if (!b64.isNullOrBlank()) {
+                        try {
+                            String(Base64.decode(b64, Base64.DEFAULT), StandardCharsets.UTF_8).trim()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to decode base64 command", e)
+                            null
+                        }
+                    } else null
+                }
+
                 if (text.isNullOrBlank()) {
                     Log.w(TAG, "ADB_INJECT received with empty command text")
                     return
                 }
 
-                val start = System.currentTimeMillis()
-                Log.i(TAG, "⚡ [ADB_INJECT] Received command: \"$text\"")
+                Log.i(TAG, "⚡ [ADB_INJECT] Passing command directly to AURA: \"$text\"")
 
-                // 1. Try Offline Fast Reflex first (<20ms)
-                val reflex = OfflineReflexEngine.tryExecute(context, text)
-                val duration = System.currentTimeMillis() - start
-                if (reflex != null) {
-                    Log.i(TAG, "✅ [ADB_INJECT] Offline Reflex executed [${reflex.toolName}] in ${duration}ms: \"${reflex.naturalResponse}\"")
-                } else {
-                    Log.i(TAG, "🤖 [ADB_INJECT] Routing command to AI / Tool Engine in ${duration}ms: \"$text\"")
-                }
-
-                // 2. If MainActivity is active in foreground, forward to ViewModel to update UI
-                MainActivity.instance?.let { act ->
+                val act = MainActivity.instance
+                if (act != null) {
                     act.injectUserMessage(text)
+                } else {
+                    // Bring AURA to the foreground and inject command
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        putExtra("inject_text", text)
+                    }
+                    if (launchIntent != null) {
+                        context.startActivity(launchIntent)
+                    }
                 }
             }
 

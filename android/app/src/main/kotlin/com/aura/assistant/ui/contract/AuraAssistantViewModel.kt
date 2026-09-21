@@ -336,34 +336,17 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             newSess.id
         }
 
-        val promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
+        var promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
 
-        // ── 0. Offline Fast Reflex Check (<20ms, zero network) ──────────────────
-        if (attached == null && trimmed.isNotBlank()) {
-            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(getApplication(), trimmed)
-            if (reflex != null) {
-                val userMsg = ChatMessage(
-                    sessionId = currentSessionId,
-                    role = MessageRole.USER,
-                    text = trimmed
-                )
-                val assistantMsg = ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = currentSessionId,
-                    role = MessageRole.ASSISTANT,
-                    text = reflex.naturalResponse,
-                    isStreaming = false
-                )
-                val updated = _chatMessages.value.toMutableList().apply {
-                    add(userMsg)
-                    add(assistantMsg)
+        // If user asks about the screen and hasn't manually attached an image, inject active screen context if accessibility is available
+        val lowerPrompt = trimmed.lowercase()
+        if (attached == null && (lowerPrompt.contains("screen") || lowerPrompt.contains("ye kya chal raha") || lowerPrompt.contains("dekh kar") || lowerPrompt.contains("dekh kr"))) {
+            val a11y = com.aura.assistant.AuraAccessibilityService.instance
+            if (a11y != null) {
+                val screenSummary = a11y.getScreenTextHierarchy()
+                if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
+                    promptToSend = "$trimmed\n\n[Active Screen Context]:\n$screenSummary"
                 }
-                _chatMessages.value = updated
-                viewModelScope.launch(Dispatchers.IO) {
-                    repository.saveMessages(currentSessionId, updated)
-                }
-                speakText(reflex.naturalResponse)
-                return
             }
         }
 

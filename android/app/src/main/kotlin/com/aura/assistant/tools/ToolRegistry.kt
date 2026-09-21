@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Central registry of all AURA 2.0 autonomous tools.
- * Organizes tools by category and exports Gemini function declarations.
+ * Organizes tools by category and exports dynamically retrieved Gemini function declarations.
  */
 object ToolRegistry {
     private const val TAG = "ToolRegistry"
@@ -25,20 +25,42 @@ object ToolRegistry {
     fun getToolsByCategory(category: ToolCategory): List<AuraTool> =
         tools.values.filter { it.category == category }
 
+    /**
+     * Dynamically retrieves the most relevant 5-15 tools for a specific user query and device context.
+     * Implements Google Gemini function-calling recommendations.
+     */
+    fun getRelevantTools(
+        query: String,
+        context: ToolContext,
+        minCount: Int = CapabilityRetriever.DEFAULT_MIN_TOOLS,
+        maxCount: Int = CapabilityRetriever.DEFAULT_MAX_TOOLS
+    ): List<AuraTool> {
+        return CapabilityRetriever.retrieveRelevantTools(
+            query = query,
+            context = context,
+            allTools = getAllTools(),
+            minCount = minCount,
+            maxCount = maxCount
+        )
+    }
+
+    /**
+     * Returns dynamic Gemini tool declarations tailored to the user's intent.
+     */
+    fun getGeminiToolDeclarationsForQuery(
+        query: String,
+        context: ToolContext,
+        minCount: Int = CapabilityRetriever.DEFAULT_MIN_TOOLS,
+        maxCount: Int = CapabilityRetriever.DEFAULT_MAX_TOOLS
+    ): JsonArray {
+        val relevant = getRelevantTools(query, context, minCount, maxCount)
+        return CapabilityRetriever.toGeminiDeclarations(relevant)
+    }
+
+    /**
+     * Legacy declaration provider (all tools). Kept for complete fallback if needed.
+     */
     fun getGeminiToolDeclarations(): JsonArray {
-        val array = JsonArray()
-        for (tool in tools.values) {
-            val fn = JsonObject().apply {
-                addProperty("name", tool.name)
-                addProperty("description", tool.description)
-                val params = JsonObject().apply {
-                    addProperty("type", "object")
-                    add("properties", JsonObject())
-                }
-                add("parameters", params)
-            }
-            array.add(fn)
-        }
-        return array
+        return CapabilityRetriever.toGeminiDeclarations(getAllTools())
     }
 }

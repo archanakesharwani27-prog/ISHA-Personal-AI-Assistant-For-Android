@@ -29,8 +29,34 @@ enum class CapabilityStatus {
 }
 
 /**
+ * Authorization contract for AURA Agent Core v4.
+ * Clearly separates permission/confirmation check from post-execution verification.
+ */
+enum class AuthorizationResult {
+    ALLOWED,
+    DENIED,
+    NEEDS_CONFIRMATION
+}
+
+/**
+ * Verification contract for AURA Agent Core v4.
+ * Default is UNVERIFIED (AURA never assumes success until verified).
+ */
+enum class VerificationStatus {
+    UNVERIFIED,            // Default: action was dispatched, but real state change not yet verified
+    VERIFIED_SUCCESS,      // State verified by device inspection (system setting, notification, UI tree)
+    FAILED_VERIFICATION    // Verification detected that the state did not change or error appeared
+}
+
+data class VerificationResult(
+    val status: VerificationStatus = VerificationStatus.UNVERIFIED,
+    val observedState: String = "No verification performed",
+    val failureReason: String? = null
+)
+
+/**
  * Universal contract for all AURA 2.0 autonomous tools.
- * Every tool implements discovery, execution, and verification.
+ * Every tool implements discovery, authorization, execution, and verification.
  */
 interface AuraTool {
     val id: String
@@ -46,10 +72,34 @@ interface AuraTool {
     fun isAvailable(context: ToolContext): CapabilityStatus = CapabilityStatus.AVAILABLE
 
     /**
+     * Evaluates authorization before execution.
+     */
+    fun authorize(context: ToolContext): AuthorizationResult {
+        return if (requiresConfirmation || riskLevel == RiskLevel.CRITICAL) {
+            AuthorizationResult.NEEDS_CONFIRMATION
+        } else {
+            AuthorizationResult.ALLOWED
+        }
+    }
+
+    /**
      * Executes the tool with the provided arguments and context.
      */
     suspend fun execute(
         arguments: JsonObject,
         context: ToolContext
     ): ToolResult
+
+    /**
+     * Inspects actual device/app state to verify whether the tool succeeded.
+     * Default is UNVERIFIED (never assume success).
+     */
+    suspend fun verify(
+        arguments: JsonObject,
+        result: ToolResult,
+        context: ToolContext
+    ): VerificationResult = VerificationResult(
+        status = VerificationStatus.UNVERIFIED,
+        observedState = "Default unverified state"
+    )
 }

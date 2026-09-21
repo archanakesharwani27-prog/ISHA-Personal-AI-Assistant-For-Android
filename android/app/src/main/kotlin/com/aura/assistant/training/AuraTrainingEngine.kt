@@ -22,9 +22,11 @@ object AuraTrainingEngine {
     private const val TAG = "AuraTrainingEngine"
     private const val PREFS_NAME = "aura_training_engine"
     private const val KEY_SEEDED_VERSION = "seeded_corpus_version"
+    private const val KEY_BATCH_INDEX = "batch_next_task_index"
+    private const val KEY_BATCH_STATUS = "batch_status"
 
     /** Bump this whenever the corpus is significantly updated. */
-    private const val CORPUS_VERSION = 4
+    private const val CORPUS_VERSION = 5
 
     /**
      * Seeds ExperienceMemory with corpus lessons if not yet seeded
@@ -78,119 +80,53 @@ object AuraTrainingEngine {
     }
 
     /**
-     * Generates a massive suite of 1050+ real-world user tasks covering every
-     * domain: device controls, hardware toggles, system telemetry, app launchers,
-     * media playback, productivity/math/alarms/timers, approved contacts, screen vision,
-     * and compound commands.
+     * Generates a massive suite of 1000+ UNIQUE, high-fidelity real-world tasks.
+     * ZERO artificial repeat() loops: Built from AuraBenchmarkSuite and AuraCommandCorpus (650+ commands with variants).
      */
     fun generate1000Tasks(): List<String> = buildList {
-        // 1. Device Controls (Volume, Brightness, Flashlight, Modes)
-        for (p in 0..100 step 5) {
-            add("volume $p% karo")
-            add("awaaz $p percent set karo")
-            add("sound $p% kardo")
-            add("brightness $p% karo")
-            add("roshni $p percent set karo")
-            add("screen light $p% kardo")
-        }
-        addAll(listOf(
-            "torch on karo", "torch band karo", "flashlight jalao", "flashlight bujha do",
-            "torch chalu karo", "torch off karo", "awaaz mute kar do", "awaaz full kar do",
-            "volume badhao", "volume kam karo", "brightness full karo", "brightness zero karo",
-            "dnd on karo", "dnd band karo", "silent mode lagao", "dark mode on karo", "light mode chalu karo",
-            "phone silent karo", "volume 30 percent karo", "brightness badha do", "flashlight band karo"
-        ))
-
-        // 2. Hardware Toggles (WiFi, Bluetooth, Hotspot)
-        repeat(16) {
-            addAll(listOf(
-                "wifi on karo", "wifi band karo", "wi-fi chalu karo", "wifi off karo",
-                "bluetooth on karo", "bluetooth band kar do", "bluetooth chalu karo", "blutut off karo",
-                "hotspot shuru karo", "hotspot band karo"
-            ))
+        // 1. Core 10-category benchmark prompts
+        for (task in AuraBenchmarkSuite.tasks) {
+            add(task.prompt)
         }
 
-        // 3. System Telemetry & Diagnostics
-        repeat(14) {
-            addAll(listOf(
-                "battery kitni hai", "phone ka charge batao", "charging kitni bachi hai",
-                "battery check karo", "kya battery low hai", "wifi network status batao",
-                "current location kya hai", "gps coordinates batao", "internet speed check karo",
-                "call log check karo"
-            ))
+        // 2. Full Corpus commands & all natural variants (650+ items * variants)
+        for (cmd in AuraCommandCorpus.commands) {
+            add(cmd.rawText)
+            addAll(cmd.variants)
         }
 
-        // 4. Apps & Media
-        val apps = listOf("camera", "settings", "youtube", "whatsapp", "chrome", "gallery", "calculator", "clock", "calendar", "maps")
+        // 3. Telemetry, App launches & Media search
+        val apps = listOf("camera", "settings", "youtube", "whatsapp", "chrome", "gallery", "calculator", "clock", "calendar", "maps", "files", "contacts", "dialer")
         for (a in apps) {
-            addAll(listOf("open $a", "$a kholo", "$a launch karo", "$a open karo", "start $a"))
-        }
-        val songs = listOf("Arijit Singh ke gaane", "lofi beats", "workout songs", "trending punjabi songs", "bhajan", "gazals", "sidhu moose wala", "romantic songs", "old classic songs", "party songs")
-        for (s in songs) {
-            addAll(listOf("YouTube par $s chalao", "play $s on YouTube", "$s bajao", "YouTube search $s"))
-        }
-        repeat(25) {
-            addAll(listOf("take screenshot", "screenshot lo"))
+            add("open $a")
+            add("$a kholo")
+            add("$a launch karo")
         }
 
-        // 5. Productivity (Alarms, Timers, Math, Notes, Calendar)
-        for (h in 1..12) {
-            add("subah $h baje ka alarm lagao")
-            add("alarm set karo $h am par")
-            add("shaam $h baje ka alarm set karo")
+        val songs = listOf("Arijit Singh", "lofi hip hop", "workout beats", "trending punjabi", "bhajan", "ghazals", "sidhu moose wala", "romantic songs", "old classics", "party dance songs")
+        for (s in songs) {
+            add("YouTube par $s chalao")
+            add("play $s on YouTube")
+            add("$s bajao")
         }
-        for (m in 1..60) {
-            add("$m minute ka timer lagao")
-            add("timer $m min ka set karo")
-        }
-        val mathExprs = listOf("25 * 4", "150 + 350", "1200 / 4", "500 - 180", "18% of 2500", "75 * 12", "99 * 9", "1024 / 8", "45 + 55", "300 * 3", "50 * 50", "720 / 9")
+
+        // 4. Mathematical Expressions & Productivity
+        val mathExprs = listOf("25 * 4", "150 + 350", "1200 / 4", "500 - 180", "18% of 2500", "75 * 12", "99 * 9", "1024 / 8", "45 + 55", "300 * 3", "50 * 50", "720 / 9", "15000 * 0.18")
         for (expr in mathExprs) {
             add("calculate $expr")
             add("hisaab karo $expr")
         }
-        repeat(20) {
-            add("quick note banao: Meeting tomorrow at 10 AM")
-            add("calendar event add karo: Doctor appointment Friday")
-        }
 
-        // 6. Communication (Approved Contacts Only: Mom, Srishti, Anmol didi)
+        // 5. Approved Contacts (Mom, Srishti, Anmol didi) with rich distinct intents
         val contacts = listOf("Mom", "Srishti kesarwani", "Anmol didi ji")
         for (c in contacts) {
-            repeat(7) {
-                addAll(listOf(
-                    "$c ko call lagao",
-                    "$c ko phone karo",
-                    "$c ko dial karo",
-                    "$c ko WhatsApp message bhejo: Hello, main theek hoon",
-                    "$c ko WhatsApp message karo: Thodi der me call karta hoon",
-                    "$c ko SMS bhejo: Main pahunch gaya hoon"
-                ))
-            }
+            add("$c ko call lagao")
+            add("$c ko phone karo")
+            add("$c ko WhatsApp message bhejo: Hello, main theek hoon")
+            add("$c ko WhatsApp message karo: Thodi der me call karta hoon")
+            add("$c ko SMS bhejo: Main ghar pahunch gaya")
         }
-
-        // 7. Screen Vision & UI Automation
-        repeat(10) {
-            addAll(listOf(
-                "screen par kya dikh raha hai",
-                "screen text read karo",
-                "screen context inspect karo",
-                "screen par send button tap karo",
-                "screen par skip ad dabao",
-                "screen par like button click karo"
-            ))
-        }
-
-        // 8. Compound Commands
-        repeat(12) {
-            addAll(listOf(
-                "torch on karo aur volume 50% kardo",
-                "battery check karo aur brightness 80% karo",
-                "wifi on karo aur YouTube open karo",
-                "screenshot lo aur gallery me save karo",
-                "volume mute karo aur dnd on kar do"
-            ))
-        }
-    }
+    }.distinct()
 
     /**
      * Executes the full 1000+ task suite on-device.
@@ -200,9 +136,19 @@ object AuraTrainingEngine {
     fun run1000TasksBatch(context: Context): String {
         val tasks = generate1000Tasks()
         val total = tasks.size
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val startIndex = prefs.getInt(KEY_BATCH_INDEX, 0).coerceIn(0, total)
+
+        if (startIndex >= total) {
+            val report = "AURA training batch already complete: $total/$total tasks."
+            Log.i(TAG, report)
+            return report
+        }
+
         Log.i(TAG, "═══════════════════════════════════════════════════════════")
-        Log.i(TAG, "🚀 STARTING 1000+ AURA ON-DEVICE TRAINING BATCH ($total tasks)")
+        Log.i(TAG, "🚀 STARTING AURA ON-DEVICE TRAINING BATCH (resuming at $startIndex/$total)")
         Log.i(TAG, "═══════════════════════════════════════════════════════════")
+        prefs.edit().putString(KEY_BATCH_STATUS, "RUNNING").commit()
 
         val startMs = System.currentTimeMillis()
         var reflexCount = 0
@@ -210,7 +156,8 @@ object AuraTrainingEngine {
         var failedCount = 0
         var lessonsReinforced = 0
 
-        for ((index, task) in tasks.withIndex()) {
+        for (index in startIndex until total) {
+            val task = tasks[index]
             var handled = false
 
             // 1. Test Offline Reflex Engine (<20ms, zero network)
@@ -263,6 +210,12 @@ object AuraTrainingEngine {
                 failedCount++
             }
 
+            // Checkpoint every task so an interrupted run resumes from the next one.
+            prefs.edit()
+                .putInt(KEY_BATCH_INDEX, index + 1)
+                .putString(KEY_BATCH_STATUS, "RUNNING")
+                .commit()
+
             val currentIdx = index + 1
             if (currentIdx % 50 == 0 || currentIdx == total) {
                 val elapsed = System.currentTimeMillis() - startMs
@@ -292,6 +245,11 @@ object AuraTrainingEngine {
             appendLine("  🚀 Throughput                : " + throughput + " tasks/sec")
             appendLine("════════════════════════════════════════════════════════════════════")
         }
+
+        prefs.edit()
+            .putInt(KEY_BATCH_INDEX, total)
+            .putString(KEY_BATCH_STATUS, "COMPLETED")
+            .commit()
 
         Log.i(TAG, report)
         return report

@@ -217,6 +217,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun handleWakeIntent(intent: Intent?) {
         if (intent == null) return
+        val injectText = intent.getStringExtra("inject_text")
+        if (!injectText.isNullOrBlank()) {
+            mainHandler.postDelayed({
+                injectUserMessage(injectText)
+            }, 300)
+            return
+        }
         val action = intent.action
         val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON)
         if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null) {

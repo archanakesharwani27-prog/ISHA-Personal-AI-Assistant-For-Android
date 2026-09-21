@@ -68,6 +68,20 @@ object ExperienceMemory {
 
         allLessons.add(ExecutionLesson(toolName, success, lesson))
         saveLessons(context, allLessons)
+
+        // Asynchronously persist to AuraExperienceDatabase for rich persistence and inspection
+        try {
+            AuraExperienceDatabase.getInstance(context).recordExecution(
+                ExperienceRecord(
+                    normalizedIntent = toolName,
+                    userInput = lesson,
+                    tool = toolName,
+                    executionStatus = if (success) "SUCCESS" else "FAILED",
+                    verificationStatus = if (success) "VERIFIED_SUCCESS" else "FAILED_VERIFICATION",
+                    failureReason = if (!success) lesson else null
+                )
+            )
+        } catch (_: Exception) {}
     }
 
     /**
@@ -153,6 +167,14 @@ object ExperienceMemory {
      *  - Capped at MAX_PROMPT_LESSONS to keep prompt concise
      */
     fun formatLessonsForPrompt(context: Context): String {
+        val dbLessons = try {
+            AuraExperienceDatabase.getInstance(context).getLessonsForPrompt(MAX_PROMPT_LESSONS)
+        } catch (_: Exception) { "" }
+
+        if (dbLessons.isNotBlank()) {
+            return dbLessons
+        }
+
         val allLessons = getLessons(context)
         if (allLessons.isEmpty()) return ""
 

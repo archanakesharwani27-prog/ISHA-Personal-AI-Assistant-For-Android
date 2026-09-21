@@ -5,6 +5,7 @@ import android.util.Log
 import com.aura.assistant.config.Secrets
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.MessageRole
+import com.aura.assistant.memory.AuraExperienceDatabase
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -82,6 +83,30 @@ class GeminiChatService(private val context: Context) {
         imageBytes: ByteArray?,
         callback: ChatStreamCallback
     ) {
+        // Detect user feedback on previous turn to power continuous adaptive learning
+        val cleanInput = newPrompt.lowercase().trim()
+        val negativePhrases = listOf("nahi gaya", "nahi hua", "galat hai", "wrong", "did not work", "fail ho gaya", "nahi chala", "nhi gya", "nhi hua")
+        val positivePhrases = listOf("shabash", "badhiya", "perfect", "good", "thank you", "thanks", "sahi hai", "ho gaya", "great")
+
+        if (negativePhrases.any { cleanInput.contains(it) }) {
+            Log.i(TAG, "⚠️ Negative user feedback detected: '$newPrompt'. Correcting Experience DB...")
+            try {
+                AuraExperienceDatabase.getInstance(context).recordUserFeedback(
+                    taskId = "recent_task",
+                    feedbackText = newPrompt,
+                    isSuccess = false
+                )
+            } catch (_: Exception) {}
+        } else if (positivePhrases.any { cleanInput == it }) {
+            try {
+                AuraExperienceDatabase.getInstance(context).recordUserFeedback(
+                    taskId = "recent_task",
+                    feedbackText = newPrompt,
+                    isSuccess = true
+                )
+            } catch (_: Exception) {}
+        }
+
         val apiKey = Secrets.getActiveGeminiKey()
         val requestBodyJson = buildRequestBody(history, newPrompt, imageBytes)
         val bodyStr = requestBodyJson.toString()
@@ -135,7 +160,7 @@ class GeminiChatService(private val context: Context) {
             Log.i(TAG, "Streaming from model: $model successfully")
             val reader = BufferedReader(InputStreamReader(responseStream))
             val fullAccumulator = StringBuilder()
-            var pendingFunctionCall: JsonObject? = null
+            val pendingFunctionCalls = mutableListOf<JsonObject>()
             var exactModelTurnContent: JsonObject? = null
 
         try {
@@ -166,7 +191,7 @@ class GeminiChatService(private val context: Context) {
 
                                     // Check for tool function call
                                     if (part.has("functionCall")) {
-                                        pendingFunctionCall = part.getAsJsonObject("functionCall")
+                                        pendingFunctionCalls.add(part.getAsJsonObject("functionCall"))
                                         exactModelTurnContent = content
                                     }
                                 }
@@ -181,25 +206,29 @@ class GeminiChatService(private val context: Context) {
             try { reader.close() } catch (_: Exception) {}
         }
 
-        // If a function call was requested, execute it natively
-        if (pendingFunctionCall != null) {
-            val fnName = pendingFunctionCall.get("name").asString
-            val fnArgs = pendingFunctionCall.getAsJsonObject("args") ?: JsonObject()
+        // If function calls were requested, execute all natively in order
+        if (pendingFunctionCalls.isNotEmpty()) {
+            val executedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
+            for (fnCall in pendingFunctionCalls) {
+                val fnName = fnCall.get("name").asString
+                val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
 
-            Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
-            val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
-            val resultSummary = toolResult.get("message")?.asString
-                ?: toolResult.get("status")?.asString
-                ?: "Completed"
+                Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
+                val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
+                val resultSummary = toolResult.get("message")?.asString
+                    ?: toolResult.get("status")?.asString
+                    ?: "Completed"
 
-            callback.onToolExecution(
-                toolName = fnName,
-                args = fnArgs.toString(),
-                result = resultSummary
-            )
+                callback.onToolExecution(
+                    toolName = fnName,
+                    args = fnArgs.toString(),
+                    result = resultSummary
+                )
+                executedTools.add(Triple(fnName, fnArgs, toolResult))
+            }
 
-            // Send tool response to complete conversation turn with natural speech
-            executeToolResponseStream(model, history, newPrompt, fnName, fnArgs, toolResult, exactModelTurnContent, callback)
+            // Send tool responses back to complete conversation turn with natural speech
+            executeToolResponsesStream(model, history, newPrompt, executedTools, exactModelTurnContent, callback)
         } else {
             callback.onComplete(fullAccumulator.toString())
         }
@@ -210,13 +239,11 @@ class GeminiChatService(private val context: Context) {
     callback.onError(lastErrorMsg)
 }
 
-    private suspend fun executeToolResponseStream(
+    private suspend fun executeToolResponsesStream(
         model: String,
         history: List<ChatMessage>,
         originalPrompt: String,
-        toolName: String,
-        toolArgs: JsonObject,
-        toolResult: JsonObject,
+        executedTools: List<Triple<String, JsonObject, JsonObject>>,
         modelTurnContent: JsonObject?,
         callback: ChatStreamCallback
     ) {
@@ -227,7 +254,7 @@ class GeminiChatService(private val context: Context) {
             // System instruction with rich persona and permanent memory
             add("system_instruction", createSystemInstruction())
 
-            // Contents with user prompt, exact model functionCall, and functionResponse
+            // Contents with user prompt, model functionCalls, and functionResponses
             val contents = createHistoryContents(history)
 
             // User turn
@@ -241,10 +268,11 @@ class GeminiChatService(private val context: Context) {
             }
             contents.add(userTurn)
 
-            // Model turn calling the function
+            // Model turn calling the functions
             val modelTurn = modelTurnContent ?: JsonObject().apply {
                 addProperty("role", "model")
-                val parts = JsonArray().apply {
+                val parts = JsonArray()
+                for ((toolName, toolArgs, _) in executedTools) {
                     val fnCallPart = JsonObject().apply {
                         val fnObj = JsonObject().apply {
                             addProperty("name", toolName)
@@ -252,7 +280,7 @@ class GeminiChatService(private val context: Context) {
                         }
                         add("functionCall", fnObj)
                     }
-                    add(fnCallPart)
+                    parts.add(fnCallPart)
                 }
                 add("parts", parts)
             }
@@ -261,7 +289,8 @@ class GeminiChatService(private val context: Context) {
             // Function response turn (Role MUST be "user" in Gemini v1beta REST)
             val fnResponseTurn = JsonObject().apply {
                 addProperty("role", "user")
-                val parts = JsonArray().apply {
+                val parts = JsonArray()
+                for ((toolName, _, toolResult) in executedTools) {
                     val fnRespPart = JsonObject().apply {
                         val fnRespObj = JsonObject().apply {
                             addProperty("name", toolName)
@@ -272,7 +301,7 @@ class GeminiChatService(private val context: Context) {
                         }
                         add("functionResponse", fnRespObj)
                     }
-                    add(fnRespPart)
+                    parts.add(fnRespPart)
                 }
                 add("parts", parts)
             }
@@ -297,7 +326,9 @@ class GeminiChatService(private val context: Context) {
 
         val response = withContext(Dispatchers.IO) { call.execute() }
         if (!response.isSuccessful) {
-            val fallback = toolResult.get("message")?.asString ?: "Ho gaya Boss! $toolName complete kar diya gaya hai."
+            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
+                res.get("message")?.asString ?: "$name complete kar diya gaya hai Boss."
+            }
             callback.onComplete(fallback)
             return
         }
@@ -342,7 +373,9 @@ class GeminiChatService(private val context: Context) {
         if (fullSpokenText.isNotBlank()) {
             callback.onComplete(fullSpokenText)
         } else {
-            val fallback = toolResult.get("message")?.asString ?: "Task complete ho gaya Boss! ✅"
+            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
+                res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
+            }
             callback.onComplete(fallback)
         }
     }
@@ -382,10 +415,10 @@ class GeminiChatService(private val context: Context) {
 
         Log.i(TAG, "buildRequestBody: prompt='$newPrompt', historySize=${history.size}, totalTurns=${contents.size()}")
 
-        // 3. Tools (Function Declarations)
+        // 3. Tools (Function Declarations) - Dynamically retrieved relevant subset (5-15 tools)
         val tools = JsonArray().apply {
             val toolHolder = JsonObject()
-            toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
+            toolHolder.add("function_declarations", JarvisToolRegistry.getRelevantToolDeclarations(newPrompt, minCount = 5, maxCount = 15))
             add(toolHolder)
         }
         root.add("tools", tools)
@@ -447,7 +480,13 @@ class GeminiChatService(private val context: Context) {
             lastRole = role
         }
 
-        // Guarantee strict alternation: prior history must end with "model" turn before new "user" turn is appended
+        // Guarantee strict Gemini REST compliance:
+        // 1. History must START with a "user" turn (Gemini rejects history starting with "model")
+        while (contents.size() > 0 && contents.get(0).asJsonObject.get("role").asString != "user") {
+            contents.remove(0)
+        }
+
+        // 2. Prior history must END with a "model" turn before new "user" turn is appended
         if (contents.size() > 0) {
             val lastTurn = contents.get(contents.size() - 1).asJsonObject
             if (lastTurn.get("role").asString == "user") {

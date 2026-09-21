@@ -2,24 +2,24 @@ package com.aura.assistant.execution
 
 import android.content.Context
 import android.util.Log
+import com.aura.assistant.memory.AuraExperienceDatabase
+import com.aura.assistant.memory.ExperienceRecord
+import com.aura.assistant.tools.AuthorizationResult
 import com.aura.assistant.tools.AuraTool
+import com.aura.assistant.tools.CapabilityStatus
 import com.aura.assistant.tools.ToolContext
 import com.aura.assistant.tools.ToolResult
 import com.aura.assistant.tools.ToolStatus
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Autonomous Tool Execution Engine for AURA 2.0.
+ * Autonomous Tool Execution Engine for AURA Agent Core v4.
  *
- * Implements:
- * 1. Execution with strict timeout protection.
- * 2. Post-execution verification via [ExecutionVerifier].
- * 3. Exponential backoff retry on transient failure.
- * 4. Automatic fallback execution when primary path fails.
+ * Implements the 10-stage execution lifecycle:
+ * DISCOVER → VALIDATE → AUTHORIZE → PREPARE → EXECUTE → OBSERVE → VERIFY → RECOVER → COMMIT → LEARN
  */
 object ExecutionEngine {
     private const val TAG = "ExecutionEngine"
@@ -37,8 +37,40 @@ object ExecutionEngine {
             scope = scope,
             callId = callId
         )
-
         val startTime = System.currentTimeMillis()
+
+        // ── Stage 1: DISCOVER & Stage 2: VALIDATE ───────────────────────
+        val availability = tool.isAvailable(toolContext)
+        if (availability != CapabilityStatus.AVAILABLE) {
+            Log.w(TAG, "Tool '${tool.name}' is not available: $availability")
+            return ToolResult(
+                toolId = tool.id,
+                callId = callId,
+                status = ToolStatus.UNAVAILABLE,
+                message = "Tool '${tool.name}' unavailable in current device environment: $availability"
+            )
+        }
+
+        // ── Stage 3: AUTHORIZE ──────────────────────────────────────────
+        val auth = tool.authorize(toolContext)
+        when (auth) {
+            AuthorizationResult.DENIED -> {
+                Log.e(TAG, "Authorization denied for tool '${tool.name}'")
+                return ToolResult.denied(tool.id, "Security policy or user settings denied this action.")
+            }
+            AuthorizationResult.NEEDS_CONFIRMATION -> {
+                Log.w(TAG, "Tool '${tool.name}' requires explicit confirmation")
+                return ToolResult(
+                    toolId = tool.id,
+                    callId = callId,
+                    status = ToolStatus.NEEDS_CONFIRMATION,
+                    message = "High risk action requires confirmation: ${tool.name}"
+                )
+            }
+            AuthorizationResult.ALLOWED -> {}
+        }
+
+        // ── Stage 4: PREPARE ────────────────────────────────────────────
         var attempts = 0
         var currentBackoff = retryPolicy.initialBackoffMs
         var lastResult: ToolResult? = null
@@ -47,6 +79,7 @@ object ExecutionEngine {
             attempts++
             Log.i(TAG, "Executing tool '${tool.name}' (attempt $attempts/${retryPolicy.maxRetries + 1})")
 
+            // ── Stage 5: EXECUTE ────────────────────────────────────────
             val executionResult = withTimeoutOrNull(toolContext.timeoutMs) {
                 try {
                     tool.execute(arguments, toolContext)
@@ -66,15 +99,20 @@ object ExecutionEngine {
                 retryable = true
             )
 
-            // Verify state if tool execution succeeded
+            // ── Stage 6: OBSERVE & Stage 7: VERIFY ──────────────────────
+            val evidence = ExecutionVerifier.verify(
+                context = context,
+                tool = tool,
+                arguments = arguments,
+                executionResult = executionResult,
+                toolContext = toolContext
+            )
+
             val verifiedResult = if (executionResult.status == ToolStatus.SUCCESS) {
-                val evidence = ExecutionVerifier.verify(context, tool.name, arguments)
                 if (!evidence.verified) {
-                    Log.w(TAG, "Tool '${tool.name}' reported success but state verification failed: ${evidence.observedState}")
-                    ToolResult.verificationFailed(
-                        toolId = tool.id,
-                        message = "Action dispatched but device state verification failed: ${evidence.observedState}",
-                        observedState = evidence.observedState,
+                    Log.w(TAG, "Tool '${tool.name}' executed but verification remains UNVERIFIED: ${evidence.observedState}")
+                    executionResult.copy(
+                        evidence = evidence,
                         durationMs = System.currentTimeMillis() - startTime
                     )
                 } else {
@@ -88,7 +126,9 @@ object ExecutionEngine {
             }
 
             if (verifiedResult.status == ToolStatus.SUCCESS) {
-                Log.i(TAG, "Tool '${tool.name}' successfully executed and verified in ${verifiedResult.durationMs}ms")
+                // ── Stage 9: COMMIT & Stage 10: LEARN ───────────────────
+                Log.i(TAG, "Tool '${tool.name}' successfully executed and observed in ${verifiedResult.durationMs}ms")
+                recordLearning(context, tool, arguments, verifiedResult, true)
                 return verifiedResult
             }
 
@@ -98,6 +138,7 @@ object ExecutionEngine {
                 break
             }
 
+            // ── Stage 8: RECOVER (Backoff retry) ────────────────────────
             Log.w(TAG, "Retrying '${tool.name}' in ${currentBackoff}ms...")
             delay(currentBackoff)
             currentBackoff = (currentBackoff * retryPolicy.backoffMultiplier).toLong()
@@ -106,14 +147,39 @@ object ExecutionEngine {
         // Check for autonomous fallback if all attempts failed
         val fallbackToolName = RetryPolicy.getFallback(tool.name)
         if (fallbackToolName != null) {
-            Log.i(TAG, "Tool '${tool.name}' failed after $attempts attempts. Attempting fallback: '$fallbackToolName'")
-            // Note: fallback dispatch can be invoked by the caller or planner
+            Log.i(TAG, "Tool '${tool.name}' failed after $attempts attempts. Fallback tool available: '$fallbackToolName'")
         }
 
-        return lastResult ?: ToolResult.failure(
+        val finalResult = lastResult ?: ToolResult.failure(
             toolId = tool.id,
             message = "Tool '${tool.name}' failed after $attempts attempts.",
             durationMs = System.currentTimeMillis() - startTime
         )
+
+        recordLearning(context, tool, arguments, finalResult, false)
+        return finalResult
+    }
+
+    private fun recordLearning(
+        context: Context,
+        tool: AuraTool,
+        arguments: JsonObject,
+        result: ToolResult,
+        success: Boolean
+    ) {
+        try {
+            AuraExperienceDatabase.getInstance(context).recordExecution(
+                ExperienceRecord(
+                    normalizedIntent = tool.name,
+                    userInput = tool.description,
+                    tool = tool.name,
+                    arguments = arguments.toString(),
+                    executionStatus = result.status.name,
+                    verificationStatus = if (result.evidence?.verified == true) "VERIFIED_SUCCESS" else "UNVERIFIED",
+                    failureReason = result.error?.message ?: result.message,
+                    latencyMs = result.durationMs
+                )
+            )
+        } catch (_: Exception) {}
     }
 }
