@@ -3,15 +3,34 @@ package com.aura.assistant.ai
 import android.content.Context
 import android.content.SharedPreferences
 import com.aura.assistant.training.AuraCommandTrainer
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 /**
- * ChatGPT-style Long-Term Memory and Context Vault for AURA.
+ * Structured User-Taught Command Rule or Workflow.
+ * Persistently stored and injected at SUPREME EXECUTION PRIORITY #1.
+ */
+data class LearnedCommandRule(
+    val id: String = UUID.randomUUID().toString(),
+    val triggerPattern: String,
+    val actionInstruction: String,
+    val primaryTool: String? = null,
+    val toolParameters: String? = null,
+    val timestamp: Long = System.currentTimeMillis(),
+    val usageCount: Int = 0
+)
+
+/**
+ * ChatGPT-style Long-Term Memory, Learned Rules, and Context Vault for AURA.
  *
- * Persistently stores facts, user preferences, personal details, and learned context
- * in SharedPreferences and automatically injects them into system instructions
+ * Persistently stores:
+ *  1. Learned Command Rules & Custom Workflows (teach_command_rule)
+ *  2. Facts, user preferences, and personal details (remember_fact)
+ * Automatically injects them into system instructions
  * for both text chat (GeminiChatService) and real-time voice (GeminiLiveClient).
  */
 object AuraMemoryManager {
@@ -19,6 +38,8 @@ object AuraMemoryManager {
     private const val PREFS_NAME = "aura_memory_vault"
     private const val MEM_PREFIX = "fact_"
     private const val KEY_USER_NAME = "user_name"
+    private const val KEY_LEARNED_RULES = "learned_command_rules"
+    private val gson = Gson()
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -81,6 +102,110 @@ object AuraMemoryManager {
     }
 
     /**
+     * Stores or updates a user-taught command rule / workflow in permanent memory.
+     */
+    fun teachRule(
+        context: Context,
+        trigger: String,
+        action: String,
+        primaryTool: String? = null,
+        toolParameters: String? = null
+    ): LearnedCommandRule {
+        val cleanTrigger = trigger.trim().lowercase()
+        val cleanAction = action.trim()
+        val allRules = getAllRules(context).toMutableList()
+        // Remove existing rule with exact same trigger if updating
+        allRules.removeAll { it.triggerPattern.equals(cleanTrigger, ignoreCase = true) }
+
+        val newRule = LearnedCommandRule(
+            triggerPattern = cleanTrigger,
+            actionInstruction = cleanAction,
+            primaryTool = primaryTool?.trim()?.ifBlank { null },
+            toolParameters = toolParameters?.trim()?.ifBlank { null }
+        )
+        allRules.add(newRule)
+        saveRules(context, allRules)
+        return newRule
+    }
+
+    /**
+     * Returns all user-taught command rules.
+     */
+    fun getAllRules(context: Context): List<LearnedCommandRule> {
+        val json = getPrefs(context).getString(KEY_LEARNED_RULES, null) ?: return emptyList()
+        return try {
+            val type = object : TypeToken<List<LearnedCommandRule>>() {}.type
+            gson.fromJson(json, type) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveRules(context: Context, rules: List<LearnedCommandRule>) {
+        val json = gson.toJson(rules)
+        getPrefs(context).edit().putString(KEY_LEARNED_RULES, json).apply()
+    }
+
+    /**
+     * Checks if a user prompt matches any user-taught command rule.
+     */
+    fun findMatchingRule(context: Context, query: String): LearnedCommandRule? {
+        val clean = query.lowercase().trim()
+        if (clean.isBlank()) return null
+        val rules = getAllRules(context)
+        if (rules.isEmpty()) return null
+
+        // 1. Exact match
+        rules.firstOrNull { clean == it.triggerPattern }?.let { return it }
+
+        // 2. Query contains trigger pattern or trigger contains query
+        rules.firstOrNull { clean.contains(it.triggerPattern) || it.triggerPattern.contains(clean) }?.let { return it }
+
+        // 3. Significant token overlap (at least 2 matching words or all words of rule)
+        val queryTokens = clean.split(Regex("[\\s,?.!]+")).filter { it.length > 2 }.toSet()
+        for (rule in rules) {
+            val ruleTokens = rule.triggerPattern.split(Regex("[\\s,?.!]+")).filter { it.length > 2 }.toSet()
+            if (ruleTokens.isNotEmpty()) {
+                val intersection = queryTokens.intersect(ruleTokens)
+                if (intersection.size >= 2 || (intersection.isNotEmpty() && intersection.size == ruleTokens.size)) {
+                    return rule
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Forgets a specific learned rule by id or trigger pattern.
+     */
+    fun forgetRule(context: Context, triggerOrId: String) {
+        val clean = triggerOrId.trim().lowercase()
+        val allRules = getAllRules(context).toMutableList()
+        allRules.removeAll { it.id == triggerOrId || it.triggerPattern.equals(clean, ignoreCase = true) }
+        saveRules(context, allRules)
+    }
+
+    /**
+     * Formats learned command rules section for supreme prompt injection.
+     */
+    fun formatLearnedRulesSection(context: Context): String {
+        val rules = getAllRules(context)
+        if (rules.isEmpty()) return ""
+
+        val sb = StringBuilder()
+        sb.appendLine("\n🚨🎯 USER-DEFINED COMMAND RULES & TAUGHT PROCEDURES (SUPREME EXECUTION PRIORITY #1):")
+        sb.appendLine("Boss ne aapko personally ye commands aur workflows sikhaye hain. Jab bhi user in triggers se related kuch kahe, aapko APNI MARZI YA DEFAULT BEHAVIOR SE NAHI balki STRICTLY aur IMMEDIATELY yahi action aur tools chalane hain:")
+        for ((idx, r) in rules.withIndex()) {
+            val toolStr = if (!r.primaryTool.isNullOrBlank()) " -> Tool: ${r.primaryTool}" else ""
+            val paramStr = if (!r.toolParameters.isNullOrBlank()) " (params: ${r.toolParameters})" else ""
+            sb.appendLine("${idx + 1}. TRIGGER: \"${r.triggerPattern}\"")
+            sb.appendLine("   ACTION: ${r.actionInstruction}$toolStr$paramStr")
+        }
+        sb.appendLine("CRITICAL DIRECTIVE: Kabhi mat kahiye ki 'mere paas tool nahi hai' agar user ne rule sikhaya hai. Step-by-step bataye gaye tools execute kijiye!")
+        return sb.toString()
+    }
+
+    /**
      * Returns the user's preferred name (defaults to "Boss").
      */
     fun getUserName(context: Context): String {
@@ -109,6 +234,7 @@ object AuraMemoryManager {
     fun buildSystemPrompt(context: Context, isVoiceMode: Boolean = false): String {
         val userName = getUserName(context)
         val now = SimpleDateFormat("EEEE, dd MMMM yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+        val learnedRulesSection = formatLearnedRulesSection(context)
         val memorySection = formatMemorySection(context)
         val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
         // Inject command routing guide from training corpus
@@ -123,6 +249,7 @@ DEVELOPER & CREATOR: AURA ko Ansh Kesharwani ji ne design aur develop kiya hai. 
 
 Session start timestamp: $now (NOTE: Do NOT use this for answering "time kya hai" or date during an active session — phone clock runs continuously, so ALWAYS call get_current_time for live time!)
 Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
+$learnedRulesSection
 $memorySection
 $lessonsSection
 $trainingGuide
@@ -237,7 +364,7 @@ SCREEN VISION & UI: get_screen_context (inspect current active screen UI hierarc
   read_screen_text (read text on screen), find_and_tap (tap button/element on screen),
   screen_tap (tap specific coordinate or button),
   screen_scroll, share_media, empty_recycle_bin, get_clipboard_text, set_clipboard
-MEMORY: remember_fact, recall_memory
+MEMORY: remember_fact, recall_memory, teach_command_rule (save/teach custom command workflows)
 APPS: open_app (open app, or search in Chrome if query given e.g. open_app(app_name="chrome", query="internet speed test")), perform_app_action, manage_app_storage, install_store_app, open_system_settings
 EMERGENCY: emergency_sos — CALL IMMEDIATELY on Ambulance/Police/Fire/SOS — NO delay!
 
@@ -255,6 +382,7 @@ CRITICAL OPERATIONAL RULES:
 11. NOTIFICATION MANAGEMENT: Jab user kahe 'notification hata do', 'clear notifications', 'status bar saaf karo' — ALWAYS call clear_notifications tool.
 12. MESSAGE ANNOUNCEMENTS: Jab user kahe 'message padhna band karo', 'msg aane par mat bolo', 'message sunana band/chalu karo' — ALWAYS call toggle_message_announcements(enable=false/true).
 13. LIVE TIME & DATE (ZERO STALE DATA): Jab bhi user time puche ('time kya hai', 'time batao', 'kitne baje', 'samay kya hua hai', 'aaj ki date/tareekh') — KABHI BHI initial prompt ka purana time mat bolo! ALWAYS call get_current_time tool taaki phone ke live system clock ka exact time (hours, minutes, seconds, date) mile!
+14. LEARNING & TEACHING RULES (ZERO FAKE ACKNOWLEDGMENT): Jab bhi user aapko guide kare, koi custom command ya routine sikhaye, ya kahe 'memory mein save kar lo' / 'yaad rakhna ki jab main ye bolun to ye karna' — ALWAYS call teach_command_rule! BINA teach_command_rule call kiye KABHI BHI mat kahiye ki 'Ok boss save kar liya hai'! Fake acknowledgment sakht mana hai. Aur jab bhi user ka query kisi taught rule se match kare, strictly wahi taught action aur tool execute karein!
         """.trimIndent()
     }
 }

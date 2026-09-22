@@ -247,9 +247,21 @@ object JarvisToolRegistry {
         // 18. Permanent Memory Vault: Recall Memory
         toolsArray.add(createFunction(
             name = "recall_memory",
-            desc = "Retrieve previously remembered personal facts or all stored user details from the memory vault.",
+            desc = "Retrieve previously remembered personal facts or all stored user details and learned rules from the memory vault.",
             params = mapOf("key" to "string"),
             required = emptyList()
+        ))
+
+        // 18b. Permanent Memory Vault: Teach Custom Command Rule / Workflow
+        toolsArray.add(createFunction(
+            name = "teach_command_rule",
+            desc = "Save, teach, or update a custom user rule, command workflow, action mapping, or correction into AURA's permanent memory. Whenever the user guides AURA on what tool(s) or steps to execute, or says 'memory mein save kar lo' / 'yaad rakhna', AURA MUST execute this tool to permanently persist the rule.",
+            params = mapOf(
+                "trigger_pattern" to "string",
+                "action_instruction" to "string",
+                "primary_tool" to "string"
+            ),
+            required = listOf("trigger_pattern", "action_instruction")
         ))
 
         // 19. Universal Music & Media Player (Any app: YouTube, Spotify, Melodify, JioSaavn, Wynk, etc.)
@@ -702,6 +714,89 @@ object JarvisToolRegistry {
     }
 
     /**
+     * Dynamically resolves an application Intent via known packages, direct package lookup,
+     * or Android PackageManager launcher activity query (supports all OEMs).
+     */
+    fun resolveAppIntent(context: Context, appName: String): Intent? {
+        val clean = appName.lowercase().trim()
+        val pm = context.packageManager
+        val knownPackages = mapOf(
+            "chrome" to "com.android.chrome",
+            "chrom" to "com.android.chrome",
+            "google chrome" to "com.android.chrome",
+            "browser" to "com.android.chrome",
+            "youtube" to "com.google.android.youtube",
+            "yt" to "com.google.android.youtube",
+            "whatsapp" to "com.whatsapp",
+            "wa" to "com.whatsapp",
+            "gmail" to "com.google.android.gm",
+            "email" to "com.google.android.gm",
+            "maps" to "com.google.android.apps.maps",
+            "google maps" to "com.google.android.apps.maps",
+            "gallery" to "com.sec.android.gallery3d",
+            "photos" to "com.google.android.apps.photos",
+            "camera" to "com.sec.android.app.camera",
+            "settings" to "com.android.settings",
+            "setting" to "com.android.settings",
+            "calculator" to "com.sec.android.app.popupcalculator",
+            "clock" to "com.sec.android.app.clockpackage",
+            "calendar" to "com.samsung.android.calendar",
+            "files" to "com.sec.android.app.myfiles",
+            "my files" to "com.sec.android.app.myfiles",
+            "play store" to "com.android.vending",
+            "playstore" to "com.android.vending",
+            "google" to "com.google.android.googlequicksearchbox",
+            "instagram" to "com.instagram.android",
+            "facebook" to "com.facebook.katana",
+            "telegram" to "org.telegram.messenger",
+            "spotify" to "com.spotify.music"
+        )
+
+        // 1. Check known packages
+        var targetPkg = knownPackages[clean]
+        if (targetPkg == null) {
+            for ((k, v) in knownPackages) {
+                if (clean.contains(k) || k.contains(clean)) {
+                    targetPkg = v
+                    break
+                }
+            }
+        }
+        if (targetPkg != null) {
+            val intent = pm.getLaunchIntentForPackage(targetPkg)
+            if (intent != null) return intent
+        }
+
+        // 2. Direct package lookup
+        pm.getLaunchIntentForPackage(appName)?.let { return it }
+
+        // 3. Query all launcher activities (Samsung / Android 11+ safe)
+        try {
+            val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
+            val matched = resolveInfos.firstOrNull {
+                val label = it.loadLabel(pm).toString()
+                label.contains(clean, ignoreCase = true) ||
+                it.activityInfo.packageName.contains(clean, ignoreCase = true)
+            }
+            if (matched != null) {
+                val intent = pm.getLaunchIntentForPackage(matched.activityInfo.packageName)
+                if (intent != null) return intent
+            }
+        } catch (_: Exception) {}
+
+        // 4. Browser fallback if user wanted Chrome / web
+        if (clean.contains("chrome") || clean.contains("browser") || clean.contains("web") || clean.contains("internet")) {
+            return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
+
+        return null
+    }
+
+    /**
      * Executes a tool call requested by Gemini and returns the structured result.
      */
     fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
@@ -1110,82 +1205,8 @@ object JarvisToolRegistry {
 
                 "open_app" -> {
                     val appName = args.get("app_name")?.asString ?: ""
-                    val pm = context.packageManager
                     val clean = appName.lowercase().trim()
-
-                    val knownPackages = mapOf(
-                        "chrome" to "com.android.chrome",
-                        "chrom" to "com.android.chrome",
-                        "google chrome" to "com.android.chrome",
-                        "browser" to "com.android.chrome",
-                        "youtube" to "com.google.android.youtube",
-                        "yt" to "com.google.android.youtube",
-                        "whatsapp" to "com.whatsapp",
-                        "wa" to "com.whatsapp",
-                        "gmail" to "com.google.android.gm",
-                        "email" to "com.google.android.gm",
-                        "maps" to "com.google.android.apps.maps",
-                        "google maps" to "com.google.android.apps.maps",
-                        "gallery" to "com.sec.android.gallery3d",
-                        "photos" to "com.google.android.apps.photos",
-                        "camera" to "com.sec.android.app.camera",
-                        "settings" to "com.android.settings",
-                        "setting" to "com.android.settings",
-                        "calculator" to "com.sec.android.app.popupcalculator",
-                        "clock" to "com.sec.android.app.clockpackage",
-                        "calendar" to "com.samsung.android.calendar",
-                        "files" to "com.sec.android.app.myfiles",
-                        "my files" to "com.sec.android.app.myfiles",
-                        "play store" to "com.android.vending",
-                        "playstore" to "com.android.vending",
-                        "google" to "com.google.android.googlequicksearchbox",
-                        "instagram" to "com.instagram.android",
-                        "facebook" to "com.facebook.katana",
-                        "telegram" to "org.telegram.messenger"
-                    )
-
-                    var intent: Intent? = null
-
-                    // 1. Check known packages
-                    var targetPkg = knownPackages[clean]
-                    if (targetPkg == null) {
-                        for ((k, v) in knownPackages) {
-                            if (clean.contains(k) || k.contains(clean)) {
-                                targetPkg = v
-                                break
-                            }
-                        }
-                    }
-
-                    if (targetPkg != null) {
-                        intent = pm.getLaunchIntentForPackage(targetPkg)
-                    }
-
-                    // 2. Direct package lookup
-                    if (intent == null) {
-                        intent = pm.getLaunchIntentForPackage(appName)
-                    }
-
-                    // 3. Query all launcher activities (Samsung / Android 11+ safe)
-                    if (intent == null) {
-                        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                        val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
-                        val matched = resolveInfos.firstOrNull {
-                            val label = it.loadLabel(pm).toString()
-                            label.contains(clean, ignoreCase = true) ||
-                            it.activityInfo.packageName.contains(clean, ignoreCase = true)
-                        }
-                        if (matched != null) {
-                            intent = pm.getLaunchIntentForPackage(matched.activityInfo.packageName)
-                        }
-                    }
-
-                    // 4. Browser fallback if user wanted Chrome / web
-                    if (intent == null && (clean.contains("chrome") || clean.contains("browser") || clean.contains("web") || clean.contains("internet"))) {
-                        intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com")).apply {
-                            addCategory(Intent.CATEGORY_BROWSABLE)
-                        }
-                    }
+                    var intent: Intent? = resolveAppIntent(context, appName)
 
                     val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
                     if (searchQ.isNotBlank() && (clean.contains("chrome") || clean.contains("browser") || clean.contains("google") || clean.contains("internet") || clean.contains("web"))) {
@@ -1522,15 +1543,44 @@ object JarvisToolRegistry {
                     result.addProperty("message", "Fact remembered successfully: $key = $value")
                 }
 
+                "teach_command_rule" -> {
+                    val trigger = args.get("trigger_pattern")?.asString ?: ""
+                    val action = args.get("action_instruction")?.asString ?: ""
+                    val primaryTool = args.get("primary_tool")?.asString
+                    val params = args.get("tool_parameters")?.asString
+                    if (trigger.isNotBlank() && action.isNotBlank()) {
+                        AuraMemoryManager.teachRule(context, trigger, action, primaryTool, params)
+                        com.aura.assistant.memory.ExperienceMemory.recordLesson(
+                            context,
+                            primaryTool ?: "custom_rule",
+                            true,
+                            "User taught rule: When trigger '$trigger' -> $action"
+                        )
+                        result.addProperty("status", "success")
+                        result.addProperty("trigger", trigger)
+                        result.addProperty("action", action)
+                        result.addProperty("message", "Boss, maine seekh liya aur permanent memory me save kar liya hai! Jab bhi aap '$trigger' bolenge, main strictly '$action' karungi.")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "trigger_pattern aur action_instruction dono zaroori hain Boss.")
+                    }
+                }
+
                 "recall_memory" -> {
                     val key = args.get("key")?.asString ?: ""
                     result.addProperty("status", "success")
                     if (key.isNotBlank()) {
                         val v = AuraMemoryManager.recallMemory(context, key)
-                        result.addProperty("value", v ?: "No memory found for $key")
+                        val matchingRule = AuraMemoryManager.findMatchingRule(context, key)
+                        result.addProperty("value", v ?: "No fact found for $key")
+                        if (matchingRule != null) {
+                            result.addProperty("learned_rule", "${matchingRule.triggerPattern} -> ${matchingRule.actionInstruction}")
+                        }
                     } else {
                         val all = AuraMemoryManager.getAllMemories(context)
+                        val allRules = AuraMemoryManager.getAllRules(context)
                         result.addProperty("memories", gson.toJson(all))
+                        result.addProperty("learned_rules", gson.toJson(allRules))
                     }
                 }
 

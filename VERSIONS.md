@@ -4,7 +4,38 @@ This document tracks all release versions of the AURA AI Android Assistant, incl
 
 ---
 
-## 📌 Latest Release: v5.3.2 — Dynamic Zero-Hardcode App Resolution & Execution Verification Engine
+## 📌 Latest Release: v5.3.3 — Persistent Learned Command Rules, Full Tool Integrity & System Polish
+
+- **Release Date / Time**: 2026-09-22 13:45:00 IST
+- **Target Platform**: Android 10+ (Tested on Samsung Galaxy S24, Android 14)
+- **Local Desktop Path**: `C:\Users\Ansh Kesharwani\Desktop\aura_v5.3.3_learned_rules_stability_20260922.apk`
+- **Repository Path**: `apks/aura_v5.3.3_learned_rules_stability_20260922.apk`
+- **Status**: Production Verified & Fully Backwards-Compatible
+
+### 🔍 Root Causes Identified & Resolved
+1. **User Teaching & Custom Command Procedure Engine (`teach_command_rule` & `LearnedCommandRule`)**:
+   - **Problem**: When the user guided AURA (*"Jab main ye bolun toh ye karna, memory me save kar lo"*), AURA either hallucinated text (*"Ok boss kar di hu"*) without saving anything or saved it as casual conversational trivia via `remember_fact`. After a few commands, AURA forgot the custom procedure or took wrong actions.
+   - **Solution**:
+     - Added first-class tool `teach_command_rule(trigger_pattern, action_instruction, primary_tool, tool_parameters)`.
+     - Built `LearnedCommandRule` persistent vault in `AuraMemoryManager` storing triggers, instructions, and target tools.
+     - Injected a dedicated `🚨🎯 USER-DEFINED COMMAND RULES (SUPREME EXECUTION PRIORITY #1)` section at the very top of system prompt.
+     - Added live prompt directive injection in `GeminiChatService` when incoming prompts match any user-taught rule.
+     - Added strict Rule 14 prohibiting fake text-only acknowledgments.
+2. **Full Tool Catalog Integrity (Eliminated "Boss, mere paas tool nahi hai")**:
+   - **Problem**: `GeminiChatService` was naively pruning 70 tools down to 5-15 based on keyword matching with the immediate prompt. For taught or natural Hindi queries lacking exact keywords, required tools (like `set_volume`, `set_dnd`, `find_and_tap`) were stripped out, forcing Gemini to say "tool nahi hai".
+   - **Solution**: Supplied full tool catalog `JarvisToolRegistry.getGeminiToolDeclarations()` (70 tools) on all turns, matching Gemini Live's behavior. Gemini now always has access to all tools.
+3. **Experience Database Self-Correction Fix**:
+   - Fixed `updateFeedback()` in `ExperienceDatabase.kt` to accurately target and update the most recent record when `taskId` is `"recent_task"`, ensuring user corrections (*"nahi hua"*, *"galat hai"*) are persisted.
+4. **Crash & Accessibility Stability Polish**:
+   - Fixed `ClassCastException` on Dynamic Island expand/collapse (`WindowManager.LayoutParams` vs `MarginLayoutParams`).
+   - Replaced raw `pendingPlan` assignments in `armFacebookPost` and `armAppSearchAndLaunch` with `startPlan()` to ensure timeouts and retry counters are initialized properly.
+   - Cleaned `findFocusedEditText` to use a two-pass DFS without double traversal.
+   - Upgraded `AuraDynamicIsland.launchApp()` with `JarvisToolRegistry.resolveAppIntent()` and graceful accessibility home search fallback.
+   - Added `flagReportViewIds` and lowered `notificationTimeout` to 50ms in `accessibility_service_config.xml`.
+
+---
+
+## 📌 Release v5.3.2 — Dynamic Zero-Hardcode App Resolution & Execution Verification Engine
 
 - **Release Date / Time**: 2026-09-21 21:05:00 IST
 - **Target Platform**: Android 10+ (Tested on Samsung Galaxy S24, Android 14)

@@ -171,6 +171,7 @@ object AuraCommandTrainer {
             "calculate"            to "Calculate/kitna [math]",
             "remember_fact"        to "Yaad rakhna [key=value]",
             "recall_memory"        to "Yaad hai kya [key]",
+            "teach_command_rule"   to "Command/rule sikhao [trigger=action]",
             "create_quick_note"    to "Note karo [text]",
             "add_calendar_event"   to "Calendar [event] [date]",
             "send_email"           to "Email [to] [subject]",

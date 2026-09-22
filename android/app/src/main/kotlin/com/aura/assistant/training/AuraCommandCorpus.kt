@@ -459,6 +459,22 @@ object AuraCommandCorpus {
             "Address recall."))
 
         // ────────────────────────────────────────────────────────────
+        // TOOL 23b ── teach_command_rule
+        // ────────────────────────────────────────────────────────────
+        add(cmd("Jab main party mode bolun toh torch jala do aur full volume kar do, memory me save karlo", "memory", "teach_command_rule",
+            mp("trigger_pattern", "party mode", "action_instruction", "toggle_flashlight on and set_volume 100%"),
+            "teach_command_rule: user teaches custom command / routine. Always call this tool to persist.",
+            v("Isko memory mein save kar lo ki party mode par light on karni hai", "Yaad rakhna party mode bolne par torch aur volume full karna")))
+        add(cmd("Instagram story ke liye Instagram khol kar plus icon tap karna, yaad rakhna", "memory", "teach_command_rule",
+            mp("trigger_pattern", "Instagram story", "action_instruction", "open Instagram and tap plus icon", "primary_tool", "open_app"),
+            "Workflow teaching → teach_command_rule with trigger and action steps.",
+            v("Aura memory mein save karlo Instagram story lagana", "Jab main Instagram story bolu toh ye steps karna save karo")))
+        add(cmd("Nahi galat kiya, good night par DND on karna tha, ise yaad karlo", "memory", "teach_command_rule",
+            mp("trigger_pattern", "good night", "action_instruction", "set_dnd enabled", "primary_tool", "set_dnd"),
+            "Corrective instruction → teach_command_rule updates the rule.",
+            v("Good night bolne par DND chalu karna yaad rakhna", "Save karlo good night par phone silent karna")))
+
+        // ────────────────────────────────────────────────────────────
         // TOOL 24 ── play_media
         // ────────────────────────────────────────────────────────────
         add(cmd("Spotify par Lo-Fi chalaoo", "music", "play_media",

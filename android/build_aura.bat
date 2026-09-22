@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 set "JAVA_HOME=D:\applications\jdk-17"
 set "PATH=D:\applications\jdk-17\bin;%PATH%"
 set "GRADLE_OPTS=-Djava.security.properties=d:\Projects\aura_shell_backup\android\sha1prng.properties -Xmx2048m"

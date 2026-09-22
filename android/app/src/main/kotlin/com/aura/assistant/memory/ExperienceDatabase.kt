@@ -100,7 +100,22 @@ class ExperienceDao(private val dbHelper: AuraExperienceDatabase.Helper) {
                 put("failure_reason", "User explicitly corrected: $feedback")
             }
         }
-        return db.update("experience_records", values, "task_id = ?", arrayOf(taskId))
+        if (taskId == "recent_task" || taskId.isBlank()) {
+            // Update the most recent record in experience DB
+            val recentIdQuery = "SELECT id FROM experience_records ORDER BY timestamp DESC LIMIT 1"
+            var recentId: String? = null
+            db.rawQuery(recentIdQuery, null).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    recentId = cursor.getString(0)
+                }
+            }
+            return if (recentId != null) {
+                db.update("experience_records", values, "id = ?", arrayOf(recentId))
+            } else {
+                0
+            }
+        }
+        return db.update("experience_records", values, "task_id = ? OR id = ?", arrayOf(taskId, taskId))
     }
 
     fun getRecentLessonsForPrompt(limit: Int = 15): List<ExperienceRecord> {

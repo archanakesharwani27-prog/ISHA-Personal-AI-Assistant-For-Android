@@ -467,19 +467,27 @@ object AuraDynamicIsland {
 
     private fun toggleExpandedState() {
         isExpanded = !isExpanded
-        // Animate height change
+        // Animate height change using WindowManager.LayoutParams (NOT ViewGroup.MarginLayoutParams!)
+        // The overlay view is managed by WindowManager, so we must use updateViewLayout().
         val ov = overlayView ?: return
+        val wm = windowManager ?: return
+        val wmParams = ov.layoutParams as? WindowManager.LayoutParams ?: return
+
         val startHeight = if (isExpanded) 48.dp(ov.context) else 80.dp(ov.context)
-        val endHeight = if (isExpanded) 80.dp(ov.context) else 48.dp(ov.context)
+        val endHeight   = if (isExpanded) 80.dp(ov.context) else 48.dp(ov.context)
 
         val anim = ValueAnimator.ofInt(startHeight, endHeight).apply {
             duration = EXPAND_COLLAPSE_MS
             interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener { animator ->
                 val height = animator.animatedValue as Int
-                val params = ov.layoutParams as ViewGroup.MarginLayoutParams
-                params.height = height
-                ov.layoutParams = params
+                try {
+                    wmParams.height = height
+                    wm.updateViewLayout(ov, wmParams)
+                } catch (e: Exception) {
+                    Log.w(TAG, "updateViewLayout failed during expand animation: ${e.message}")
+                    cancel()
+                }
             }
         }
         anim.start()
@@ -853,31 +861,21 @@ object AuraDynamicIsland {
 
     private fun launchApp(ctx: Context, appName: String) {
         try {
-            val pm = ctx.packageManager
-            val pkg = when (appName.lowercase()) {
-                "whatsapp" -> "com.whatsapp"
-                "gmail" -> "com.google.android.gm"
-                "youtube" -> "com.google.android.youtube"
-                "chrome" -> "com.android.chrome"
-                "settings" -> "com.android.settings"
-                "spotify" -> "com.spotify.music"
-                "instagram" -> "com.instagram.android"
-                "telegram" -> "org.telegram.messenger"
-                else -> null
-            }
-            val intent = if (pkg != null) pm.getLaunchIntentForPackage(pkg) else null
+            val intent = com.aura.assistant.ai.JarvisToolRegistry.resolveAppIntent(ctx, appName)
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 ctx.startActivity(intent)
             } else {
-                val searchIntent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // If package is unresolvable directly, use Accessibility service's intelligent home search fallback
+                val a11y = com.aura.assistant.AuraAccessibilityService.instance
+                if (a11y != null) {
+                    a11y.armAppSearchAndLaunch(appName)
+                } else {
+                    Log.w(TAG, "Cannot launch app '$appName': not found and AccessibilityService not active")
                 }
-                ctx.startActivity(searchIntent)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Open app error", e)
+            Log.w(TAG, "Open app error for $appName", e)
         }
     }
 

@@ -1400,12 +1400,11 @@ class AuraAccessibilityService : AccessibilityService() {
     // ── New: Facebook Post ────────────────────────────────────────────────────
 
     fun armFacebookPost(text: String) {
-        pendingPlan = listOf(
+        startPlan("facebook_post", listOf(
             A11yStep(clickHint = "what's on your mind", delayMs = 800),
             A11yStep(typeText  = text,                  delayMs = 600),
             A11yStep(clickHint = "post",                delayMs = 800),
-        )
-        planIndex = 0
+        ))
     }
 
     // ── New: App Search Bar Launch Fallback ──────────────────────────────────
@@ -1419,13 +1418,11 @@ class AuraAccessibilityService : AccessibilityService() {
      */
     fun armAppSearchAndLaunch(appName: String) {
         performGlobalAction(GLOBAL_ACTION_HOME)
-        pendingPlan = listOf(
+        startPlan("app_search_launch", listOf(
             A11yStep(clickHint = "search",            delayMs = 700),
             A11yStep(typeText  = appName,             delayMs = 600),
             A11yStep(clickHint = appName.lowercase(), delayMs = 800),
-        )
-        planIndex = 0
-        scheduleNextStep(pendingPlan!!)
+        ))
     }
 
     // ── New: Swipe Gesture ────────────────────────────────────────────────────
@@ -1615,18 +1612,30 @@ class AuraAccessibilityService : AccessibilityService() {
 
     private fun findFocusedEditText(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (root == null) return null
-        if (root.isFocused && root.isEditable) return root
-        for (i in 0 until root.childCount) {
-            val found = findFocusedEditText(root.getChild(i))
-            if (found != null) return found
+        // 1. First pass: look specifically for focused + editable
+        fun searchFocused(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.isFocused && node.isEditable) return node
+            for (i in 0 until node.childCount) {
+                val found = searchFocused(node.getChild(i))
+                if (found != null) return found
+            }
+            return null
         }
-        // Fallback: find any editable field
-        if (root.isEditable) return root
-        for (i in 0 until root.childCount) {
-            val found = findFocusedEditText(root.getChild(i))
-            if (found != null) return found
+        val focused = searchFocused(root)
+        if (focused != null) return focused
+
+        // 2. Second pass fallback: any editable field
+        fun searchAnyEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.isEditable) return node
+            for (i in 0 until node.childCount) {
+                val found = searchAnyEditable(node.getChild(i))
+                if (found != null) return found
+            }
+            return null
         }
-        return null
+        return searchAnyEditable(root)
     }
 
     private fun clickFirstMatch(root: AccessibilityNodeInfo, hints: List<String>): Boolean {

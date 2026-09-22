@@ -107,8 +107,18 @@ class GeminiChatService(private val context: Context) {
             } catch (_: Exception) {}
         }
 
+        // Check if user's prompt matches a user-taught command rule
+        val matchingRule = AuraMemoryManager.findMatchingRule(context, newPrompt)
+        val promptToSend = if (matchingRule != null) {
+            Log.i(TAG, "🎯 Taught Rule Matched for prompt '$newPrompt': trigger='${matchingRule.triggerPattern}', action='${matchingRule.actionInstruction}', tool=${matchingRule.primaryTool}")
+            val toolHint = if (!matchingRule.primaryTool.isNullOrBlank()) " using tool '${matchingRule.primaryTool}'" else ""
+            "$newPrompt\n\n[USER-TAUGHT ACTION RULE ACTIVE]: The Boss taught you that for trigger '${matchingRule.triggerPattern}', you MUST execute: ${matchingRule.actionInstruction}$toolHint. Execute this exact action now!"
+        } else {
+            newPrompt
+        }
+
         val apiKey = Secrets.getActiveGeminiKey()
-        val requestBodyJson = buildRequestBody(history, newPrompt, imageBytes)
+        val requestBodyJson = buildRequestBody(history, promptToSend, imageBytes)
         val bodyStr = requestBodyJson.toString()
 
         var lastErrorMsg = "Gemini API Error"
@@ -452,10 +462,10 @@ class GeminiChatService(private val context: Context) {
 
         Log.i(TAG, "buildRequestBody: prompt='$newPrompt', historySize=${history.size}, totalTurns=${contents.size()}")
 
-        // 3. Tools (Function Declarations) - Dynamically retrieved relevant subset (5-15 tools)
+        // 3. Tools (Function Declarations) - Full comprehensive catalog
         val tools = JsonArray().apply {
             val toolHolder = JsonObject()
-            toolHolder.add("function_declarations", JarvisToolRegistry.getRelevantToolDeclarations(newPrompt, minCount = 5, maxCount = 15))
+            toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
             add(toolHolder)
         }
         root.add("tools", tools)

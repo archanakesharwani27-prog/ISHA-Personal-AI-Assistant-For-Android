@@ -122,7 +122,7 @@ object ExecutionVerifier {
                 "install_store_app", "toggle_dark_mode", "show_recent_media",
                 "empty_recycle_bin", "set_timer", "create_alarm", "navigate_maps",
                 "open_camera", "add_calendar_event", "send_email", "emergency_sos",
-                "create_quick_note", "remember_fact", "perform_app_action",
+                "create_quick_note", "remember_fact", "teach_command_rule", "perform_app_action",
                 "search_files", "delete_file", "take_screenshot", "share_media",
                 "media_control", "type_text" -> {
                     val isSuccess = status == null || status == "success" || status == "settings_opened"
