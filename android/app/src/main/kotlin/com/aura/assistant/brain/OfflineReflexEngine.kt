@@ -107,9 +107,23 @@ object OfflineReflexEngine {
             }
         }
 
-        // 5. WiFi Toggle
-        if (clean.contains("wifi") || clean.contains("wi-fi")) {
-            val isOff = clean.contains("band") || clean.contains("off") || clean.contains("disconnect")
+        // 5. WiFi Toggle — requires explicit action verbs.
+        //    Queries like "wifi ka naam batao" or "wifi password kya hai" must fall through
+        //    to Gemini which handles them via get_device_connectivity_and_usage.
+        val isWifiQuery = clean.contains("naam") || clean.contains("name") ||
+            clean.contains("password") || clean.contains("pasword") ||
+            clean.contains("kya hai") || clean.contains("kaunsa") || clean.contains("kaun sa") ||
+            clean.contains("kitna") || clean.contains("speed") || clean.contains("connected") ||
+            (clean.contains("batao") && !clean.contains(" on") && !clean.contains("chalu"))
+        val isWifiToggle = (clean.contains("wifi") || clean.contains("wi-fi")) &&
+            !isWifiQuery &&
+            (clean.contains(" on") || clean.startsWith("on ") || clean.contains("off") ||
+             clean.contains("band") || clean.contains("chalu") || clean.contains("chalao") ||
+             clean.contains("shuru") || clean.contains("toggle") ||
+             clean.contains("connect") || clean.contains("disconnect") ||
+             clean.contains("enable") || clean.contains("disable"))
+        if (isWifiToggle) {
+            val isOff = clean.contains("band") || clean.contains("off") || clean.contains("disconnect") || clean.contains("disable")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
             val result = if (execute) JarvisToolRegistry.executeTool(context, "toggle_wifi", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
@@ -326,6 +340,26 @@ object OfflineReflexEngine {
     }
 
     private fun extractHour(text: String): Int? {
+        // Handle "saade X" (X:30), "paune X" (X-0:15 = prev hour + 45min)
+        val saadePattern = Pattern.compile("(saade|saadhe|sade)\\s*(\\d{1,2})")
+        val saadeMatcher = saadePattern.matcher(text)
+        if (saadeMatcher.find()) {
+            var h = saadeMatcher.group(2)?.toIntOrNull() ?: 0
+            if (text.contains("pm") || text.contains("shaam") || text.contains("raat")) {
+                if (h in 1..11) h += 12
+            }
+            return h.coerceIn(0, 23)
+        }
+        val paPattern = Pattern.compile("(paune|paon)\\s*(\\d{1,2})")
+        val paMatcher = paPattern.matcher(text)
+        if (paMatcher.find()) {
+            // "paune 7" = 6:45, so hour is X-1
+            var h = (paMatcher.group(2)?.toIntOrNull() ?: 1) - 1
+            if (text.contains("pm") || text.contains("shaam") || text.contains("raat")) {
+                if (h in 1..11) h += 12
+            }
+            return h.coerceIn(0, 23)
+        }
         val p = Pattern.compile("(\\d{1,2})\\s*(baje|am|pm|:)?")
         val m = p.matcher(text)
         if (m.find()) {
@@ -339,11 +373,36 @@ object OfflineReflexEngine {
     }
 
     private fun extractMinute(text: String): Int? {
-        val p = Pattern.compile("\\d{1,2}:(\\d{2})")
-        val m = p.matcher(text)
-        if (m.find()) {
-            return m.group(1)?.toIntOrNull()
+        // 1. Standard HH:MM colon format — "6:30", "7:45"
+        val colonPattern = Pattern.compile("\\d{1,2}:(\\d{2})")
+        val colonMatcher = colonPattern.matcher(text)
+        if (colonMatcher.find()) {
+            return colonMatcher.group(1)?.toIntOrNull()
         }
+
+        // 2. "bajke X minute" / "bajkar X min" — "6 bajke 30 minute alarm"
+        val bajkePattern = Pattern.compile("baj[a-z]*\\s+(\\d{1,2})\\s*(minute|min|mins)?")
+        val bajkeMatcher = bajkePattern.matcher(text)
+        if (bajkeMatcher.find()) {
+            val mins = bajkeMatcher.group(1)?.toIntOrNull() ?: return null
+            if (mins in 0..59) return mins
+        }
+
+        // 3. Space-separated — "6 30 alarm": second distinct number after the hour number
+        //    Pattern: <hour_digits> <space> <minute_digits_0-59>
+        val spacePattern = Pattern.compile("(\\d{1,2})\\s+(\\d{1,2})(?:\\s|$)")
+        val spaceMatcher = spacePattern.matcher(text)
+        if (spaceMatcher.find()) {
+            val mins = spaceMatcher.group(2)?.toIntOrNull() ?: return null
+            if (mins in 1..59) return mins  // ignore 0 (handled by default)
+        }
+
+        // 4. Hindi time-fraction words
+        if (text.contains("saade") || text.contains("saadhe") || text.contains("sade") ||
+            text.contains("half") || text.contains("tees")) return 30
+        if (text.contains("paune") || text.contains("paon")) return 45
+        if (text.contains("sawaa") || text.contains("sawa") || text.contains("quarter")) return 15
+
         return null
     }
 

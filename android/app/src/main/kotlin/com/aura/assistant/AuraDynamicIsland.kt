@@ -100,15 +100,18 @@ object AuraDynamicIsland {
     }
 
     @Volatile private var currentReason: String = "wake"
+    @Volatile var isAppInForeground = false
 
     /** Show the Dynamic Island bubble. Safe to call from any thread. */
     fun show(context: Context, reason: String = "wake") {
+        if (isAppInForeground && reason != "shake") return
         handler.post { _show(context.applicationContext, reason) }
     }
 
     /** Real-time live state update from Gemini Live (Listening, Thinking, Speaking) */
     fun updateLiveState(ctx: Context? = null, state: com.aura.assistant.ai.AuraLiveState, amplitude: Float = 0f) {
         handler.post {
+            if (isAppInForeground) return@post
             val targetCtx = ctx ?: overlayView?.context
             // If Aura is engaged in background and island is not visible, spawn it immediately
             if (overlayView == null && targetCtx != null && state in listOf(
@@ -209,9 +212,53 @@ object AuraDynamicIsland {
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = 0
-            y = 12.dp(ctx) // Just below status bar / notch
+            gravity = Gravity.TOP or Gravity.START
+            x = (screenWidth - pillWidth) / 2
+            y = 52.dp(ctx) // Positioned comfortably below camera cutout
+        }
+
+        // Enable dragging so user can move pill anywhere on screen
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        var isDragging = false
+
+        overlay.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    isDragging = false
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    if (Math.hypot(dx.toDouble(), dy.toDouble()) > 10) {
+                        isDragging = true
+                        params.x = (initialX + dx).toInt().coerceIn(0, screenWidth - pillWidth)
+                        params.y = (initialY + dy).toInt().coerceIn(0, displayMetrics.heightPixels - pillHeight)
+                        try {
+                            wm.updateViewLayout(overlay, params)
+                        } catch (_: Exception) {}
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isDragging) {
+                        true
+                    } else {
+                        view.performClick()
+                        false
+                    }
+                }
+                else -> false
+            }
         }
 
         try {

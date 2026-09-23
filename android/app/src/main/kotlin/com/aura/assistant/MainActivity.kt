@@ -29,7 +29,6 @@ import androidx.activity.viewModels
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
 import com.aura.assistant.ui.screens.AuraMainScreen
 import com.aura.assistant.ui.theme.AuraTheme
-import com.aura.assistant.training.AuraTrainingEngine
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -51,14 +50,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     // ── Shake Sensor State ─────────────────────────────────────────────────────
     private var sensorManager: SensorManager? = null
     private var accelerometer: Sensor? = null
-    private var isShakeDetectionEnabled = true
+    private var isShakeDetectionEnabled = false
 
     // ── Settings Toggle Receivers ──────────────────────────────────────────────
     private val shakeToggleReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.aura.assistant.SHAKE_TOGGLE") {
-                val enabled = intent.getBooleanExtra("enabled", true)
+                val enabled = intent.getBooleanExtra("enabled", false)
                 isShakeDetectionEnabled = enabled
+                getSharedPreferences("aura_settings", Context.MODE_PRIVATE).edit().putBoolean("shake_enabled", enabled).apply()
                 if (enabled && accelerometer != null) {
                     sensorManager?.registerListener(this@MainActivity, accelerometer, SensorManager.SENSOR_DELAY_UI)
                     Log.i(TAG, "Shake detection ENABLED")
@@ -189,15 +189,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         initShakeSensor()
         initNativeTts()
 
-        // ── Seed AURA training corpus into ExperienceMemory (background, idempotent) ──
-        Thread {
-            try {
-                AuraTrainingEngine.seedIfNeeded(applicationContext)
-                Log.i(TAG, "AuraTrainingEngine seed complete.")
-            } catch (e: Exception) {
-                Log.e(TAG, "AuraTrainingEngine seed failed", e)
-            }
-        }.apply { name = "aura-training-seed"; isDaemon = true; start() }
 
         startWakeWordService()
         handleWakeIntent(intent)
@@ -386,6 +377,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun initShakeSensor() {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        isShakeDetectionEnabled = getSharedPreferences("aura_settings", Context.MODE_PRIVATE).getBoolean("shake_enabled", false)
         if (isShakeDetectionEnabled && accelerometer != null) {
             sensorManager?.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
         }
@@ -394,17 +386,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     override fun onResume() {
         super.onResume()
         instance = this
+        AuraDynamicIsland.isAppInForeground = true
+        AuraDynamicIsland.hide()
+        isShakeDetectionEnabled = getSharedPreferences("aura_settings", Context.MODE_PRIVATE).getBoolean("shake_enabled", false)
         if (isShakeDetectionEnabled && accelerometer != null) {
             sensorManager?.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
-        }
-        if (!viewModel.isLiveScreenSharing.value) {
-            AuraDynamicIsland.hide()
+        } else {
+            sensorManager?.unregisterListener(this)
         }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         try {
+            AuraDynamicIsland.isAppInForeground = false
             if (Settings.canDrawOverlays(this)) {
                 val isVoiceActive = viewModel.isVoiceModeActive.value
                 val isScreenShareActive = viewModel.isLiveScreenSharing.value
@@ -412,8 +407,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     AuraDynamicIsland.show(this, "screen_share")
                 } else if (isVoiceActive) {
                     AuraDynamicIsland.show(this, "voice_mode")
-                } else {
-                    AuraDynamicIsland.show(this, "auto_overlay")
                 }
             }
         } catch (e: Exception) {
@@ -423,10 +416,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onPause() {
         sensorManager?.unregisterListener(this)
+        AuraDynamicIsland.isAppInForeground = false
         super.onPause()
         try {
-            if (Settings.canDrawOverlays(this) && viewModel.isVoiceModeActive.value) {
-                AuraDynamicIsland.show(this, "voice_mode")
+            if (Settings.canDrawOverlays(this) && (viewModel.isVoiceModeActive.value || viewModel.isLiveScreenSharing.value)) {
+                AuraDynamicIsland.show(this, if (viewModel.isLiveScreenSharing.value) "screen_share" else "voice_mode")
             }
         } catch (_: Exception) {}
     }
@@ -447,7 +441,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        if (!isShakeDetectionEnabled || event == null) return
+        if (!isShakeDetectionEnabled || event == null) {
+            sensorManager?.unregisterListener(this)
+            return
+        }
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]

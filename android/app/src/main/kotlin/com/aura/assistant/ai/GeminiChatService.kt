@@ -34,21 +34,21 @@ class GeminiChatService(private val context: Context) {
 
     companion object {
         private const val TAG = "GeminiChatService"
-        // Models verified live on user API key:
+        // Models prioritized by availability — each is a DISTINCT fallback.
+        // gemini-3.5-flash is primary (tested and verified working).
         private val CANDIDATE_MODELS = listOf(
-            "gemini-flash-lite-latest",
-            "gemini-2.5-flash-lite",
+            "gemini-3.5-flash",
             "gemini-2.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash"
+            "gemini-2.0-flash",
+            "gemini-flash-latest"
         )
     }
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
     private var activeCall: Call? = null
@@ -150,11 +150,24 @@ class GeminiChatService(private val context: Context) {
                     400 -> "Bad request — check request format"
                     401, 403 -> "API key invalid or quota exceeded"
                     404 -> "Model not found ($model)"
-                    429 -> "Rate limit reached"
+                    429 -> "Rate limit reached — thoda wait karein Boss"
+                    503 -> "Server thoda busy hai Boss — ek second mein try karti hoon!"
                     else -> "Gemini API Error (${response.code})"
                 }
-                // If 404 or 429, try next fallback model
-                if (response.code == 404 || response.code == 429 || response.code >= 500) {
+                // If 404, 429, 5xx or model deprecated/unsupported in 400, try next fallback model
+                val isUnsupportedModel = response.code == 400 && (
+                    errBody.contains("not available", ignoreCase = true) ||
+                    errBody.contains("not supported", ignoreCase = true) ||
+                    errBody.contains("update your code", ignoreCase = true)
+                )
+                if (response.code == 503 || response.code == 429) {
+                    // Server overloaded — wait before trying next model to avoid hammering
+                    val delayMs = if (response.code == 503) 1500L else 2000L
+                    Log.w(TAG, "HTTP ${response.code} from $model, waiting ${delayMs}ms before fallback...")
+                    delay(delayMs)
+                    continue
+                }
+                if (response.code == 404 || response.code > 500 || isUnsupportedModel) {
                     continue
                 } else {
                     callback.onError(lastErrorMsg)
@@ -317,6 +330,19 @@ class GeminiChatService(private val context: Context) {
                     }
                     parts.add(fnRespPart)
                 }
+                // Inject a reminder so Gemini continues calling tools for remaining tasks
+                // in the original compound/multi-task request instead of giving a text reply.
+                val taskReminderPart = JsonObject().apply {
+                    addProperty(
+                        "text",
+                        "[AURA_TASK_ENGINE — Step $currentStep complete]: Tool executed successfully. " +
+                        "Original user request was: \"$originalPrompt\". " +
+                        "Agar is request mein aur tasks baaki hain jo abhi execute NAHI hue, " +
+                        "to IMMEDIATELY unka tool call karo — text response MAT do abhi! " +
+                        "Sare requested tasks complete hone ke baad hi final summary do."
+                    )
+                }
+                parts.add(taskReminderPart)
                 add("parts", parts)
             }
             contents.add(fnResponseTurn)
@@ -338,7 +364,18 @@ class GeminiChatService(private val context: Context) {
         val call = client.newCall(request)
         activeCall = call
 
-        val response = withContext(Dispatchers.IO) { call.execute() }
+        val response = try {
+            withContext(Dispatchers.IO) { call.execute() }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "Tool response stream failed: ${e.message}, falling back to tool output")
+            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
+                res.get("message")?.asString ?: "$name complete kar diya gaya hai Boss."
+            }
+            callback.onComplete(fallback)
+            return
+        }
+
         if (!response.isSuccessful) {
             val fallback = executedTools.joinToString("\n") { (name, _, res) ->
                 res.get("message")?.asString ?: "$name complete kar diya gaya hai Boss."
@@ -391,7 +428,7 @@ class GeminiChatService(private val context: Context) {
 
         // Multi-Step Autonomous ReAct Planning:
         // If the model chained another function call (e.g. open_app -> get_screen_context -> find_and_tap)
-        if (nextPendingFunctionCalls.isNotEmpty() && currentStep < 4) {
+        if (nextPendingFunctionCalls.isNotEmpty() && currentStep < 8) {
             Log.i(TAG, "Multi-step tool chaining: Step $currentStep complete, executing next ${nextPendingFunctionCalls.size} tools")
             val nextExecutedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
             for (fnCall in nextPendingFunctionCalls) {

@@ -188,13 +188,17 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     private fun loadInitialSessions() {
         viewModelScope.launch(Dispatchers.IO) {
             val all = repository.getAllSessions()
-            _sessions.value = all
-            val first = all.firstOrNull()
-            if (first != null) {
-                selectSession(first.id)
-            } else {
-                createNewChat()
+            // Clean up any empty ghost sessions (sessions with 0 messages)
+            for (s in all) {
+                if (repository.getMessages(s.id).isEmpty()) {
+                    repository.deleteSession(s.id)
+                }
             }
+            val remaining = repository.getAllSessions()
+            _sessions.value = remaining
+            // Fresh screen on cold launch (ChatGPT / Gemini style): clean screen, no auto-load of old chat
+            _activeSessionId.value = ""
+            _chatMessages.value = emptyList()
         }
     }
 
@@ -203,9 +207,8 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     fun createNewChat() {
         viewModelScope.launch(Dispatchers.IO) {
             stopGeneration()
-            val newSession = repository.createSession("New Chat")
-            _sessions.value = repository.getAllSessions()
-            _activeSessionId.value = newSession.id
+            // Fresh screen for new chat: lazy creation, do not insert into SQLite until first prompt sent
+            _activeSessionId.value = ""
             _chatMessages.value = emptyList()
         }
     }
@@ -339,9 +342,15 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         _selectedAttachment.value = null // consume attachment
 
-        val currentSessionId = _activeSessionId.value.ifBlank {
-            val newSess = repository.createSession()
+        val currentSessionId = if (_activeSessionId.value.isNotBlank()) {
+            _activeSessionId.value
+        } else {
+            val autoTitle = if (trimmed.isNotBlank()) {
+                if (trimmed.length > 28) trimmed.take(25) + "..." else trimmed
+            } else "New Chat"
+            val newSess = repository.createSession(autoTitle)
             _activeSessionId.value = newSess.id
+            _sessions.value = repository.getAllSessions()
             newSess.id
         }
 
@@ -657,6 +666,17 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         _isShakeEnabled.value = enabled
         prefs.edit().putBoolean("shake_enabled", enabled).apply()
         val app = getApplication<Application>()
+        try {
+            val serviceIntent = Intent(app, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_CONFIG
+                putExtra(WakeWordService.EXTRA_SHAKE_ENABLED, enabled)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                app.startForegroundService(serviceIntent)
+            } else {
+                app.startService(serviceIntent)
+            }
+        } catch (_: Exception) {}
         app.sendBroadcast(Intent("com.aura.assistant.SHAKE_TOGGLE").apply {
             putExtra("enabled", enabled)
             setPackage(app.packageName)

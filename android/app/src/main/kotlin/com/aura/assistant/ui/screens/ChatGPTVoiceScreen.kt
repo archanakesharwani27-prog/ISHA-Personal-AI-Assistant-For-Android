@@ -20,7 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -39,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.aura.assistant.ai.AuraLiveState
 import com.aura.assistant.ui.components.CosmicEnergyOrb
 import com.aura.assistant.ui.theme.*
@@ -76,6 +80,7 @@ fun ChatGPTVoiceScreen(
     val coroutineScope = rememberCoroutineScope()
     var isMuted by remember { mutableStateOf(false) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
+    var showScreenShareConfirmDialog by remember { mutableStateOf(false) }
 
     // Transient feedback auto-dismiss
     LaunchedEffect(feedbackMessage) {
@@ -340,13 +345,7 @@ fun ChatGPTVoiceScreen(
                                 onStopScreenSharing()
                                 feedbackMessage = "Screen sharing stopped"
                             } else {
-                                feedbackMessage = "Screen sharing active — show any screen to AURA"
-                                val activity = context as? Activity
-                                activity?.moveTaskToBack(true)
-                                try {
-                                    com.aura.assistant.AuraDynamicIsland.show(context, "screen_share")
-                                } catch (_: Exception) {}
-                                onSendScreenCapture()
+                                showScreenShareConfirmDialog = true
                             }
                         }
                     )
@@ -384,6 +383,164 @@ fun ChatGPTVoiceScreen(
                         isActive = false,
                         onClick = onCloseVoiceMode
                     )
+                }
+            }
+        }
+
+        // ── 6. Live Screen Sharing Glowing Banner ──────────────────────────────
+        AnimatedVisibility(
+            visible = isScreenSharing,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(top = 18.dp, start = 20.dp, end = 20.dp)
+        ) {
+            Surface(
+                color = Color(0xFF1E1010).copy(alpha = 0.95f),
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.7f)),
+                shadowElevation = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFF5252))
+                        )
+                        Text(
+                            text = "Live Screen Sharing • AURA is watching",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Surface(
+                        color = Color(0xFFFF5252).copy(alpha = 0.25f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.clickable {
+                            onStopScreenSharing()
+                            feedbackMessage = "Screen sharing stopped"
+                        }
+                    ) {
+                        Text(
+                            text = "Stop",
+                            color = Color(0xFFFF8A80),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── 7. Screen Share Confirmation Dialog (Gemini Style) ─────────────────
+        if (showScreenShareConfirmDialog) {
+            Dialog(onDismissRequest = { showScreenShareConfirmDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF131826),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f)),
+                    shadowElevation = 24.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF00E5FF).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ScreenShare,
+                                contentDescription = null,
+                                tint = Color(0xFF00E5FF),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Share screen with AURA?",
+                            style = AuraTypography.titleMedium.copy(
+                                color = Color.White,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "AURA will be able to see whatever is displayed on your screen in real time to assist you with apps, text, and tasks.",
+                            style = AuraTypography.bodySmall.copy(
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showScreenShareConfirmDialog = false },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color.White.copy(alpha = 0.8f)
+                                )
+                            ) {
+                                Text("Cancel", fontSize = 14.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    showScreenShareConfirmDialog = false
+                                    feedbackMessage = "Screen sharing active — show any screen to AURA"
+                                    val activity = context as? Activity
+                                    activity?.moveTaskToBack(true)
+                                    try {
+                                        com.aura.assistant.AuraDynamicIsland.show(context, "screen_share")
+                                    } catch (_: Exception) {}
+                                    onSendScreenCapture()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00E5FF),
+                                    contentColor = Color(0xFF030712)
+                                )
+                            ) {
+                                Text("Start", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        }
+                    }
                 }
             }
         }

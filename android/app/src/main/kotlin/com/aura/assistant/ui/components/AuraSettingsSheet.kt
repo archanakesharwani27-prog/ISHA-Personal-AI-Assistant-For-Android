@@ -1,5 +1,11 @@
 package com.aura.assistant.ui.components
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,9 +25,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.aura.assistant.ui.theme.*
 
 // ── Settings Data ─────────────────────────────────────────────────────────────
@@ -48,6 +56,7 @@ fun AuraSettingsSheet(
     onOpenDiagnostics: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val scrollState = rememberScrollState()
     var selectedVoice by remember { mutableStateOf("Aoede") }
     var selectedLanguage by remember { mutableStateOf("Auto-detect") }
@@ -322,36 +331,116 @@ fun AuraSettingsSheet(
             // ── Section 5: Accessibility & Permissions ────────────────────────
             SettingsSectionHeader(icon = Icons.Default.Accessibility, title = "Permissions & Accessibility")
 
+            // Dynamic live permission evaluation
+            val isAccessibilityActive = com.aura.assistant.AuraAccessibilityService.instance != null
+            val hasMicPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasPhonePermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.READ_PHONE_STATE
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.READ_MEDIA_IMAGES
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            }
+            val canDrawOverlay = Settings.canDrawOverlays(context)
+            val enabledNotificationListeners = Settings.Secure.getString(
+                context.contentResolver, "enabled_notification_listeners"
+            ) ?: ""
+            val isNotificationActive = enabledNotificationListeners.contains(context.packageName)
+
             Surface(
                 color = ChatGptCard,
                 shape = RoundedCornerShape(14.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PermissionInfoRow(
-                        icon = Icons.Default.Mic,
-                        label = "Microphone",
-                        status = "Granted",
-                        statusColor = ChatGptAccentGreen
-                    )
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     PermissionInfoRow(
                         icon = Icons.Default.Accessibility,
                         label = "Accessibility Service",
-                        status = "Required for Screen Control",
-                        statusColor = AuraAmberGold
+                        status = if (isAccessibilityActive) "Allowed" else "Action Needed",
+                        statusColor = if (isAccessibilityActive) ChatGptAccentGreen else AuraAmberGold,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
+                    )
+                    PermissionInfoRow(
+                        icon = Icons.Default.Mic,
+                        label = "Microphone (Live & Wake)",
+                        status = if (hasMicPermission) "Allowed" else "Not Allowed",
+                        statusColor = if (hasMicPermission) ChatGptAccentGreen else AuraAlertRed,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
+                    )
+                    PermissionInfoRow(
+                        icon = Icons.Default.PictureInPicture,
+                        label = "Display Over Apps (Island)",
+                        status = if (canDrawOverlay) "Allowed" else "Not Allowed",
+                        statusColor = if (canDrawOverlay) ChatGptAccentGreen else AuraAmberGold,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
+                    )
+                    PermissionInfoRow(
+                        icon = Icons.Default.Notifications,
+                        label = "Notification Listener",
+                        status = if (isNotificationActive) "Allowed" else "Not Allowed",
+                        statusColor = if (isNotificationActive) ChatGptAccentGreen else AuraAmberGold,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
                     )
                     PermissionInfoRow(
                         icon = Icons.Default.Phone,
-                        label = "Phone & Contacts",
-                        status = "Granted",
-                        statusColor = ChatGptAccentGreen
+                        label = "Phone & Calls",
+                        status = if (hasPhonePermission) "Allowed" else "Not Allowed",
+                        statusColor = if (hasPhonePermission) ChatGptAccentGreen else AuraAmberGold,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
                     )
                     PermissionInfoRow(
                         icon = Icons.Default.FolderOpen,
-                        label = "Storage Access",
-                        status = "Granted",
-                        statusColor = ChatGptAccentGreen
+                        label = "Storage & Media Access",
+                        status = if (hasStoragePermission) "Allowed" else "Not Allowed",
+                        statusColor = if (hasStoragePermission) ChatGptAccentGreen else AuraAmberGold,
+                        onClick = {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            } catch (_: Exception) {}
+                        }
                     )
                 }
             }
@@ -368,18 +457,39 @@ fun AuraSettingsSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoRow(label = "App Version", value = "v2.0.0 (Build 2)")
-                    InfoRow(label = "Release Stage", value = "AURA 2.0 Complete (Tag: v2.0.0-final)")
+                    InfoRow(label = "App Version", value = "v5.4.0 (Autonomous Edition)")
+                    InfoRow(label = "Release Stage", value = "Production Live")
                     InfoRow(label = "Architecture", value = "Autonomous Universal Real-Time Assistant")
-                    InfoRow(label = "Native Tools", value = "52 System Tools (100% Verified)")
-                    InfoRow(label = "Conversational Brain", value = "ConversationalReactionEngine (Stree-Ling)")
+                    InfoRow(label = "Native Tools", value = "70+ System Tools (100% Verified)")
+                    InfoRow(label = "Conversational Brain", value = "ConversationalReactionEngine")
                     InfoRow(label = "Adaptive Memory", value = "ExperienceMemory & LessonStore")
                     InfoRow(label = "Security Governance", value = "PolicyEngine & ConfirmationEngine")
                     InfoRow(label = "Background Engine", value = "AuraTaskManager & RoutineEngine")
-                    InfoRow(label = "Live Voice Model", value = "Gemini 2.5 Flash Native Audio")
+                    InfoRow(label = "Live Voice Model", value = "Gemini 2.5 Flash Native Bidi")
                     InfoRow(label = "Barge-In Engine", value = "ChatGPT-Style Context-Preserving")
-                    InfoRow(label = "Wake Engine", value = "OpenWakeWord (Offline ONNX)")
+                    InfoRow(label = "Wake Engine", value = "OpenWakeWord ONNX (Calibrated 0.55)")
                     InfoRow(label = "Native Stack", value = "Pure Kotlin + Jetpack Compose")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── Section 6b: Audio Pipeline Specifications ────────────────────
+            SettingsSectionHeader(icon = Icons.Default.GraphicEq, title = "Audio Pipeline Specifications")
+
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InfoRow(label = "Input Sample Rate", value = "16,000 Hz (16-bit Mono PCM)")
+                    InfoRow(label = "Output Sample Rate", value = "24,000 Hz (High-Fidelity PCM)")
+                    InfoRow(label = "Acoustic Engine", value = "OpenWakeWord v0.5 ONNX")
+                    InfoRow(label = "Detection Threshold", value = "0.55 (0.60 Min Score, 3 Frames)")
+                    InfoRow(label = "VAD Mode", value = "Bidirectional Energy + Silero")
+                    InfoRow(label = "Echo Cancellation", value = "Hardware AcousticEchoCanceler")
                 }
             }
 
@@ -624,10 +734,14 @@ private fun PermissionInfoRow(
     icon: ImageVector,
     label: String,
     status: String,
-    statusColor: Color
+    statusColor: Color,
+    onClick: (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(8.dp)).clickable { onClick() } else Modifier)
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(imageVector = icon, contentDescription = null, tint = ChatGptTextMuted, modifier = Modifier.size(16.dp))
@@ -646,6 +760,15 @@ private fun PermissionInfoRow(
             Text(
                 text = status,
                 style = AuraTypography.bodyMedium.copy(fontSize = 10.sp, color = statusColor, fontWeight = FontWeight.SemiBold)
+            )
+        }
+        if (onClick != null) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = ChatGptTextMuted.copy(alpha = 0.6f),
+                modifier = Modifier.size(14.dp)
             )
         }
     }

@@ -81,9 +81,9 @@ class WakeWordService : Service(), SensorEventListener {
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
         // A score spike from a single noise/clap frame is NOT a wake word.
         // Score must stay above MIN_SCORE for CONFIRM_FRAMES consecutive frames
-        // (~160ms @ 80ms/chunk) before we fire. This matches Google KWS behaviour.
-        private const val MIN_SCORE      = 0.12f  // Sensitive acoustic keyword threshold
-        private const val CONFIRM_FRAMES = 1       // Single hit triggers immediately for responsiveness
+        // (~240ms @ 80ms/chunk) before we fire. This prevents random voice false triggers.
+        private const val MIN_SCORE      = 0.60f  // Robust acoustic keyword threshold (prevents random noise triggers)
+        private const val CONFIRM_FRAMES = 3       // 3 consecutive frames required for confirmation
 
         // AURA Calibrated Double Quick-Shake Config
         private const val SHAKE_THRESHOLD       = 3.25f // Calibrated shake peak (3.25g)
@@ -94,7 +94,7 @@ class WakeWordService : Service(), SensorEventListener {
 
         @Volatile var isRunning = false
         @Volatile var wakeEnabled = false
-        @Volatile var shakeEnabled = true
+        @Volatile var shakeEnabled = false
         @Volatile var isPaused = false
         @Volatile var isTtsSpeaking = false  // True while Aura is speaking — prevents self-echo
 
@@ -156,6 +156,12 @@ class WakeWordService : Service(), SensorEventListener {
                     Log.i(TAG, "Device unlocked (ACTION_USER_PRESENT) — checking morning priority reminders")
                     checkAndTriggerMorningReminder(context ?: applicationContext)
                 }
+                "com.aura.assistant.SHAKE_TOGGLE" -> {
+                    val enabled = intent.getBooleanExtra("enabled", false)
+                    shakeEnabled = enabled
+                    if (enabled) startShakeSensor() else stopShakeSensor()
+                    Log.i(TAG, "Shake detection runtime toggle received in WakeWordService: enabled=$enabled")
+                }
             }
         }
     }
@@ -166,7 +172,8 @@ class WakeWordService : Service(), SensorEventListener {
 
     override fun onCreate() {
         super.onCreate()
-        // Register TTS broadcast receiver inline here
+        val prefs = getSharedPreferences("aura_settings", Context.MODE_PRIVATE)
+        shakeEnabled = prefs.getBoolean("shake_enabled", false)
         createSilentNotificationChannel()
         initShakeSensor()
         registerScreenReceiver()
@@ -180,6 +187,7 @@ class WakeWordService : Service(), SensorEventListener {
                 addAction(Intent.ACTION_USER_PRESENT)
                 addAction(ACTION_TTS_START)   // Flutter broadcasts when TTS starts speaking
                 addAction(ACTION_TTS_END)     // Flutter broadcasts when TTS finishes
+                addAction("com.aura.assistant.SHAKE_TOGGLE")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -233,7 +241,7 @@ class WakeWordService : Service(), SensorEventListener {
             }
             ACTION_CONFIG -> {
                 wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
-                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", true))
+                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
                 updateForegroundNotification()
                 if (!wakeEnabled || isPaused) pauseWakeEngine()
                 else if (isRunning) startWakeEngine()
@@ -244,8 +252,8 @@ class WakeWordService : Service(), SensorEventListener {
             else -> {
                 wakeEnabled = intent?.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
                     ?: prefs.getBoolean("wake_word_enabled", false)
-                shakeEnabled = intent?.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", true))
-                    ?: prefs.getBoolean("shake_enabled", true)
+                shakeEnabled = intent?.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
+                    ?: prefs.getBoolean("shake_enabled", false)
 
                 updateForegroundNotification()
                 startListening()
@@ -329,7 +337,10 @@ class WakeWordService : Service(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        if (!shakeEnabled || event == null) return
+        if (!shakeEnabled || event == null) {
+            stopShakeSensor()
+            return
+        }
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
@@ -471,8 +482,8 @@ class WakeWordService : Service(), SensorEventListener {
                 WakeWordModel(
                     name = phraseName,
                     modelPath = phrasePath,
-                    // Base threshold for acoustic chunk evaluation
-                    threshold = 0.05f
+                    // Calibrated threshold for acoustic chunk evaluation to prevent noise false triggers
+                    threshold = 0.55f
                 )
             )
 

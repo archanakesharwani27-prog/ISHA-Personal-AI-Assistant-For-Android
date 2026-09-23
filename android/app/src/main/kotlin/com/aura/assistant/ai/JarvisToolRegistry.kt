@@ -674,6 +674,14 @@ object JarvisToolRegistry {
             required = emptyList()
         ))
 
+        // 63. Get Network Data Usage & Connected Devices
+        toolsArray.add(createFunction(
+            name = "get_device_connectivity_and_usage",
+            desc = "Get real-time device network data consumption (Mobile Data and Wi-Fi data used in MB/GB), connected Wi-Fi name, personal hotspot status, connected hotspot devices count, and active connected Bluetooth devices (smartwatch, earbuds, headphones). ALWAYS call when user asks 'kitna data consume kiya', 'hotspot usage', 'kitna data bacha/use hua', 'kaun kaun si device connect hai', 'bluetooth devices connected', 'active connections'.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
         return toolsArray
     }
 
@@ -2064,6 +2072,8 @@ object JarvisToolRegistry {
                 "open_system_settings" -> {
                     val setting = args.get("setting_name")?.asString?.lowercase() ?: ""
                     val intentAction = when {
+                        setting.contains("hotspot") || setting.contains("tether") -> "android.settings.TETHER_SETTINGS"
+                        setting.contains("data") || setting.contains("usage") -> Settings.ACTION_DATA_USAGE_SETTINGS
                         setting.contains("wifi") || setting.contains("wi-fi") -> Settings.ACTION_WIFI_SETTINGS
                         setting.contains("bluetooth") || setting.contains("bt") -> Settings.ACTION_BLUETOOTH_SETTINGS
                         setting.contains("display") || setting.contains("screen") || setting.contains("refresh") -> Settings.ACTION_DISPLAY_SETTINGS
@@ -2689,6 +2699,109 @@ object JarvisToolRegistry {
                     result.addProperty("date", fullDate)
                     result.addProperty("spoken_time", spoken)
                     result.addProperty("message", "Abhi exact time $time12 ho raha hai Boss ($spoken), $fullDate. ⏰")
+                }
+
+                "get_device_connectivity_and_usage" -> {
+                    try {
+                        // 1. Data TrafficStats
+                        val mobileRx = android.net.TrafficStats.getMobileRxBytes()
+                        val mobileTx = android.net.TrafficStats.getMobileTxBytes()
+                        val totalRx = android.net.TrafficStats.getTotalRxBytes()
+                        val totalTx = android.net.TrafficStats.getTotalTxBytes()
+
+                        val mobileBytes = if (mobileRx > 0 && mobileTx > 0) mobileRx + mobileTx else 0L
+                        val totalBytes = if (totalRx > 0 && totalTx > 0) totalRx + totalTx else mobileBytes
+                        val wifiBytes = (totalBytes - mobileBytes).coerceAtLeast(0L)
+
+                        fun fmt(bytes: Long): String {
+                            val mb = bytes / (1024.0 * 1024.0)
+                            return if (mb >= 1024.0) String.format(Locale.US, "%.2f GB", mb / 1024.0)
+                            else String.format(Locale.US, "%.1f MB", mb)
+                        }
+
+                        // 2. Wi-Fi Status
+                        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                        val isWifiEnabled = wm?.isWifiEnabled == true
+                        val wifiInfo = wm?.connectionInfo
+                        val rawSsid = wifiInfo?.ssid?.replace("\"", "") ?: ""
+                        val ssid = if (isWifiEnabled && rawSsid.isNotBlank() && rawSsid != "<unknown ssid>") rawSsid else "Disconnected"
+
+                        // 3. Hotspot Status & Clients
+                        val isHotspotOn = try {
+                            val method = wm?.javaClass?.getMethod("isWifiApEnabled")
+                            method?.invoke(wm) as? Boolean ?: false
+                        } catch (_: Exception) { false }
+
+                        val hotspotClients = mutableListOf<String>()
+                        try {
+                            val arp = File("/proc/net/arp")
+                            if (arp.exists() && arp.canRead()) {
+                                arp.bufferedReader().useLines { lines ->
+                                    lines.drop(1).forEach { line ->
+                                        val parts = line.split("\\s+".toRegex())
+                                        if (parts.size >= 4 && parts[3] != "00:00:00:00:00:00" && parts[2] == "0x2") {
+                                            hotspotClients.add(parts[0])
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+
+                        // 4. Bluetooth Status & Connected Devices
+                        var isBtOn = false
+                        val btConnectedList = mutableListOf<String>()
+                        try {
+                            val btAdapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                            if (btAdapter != null) {
+                                isBtOn = btAdapter.isEnabled
+                                if (isBtOn) {
+                                    val bonded = btAdapter.bondedDevices ?: emptySet()
+                                    for (device in bonded) {
+                                        val isConnected = try {
+                                            val m = device.javaClass.getMethod("isConnected")
+                                            m.invoke(device) as? Boolean ?: false
+                                        } catch (_: Exception) { false }
+                                        if (isConnected) {
+                                            val name = try { device.name ?: device.address } catch (_: Exception) { device.address }
+                                            btConnectedList.add(name)
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+
+                        result.addProperty("status", "success")
+                        result.addProperty("mobile_data_used", fmt(mobileBytes))
+                        result.addProperty("wifi_data_used", fmt(wifiBytes))
+                        result.addProperty("total_data_used", fmt(totalBytes))
+                        result.addProperty("wifi_name", ssid)
+                        result.addProperty("hotspot_active", isHotspotOn)
+                        result.addProperty("hotspot_connected_count", hotspotClients.size)
+                        result.addProperty("bluetooth_active", isBtOn)
+                        result.addProperty("bluetooth_connected_devices", if (btConnectedList.isNotEmpty()) btConnectedList.joinToString(", ") else "None")
+
+                        val msg = StringBuilder()
+                        msg.append("Total data consume: ${fmt(totalBytes)} (Mobile: ${fmt(mobileBytes)}, Wi-Fi: ${fmt(wifiBytes)}). ")
+                        if (isHotspotOn) {
+                            msg.append("Hotspot ON hai aur ${hotspotClients.size} device connected hain. ")
+                        } else {
+                            msg.append("Hotspot OFF hai. ")
+                        }
+                        if (isBtOn) {
+                            if (btConnectedList.isNotEmpty()) {
+                                msg.append("Bluetooth connected devices: ${btConnectedList.joinToString(", ")}. ")
+                            } else {
+                                msg.append("Bluetooth ON hai lekin koi active device connect nahi hai. ")
+                            }
+                        } else {
+                            msg.append("Bluetooth OFF hai. ")
+                        }
+                        result.addProperty("message", msg.toString().trim())
+                        result.addProperty("follow_up_prompt", "State the data numbers and connected devices clearly in chat. Then ask: 'Boss, kya aap hotspot ya network settings me khud dekhna chahenge?'")
+                    } catch (e: Exception) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to read network stats")
+                    }
                 }
 
 

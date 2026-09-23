@@ -299,31 +299,6 @@ fun ChatGPTDrawer(
             Divider(color = ChatGptBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
 
             // ── Drawer Footer Items ────────────────────────────────────────────
-            // Commands shortcut
-            DrawerFooterItem(
-                icon = Icons.Default.AutoAwesome,
-                label = "AURA Commands",
-                subtitle = "What can AURA do?",
-                iconTint = ChatGptAccentCyan,
-                onClick = {
-                    onNewChat()
-                    // This triggers a special "help" message
-                }
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Accessibility Setup
-            DrawerFooterItem(
-                icon = Icons.Default.Accessibility,
-                label = "Enable Accessibility",
-                subtitle = "For screen control & WhatsApp",
-                iconTint = AuraAmberGold,
-                onClick = { /* open accessibility settings */ }
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
             // Settings Row
             Row(
                 modifier = Modifier
@@ -650,43 +625,7 @@ fun ChatMessageItem(
     val isTool = message.role == MessageRole.TOOL
 
     if (isTool) {
-        // Compact Tool Execution Pill
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Surface(
-                color = ChatGptCard,
-                shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "⚙️ ", fontSize = 12.sp)
-                    Text(
-                        text = message.toolName ?: "Tool executed",
-                        style = AuraTypography.bodyMedium.copy(
-                            color = ChatGptAccentGreen,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    )
-                    if (!message.toolResult.isNullOrBlank()) {
-                        Text(
-                            text = " • ${message.toolResult}",
-                            style = AuraTypography.bodyMedium.copy(
-                                color = ChatGptTextSecondary,
-                                fontSize = 11.sp
-                            )
-                        )
-                    }
-                }
-            }
-        }
+        // Suppress tool execution pill for pristine chat aesthetic
         return
     }
 
