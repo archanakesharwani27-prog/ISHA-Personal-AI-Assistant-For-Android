@@ -60,37 +60,54 @@ object JarvisToolRegistry {
         // 1. Calling
         toolsArray.add(createFunction(
             name = "make_call",
-            desc = "Place a phone call to a phone number or named contact.",
+            desc = "Place a phone call to a phone number or named contact. Call ONLY when the user explicitly commands to initiate or place a call (e.g. 'call Rahul', 'Mom ko phone lagao'). NEVER call when user only asks for a contact's number or details (use query_contact instead).",
             params = mapOf("phone_number" to "string", "contact_name" to "string"),
-            required = listOf("phone_number")
+            required = listOf("phone_number"),
+            paramDescriptions = mapOf(
+                "phone_number" to "Phone number with digits, or contact name if phone number is not known yet",
+                "contact_name" to "The full name of the contact as spoken by the user"
+            )
         ))
 
         // 2. SMS
         toolsArray.add(createFunction(
             name = "send_sms",
-            desc = "Send a text SMS message to a phone number.",
+            desc = "Send a standard cellular text SMS message to a phone number or contact. Call ONLY for SMS/text messaging. For WhatsApp messages, ALWAYS use send_whatsapp instead.",
             params = mapOf("phone_number" to "string", "message" to "string"),
-            required = listOf("phone_number", "message")
+            required = listOf("phone_number", "message"),
+            paramDescriptions = mapOf(
+                "phone_number" to "Recipient phone number or contact name",
+                "message" to "The exact text message content to send via SMS"
+            )
         ))
 
         // 3. WhatsApp (via Accessibility automation)
         toolsArray.add(createFunction(
             name = "send_whatsapp",
-            desc = "Send a WhatsApp text message to a named contact automatically.",
+            desc = "Send a WhatsApp text message to a named contact automatically. ALWAYS call when user asks to send a WhatsApp message (e.g. 'Rahul ko WhatsApp par hello bolo', 'Mom ko message bhejo WhatsApp pe').",
             params = mapOf("contact_name" to "string", "message" to "string"),
-            required = listOf("contact_name", "message")
+            required = listOf("contact_name", "message"),
+            paramDescriptions = mapOf(
+                "contact_name" to "Exact or approximate name of the WhatsApp contact as stored in contacts",
+                "message" to "The text message content to send"
+            )
         ))
 
         // WhatsApp Media & Screenshot Sender
         toolsArray.add(createFunction(
             name = "send_whatsapp_media",
-            desc = "Capture a screenshot or select the latest screenshot/photo, and automatically send it to a contact on WhatsApp.",
+            desc = "Capture a screenshot or select the latest screenshot/photo, and automatically send it to a contact on WhatsApp. ALWAYS call when user says 'screenshot leke Srishti ko bhej do', 'photo WhatsApp karo'.",
             params = mapOf(
                 "contact_name" to "string",
                 "media_type" to "string",
                 "caption" to "string"
             ),
-            required = listOf("contact_name")
+            required = listOf("contact_name"),
+            paramDescriptions = mapOf(
+                "contact_name" to "The name of the WhatsApp contact",
+                "media_type" to "'screenshot' to take fresh screenshot and send, or 'photo' for latest photo",
+                "caption" to "Optional text caption to accompany the media"
+            )
         ))
 
         // WhatsApp Chat & Media Deleter
@@ -101,13 +118,17 @@ object JarvisToolRegistry {
                 "contact_name" to "string",
                 "target" to "string"
             ),
-            required = listOf("contact_name")
+            required = listOf("contact_name"),
+            paramDescriptions = mapOf(
+                "contact_name" to "Name of the WhatsApp contact",
+                "target" to "What to delete: 'recent', 'photos', or 'chat'"
+            )
         ))
 
         // Screenshot Capture & Gallery Saver
         toolsArray.add(createFunction(
             name = "take_screenshot",
-            desc = "Capture a screenshot of the current Android screen using system accessibility and save it to the Gallery.",
+            desc = "Capture a screenshot of the current Android screen using system accessibility and save it to the Gallery. Call when user says 'screenshot lo', 'screen capture karo'. NEVER call when user asks to SHOW or OPEN an existing screenshot (use show_recent_media instead).",
             params = mapOf(),
             required = listOf()
         ))
@@ -122,31 +143,46 @@ object JarvisToolRegistry {
                 "caption" to "string",
                 "contact_name" to "string"
             ),
-            required = listOf()
+            required = listOf(),
+            paramDescriptions = mapOf(
+                "target_app" to "Target app: 'whatsapp', 'instagram', 'telegram', 'twitter', or 'system'",
+                "type" to "Media type: 'screenshot', 'photo', 'video', or 'document'",
+                "caption" to "Optional text caption",
+                "contact_name" to "Optional contact name if sharing to a specific person"
+            )
         ))
 
         // 4. Open Application
         toolsArray.add(createFunction(
             name = "open_app",
-            desc = "Launch an installed Android application by name (e.g. YouTube, Spotify, Camera, WhatsApp).",
+            desc = "Launch an installed Android application by name (e.g. WhatsApp, Instagram, Calculator, Settings, Chrome, Camera). Call ONLY when the user explicitly wants to open an application UI. NEVER call for playing music or videos (use play_youtube or play_media instead), NEVER call for web search queries (use search_internet instead), and NEVER call for hardware settings toggles.",
             params = mapOf("app_name" to "string"),
-            required = listOf("app_name")
+            required = listOf("app_name"),
+            paramDescriptions = mapOf(
+                "app_name" to "Standard name of the installed app (e.g. 'whatsapp', 'instagram', 'calculator', 'chrome', 'camera', 'settings')"
+            )
         ))
 
         // 5. Flashlight / Torch
         toolsArray.add(createFunction(
             name = "toggle_flashlight",
-            desc = "Turn the phone camera flashlight/torch on or off. Call ONLY when the user explicitly requests to turn the torch on or off. NEVER call when the user reports a problem, damage, or complaint about their torch (e.g. 'mera torch kharab hai').",
+            desc = "Turn the phone camera flashlight/torch on or off. Call ONLY when the user explicitly requests to turn the torch on or off (e.g. 'torch on karo', 'flashlight band karo'). NEVER call when the user reports a problem, damage, or complaint about their torch (e.g. 'mera torch kharab hai').",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn flashlight ON, false to turn flashlight OFF"
+            )
         ))
 
         // 6. Volume Control
         toolsArray.add(createFunction(
             name = "set_volume",
-            desc = "Set phone volume percentage (0 to 100).",
+            desc = "Set phone media and system volume percentage (0 to 100). Call when user asks to adjust sound, volume, or audio level (e.g. 'awaaz 50% kar do', 'volume badhao'). NEVER call for display brightness (use set_brightness instead).",
             params = mapOf("level_percent" to "integer"),
-            required = listOf("level_percent")
+            required = listOf("level_percent"),
+            paramDescriptions = mapOf(
+                "level_percent" to "Target volume level from 0 (silent/mute) to 100 (maximum volume)"
+            )
         ))
 
         // 7. Screen Tap (Accessibility)
@@ -154,46 +190,67 @@ object JarvisToolRegistry {
             name = "screen_tap",
             desc = "Tap on a button, text, or coordinate on the active screen.",
             params = mapOf("target_text" to "string"),
-            required = listOf("target_text")
+            required = listOf("target_text"),
+            paramDescriptions = mapOf(
+                "target_text" to "The button label, icon name, or visible text to tap on screen"
+            )
         ))
 
         // 8. Screen Scroll
         toolsArray.add(createFunction(
             name = "screen_scroll",
-            desc = "Scroll the current screen up or down.",
-            params = mapOf("direction" to "string"), // "up" or "down"
-            required = listOf("direction")
+            desc = "Scroll the current screen up or down hands-free.",
+            params = mapOf("direction" to "string"),
+            required = listOf("direction"),
+            paramDescriptions = mapOf(
+                "direction" to "'up' to scroll up, or 'down' to scroll down"
+            )
         ))
 
         // 9. Media Control
         toolsArray.add(createFunction(
             name = "media_control",
-            desc = "Control playback for music/video: play, pause, next, previous.",
+            desc = "Control playback for active music or video: play, pause, next, previous, stop.",
             params = mapOf("action" to "string"),
-            required = listOf("action")
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "Playback action: 'play', 'pause', 'next', 'previous', or 'stop'"
+            )
         ))
 
         // 10. Alarms
         toolsArray.add(createFunction(
             name = "create_alarm",
-            desc = "Set an alarm for a specific hour and minute.",
+            desc = "Set an alarm for a specific clock time (e.g. '7:00 AM', 'kal subah 6:30 baje', '8 baje ka alarm lagao'). Call ONLY for fixed clock times. NEVER call for relative countdown durations like '10 minute ka timer' (use set_timer instead).",
             params = mapOf("hour" to "integer", "minute" to "integer", "label" to "string"),
-            required = listOf("hour", "minute")
+            required = listOf("hour", "minute"),
+            paramDescriptions = mapOf(
+                "hour" to "Hour of the alarm in 24-hour format (0 to 23)",
+                "minute" to "Minute of the alarm (0 to 59)",
+                "label" to "Optional label or description for the alarm"
+            )
         ))
 
         // 11. Storage & Files
         toolsArray.add(createFunction(
             name = "search_files",
-            desc = "Search device storage for files, photos, videos, or documents.",
+            desc = "Search device storage for files, photos, videos, or documents by name or keyword.",
             params = mapOf("query" to "string", "file_type" to "string"),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Search query or file name keyword",
+                "file_type" to "Optional file type filter: 'image', 'video', 'audio', 'pdf', 'document'"
+            )
         ))
 
         toolsArray.add(createFunction(
             name = "delete_file",
             desc = "Delete a specific file from device storage.",
             params = mapOf("file_path" to "string"),
-            required = listOf("file_path")
+            required = listOf("file_path"),
+            paramDescriptions = mapOf(
+                "file_path" to "Exact absolute file path to delete"
+            )
         ))
 
         // 12. Call Accept (requires Accessibility or InCallService)
@@ -217,13 +274,16 @@ object JarvisToolRegistry {
             name = "identify_caller",
             desc = "Look up information about an unknown phone number — identify if it is spam, business, or a known contact.",
             params = mapOf("phone_number" to "string"),
-            required = listOf("phone_number")
+            required = listOf("phone_number"),
+            paramDescriptions = mapOf(
+                "phone_number" to "The phone number digits to identify"
+            )
         ))
 
         // 15. Real Hardware Battery Status
         toolsArray.add(createFunction(
             name = "get_battery_status",
-            desc = "Get the current exact device battery percentage and charging state directly from Android hardware.",
+            desc = "Get the current exact device battery percentage and charging state directly from Android hardware. Call when user specifically asks 'battery kitni hai', 'charge kitna hai', 'phone charging pe hai kya'. For overall phone diagnosis, use check_device_health.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -231,7 +291,7 @@ object JarvisToolRegistry {
         // 16. Clipboard Reader
         toolsArray.add(createFunction(
             name = "get_clipboard_text",
-            desc = "Read the latest copied text from the Android system clipboard.",
+            desc = "Read the latest copied text from the Android system clipboard. Call when user asks 'clipboard mein kya copy hai', 'copied text padho'.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -239,17 +299,24 @@ object JarvisToolRegistry {
         // 17. Permanent Memory Vault: Remember Fact
         toolsArray.add(createFunction(
             name = "remember_fact",
-            desc = "Save an important personal fact, detail, birthday, preference, or relationship into permanent memory.",
+            desc = "Save an important personal fact, detail, birthday, preference, or relationship into permanent memory. Call when user says 'yaad rakhna ki...', 'meri favourite... hai'.",
             params = mapOf("key" to "string", "value" to "string"),
-            required = listOf("key", "value")
+            required = listOf("key", "value"),
+            paramDescriptions = mapOf(
+                "key" to "Short topic category (e.g. 'birthday', 'preference', 'family', 'food')",
+                "value" to "The fact or detail to remember"
+            )
         ))
 
         // 18. Permanent Memory Vault: Recall Memory
         toolsArray.add(createFunction(
             name = "recall_memory",
-            desc = "Retrieve previously remembered personal facts or all stored user details and learned rules from the memory vault.",
+            desc = "Retrieve previously remembered personal facts or stored user details from the permanent memory vault.",
             params = mapOf("key" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "key" to "Specific key or topic to recall, or leave empty to recall all memories"
+            )
         ))
 
         // 18b. Permanent Memory Vault: Teach Custom Command Rule / Workflow
@@ -261,23 +328,35 @@ object JarvisToolRegistry {
                 "action_instruction" to "string",
                 "primary_tool" to "string"
             ),
-            required = listOf("trigger_pattern", "action_instruction")
+            required = listOf("trigger_pattern", "action_instruction"),
+            paramDescriptions = mapOf(
+                "trigger_pattern" to "User voice phrase or keyword pattern that triggers this rule",
+                "action_instruction" to "Exact action and step-by-step instructions to follow",
+                "primary_tool" to "Main tool name to be triggered"
+            )
         ))
 
         // 19. Universal Music & Media Player (Any app: YouTube, Spotify, Melodify, JioSaavn, Wynk, etc.)
         toolsArray.add(createFunction(
             name = "play_media",
-            desc = "Search and automatically play a song, music video, playlist, or artist in ANY music app (YouTube, Spotify, Melodify, JioSaavn, Wynk, or default player).",
+            desc = "Search and automatically play a song, music video, playlist, or artist in ANY music app (Spotify, Melodify, JioSaavn, Wynk, or default player). For YouTube specifically, use play_youtube instead.",
             params = mapOf("query" to "string", "app_name" to "string"),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Song title, playlist, or artist name to play",
+                "app_name" to "Target music app (e.g. 'spotify', 'melodify', 'jiosaavn') or blank for default"
+            )
         ))
 
         // 20. Dedicated YouTube Play
         toolsArray.add(createFunction(
             name = "play_youtube",
-            desc = "Directly search and play a song, video, or artist on YouTube.",
+            desc = "Directly search and play a song, music video, playlist, or artist on YouTube. ALWAYS call when user asks to play a song, video, music, or lofi beats (e.g. 'lofi chalao', 'play Arijit Singh', 'gaana bajao', 'YouTube par video chalao'). NEVER use open_app for music!",
             params = mapOf("query" to "string"),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Search query for song, video title, or artist on YouTube"
+            )
         ))
 
         // 21. Universal Arbitrary App Action Engine
@@ -290,15 +369,24 @@ object JarvisToolRegistry {
                 "search_query" to "string",
                 "target_text" to "string"
             ),
-            required = listOf("app_name", "action_description")
+            required = listOf("app_name", "action_description"),
+            paramDescriptions = mapOf(
+                "app_name" to "Name of the application to control",
+                "action_description" to "Description of what to do inside the app",
+                "search_query" to "Optional text query to type in app search bar",
+                "target_text" to "Optional button or UI text to tap inside the app"
+            )
         ))
 
         // 22. Mobile Hotspot Control
         toolsArray.add(createFunction(
             name = "toggle_hotspot",
-            desc = "Turn the mobile Personal Hotspot / Portable Wi-Fi Hotspot / Tethering ON or OFF hands-free using autonomous Accessibility automation.",
+            desc = "Turn the mobile Personal Hotspot / Portable Wi-Fi Hotspot ON or OFF hands-free. Call ONLY when the user explicitly commands to enable or disable hotspot ('hotspot on karo', 'hotspot band karo'). NEVER call when user asks about hotspot data usage or connected devices (use get_device_connectivity_and_usage instead).",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn hotspot ON, false to turn hotspot OFF"
+            )
         ))
 
         // 23. System Navigation Bar Mode (3-Button vs Gesture Navigation)
@@ -306,23 +394,32 @@ object JarvisToolRegistry {
             name = "set_navigation_mode",
             desc = "Switch Android system navigation bar mode between 'buttons' (3-button navigation bar with back, home, recents) and 'gestures' (full screen gesture navigation).",
             params = mapOf("mode" to "string"),
-            required = listOf("mode")
+            required = listOf("mode"),
+            paramDescriptions = mapOf(
+                "mode" to "'buttons' for 3-button navigation, or 'gestures' for gesture navigation"
+            )
         ))
 
         // 24. Wi-Fi Control
         toolsArray.add(createFunction(
             name = "toggle_wifi",
-            desc = "Turn device Wi-Fi ON or OFF hands-free.",
+            desc = "Turn device Wi-Fi ON or OFF hands-free. Call ONLY when the user explicitly requests to turn Wi-Fi on or off (e.g. 'wifi on karo', 'wifi band karo', 'turn off wifi'). NEVER call when user asks for the current Wi-Fi name, connection status, IP, or network data usage (use get_wifi_networks or get_device_connectivity_and_usage instead)!",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn Wi-Fi ON, false to turn Wi-Fi OFF"
+            )
         ))
 
         // 25. Bluetooth Control
         toolsArray.add(createFunction(
             name = "toggle_bluetooth",
-            desc = "Turn device Bluetooth ON or OFF hands-free.",
+            desc = "Turn device Bluetooth ON or OFF hands-free. Call ONLY when the user explicitly requests to turn Bluetooth on or off (e.g. 'bluetooth on karo', 'bluetooth band karo'). NEVER call to check connected Bluetooth devices (smartwatch, earbuds) or connection status (use get_device_connectivity_and_usage instead)!",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn Bluetooth ON, false to turn Bluetooth OFF"
+            )
         ))
 
         // 26. Universal System Hardware & Navigation Keys (Panda Engine)
@@ -330,55 +427,79 @@ object JarvisToolRegistry {
             name = "press_system_key",
             desc = "Execute system-level physical or navigation actions hands-free: 'lock' (lock screen immediately), 'back' (back button), 'home' (home button), 'recents' (recent apps overview), 'notifications' (pull down notification bar), 'quick_settings' (open quick settings tiles), 'screenshot' (capture screen).",
             params = mapOf("key" to "string"),
-            required = listOf("key")
+            required = listOf("key"),
+            paramDescriptions = mapOf(
+                "key" to "One of: 'lock', 'back', 'home', 'recents', 'notifications', 'quick_settings', 'screenshot'"
+            )
         ))
 
         // 27. Universal App Storage & Cache Management (Panda Engine)
         toolsArray.add(createFunction(
             name = "manage_app_storage",
-            desc = "Autonomously manage app cache and storage: 'clear_cache' (opens system app details, taps storage, and clicks clear cache button automatically), 'uninstall' (uninstalls the app), 'open_info' (opens application info page).",
+            desc = "Autonomously manage app cache and storage: 'clear_cache' (clears app cache), 'uninstall' (uninstalls app), 'open_info' (opens application info page).",
             params = mapOf("app_name" to "string", "action" to "string"),
-            required = listOf("app_name", "action")
+            required = listOf("app_name", "action"),
+            paramDescriptions = mapOf(
+                "app_name" to "Name of the target installed application",
+                "action" to "'clear_cache', 'uninstall', or 'open_info'"
+            )
         ))
 
         // 28. Autonomous Play Store Search & Install (Panda Engine)
         toolsArray.add(createFunction(
             name = "install_store_app",
-            desc = "Search Google Play Store and automatically download/install an app hands-free. Criteria can be: 'top' (installs the top search result), 'lowest_mb' (inspects visible results, finds the app with lowest MB download size, and installs it), or 'highest_rated'.",
+            desc = "Search Google Play Store and automatically download/install an app hands-free (e.g. 'Candy Crush install karo', 'download WhatsApp').",
             params = mapOf("query" to "string", "criteria" to "string"),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Name of the application or game to search and install from Play Store",
+                "criteria" to "Installation strategy: 'top' (top result), 'lowest_mb', or 'highest_rated'"
+            )
         ))
 
         // 29. System Dark Mode / Night Theme
         toolsArray.add(createFunction(
             name = "toggle_dark_mode",
-            desc = "Turn system Dark Mode / Night Theme ON or OFF hands-free.",
+            desc = "Turn system Dark Mode / Night Theme ON or OFF hands-free. Call when user asks 'dark mode on karo', 'light mode lagao'.",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn Dark Mode ON, false to turn Dark Mode OFF"
+            )
         ))
 
         // 30. Direct Math & Calculations
         toolsArray.add(createFunction(
             name = "calculate",
-            desc = "Evaluate any mathematical expression or calculation directly.",
+            desc = "Evaluate any mathematical expression or arithmetic calculation directly (e.g. '540 * 18', '25% of 1500', 'square root of 144'). ALWAYS call when user asks to calculate or solve math.",
             params = mapOf("expression" to "string"),
-            required = listOf("expression")
+            required = listOf("expression"),
+            paramDescriptions = mapOf(
+                "expression" to "The mathematical expression to evaluate, e.g. '540 * 18' or '1500 * 0.25'"
+            )
         ))
 
         // 31. Contacts Management
         toolsArray.add(createFunction(
             name = "manage_contacts",
-            desc = "Save a new contact with name and phone number into phone contacts.",
+            desc = "Save a new contact with name and phone number into phone contacts (e.g. 'Rahul ka number save karo').",
             params = mapOf("name" to "string", "phone_number" to "string"),
-            required = listOf("name", "phone_number")
+            required = listOf("name", "phone_number"),
+            paramDescriptions = mapOf(
+                "name" to "Name of the person to save in contacts",
+                "phone_number" to "Phone number with digits to save"
+            )
         ))
 
         // 32. Dedicated Recent Media / Screenshot Viewer
         toolsArray.add(createFunction(
             name = "show_recent_media",
-            desc = "Open and display the most recent screenshot or photo from device storage fullscreen in the default image viewer. Call this when the user says 'show screenshot', 'recent screenshot dikhao', 'open screenshot', 'show photo'.",
+            desc = "Open and display the most recent screenshot or photo from device storage fullscreen in the default image viewer. Call this when the user says 'show screenshot', 'recent screenshot dikhao', 'open screenshot', 'show photo'. NEVER call when user asks to take a new screenshot (use take_screenshot instead).",
             params = mapOf("media_type" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "media_type" to "Optional media type filter: 'screenshot' or 'photo'"
+            )
         ))
 
         // 33. Gallery Recycle Bin / Trash Cleaner
@@ -386,55 +507,74 @@ object JarvisToolRegistry {
             name = "empty_recycle_bin",
             desc = "Empty the Gallery Recycle Bin or Trash permanently deleting all trashed items hands-free. Call this when the user says 'empty recycle bin', 'trash clear karo', 'recycle bin saaf karo'.",
             params = mapOf("target" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target" to "Target trash container: 'gallery' or 'all'"
+            )
         ))
 
         // 34. Clock Timer
         toolsArray.add(createFunction(
             name = "set_timer",
-            desc = "Set a timer/countdown using the Android Clock app for a specified number of minutes and seconds.",
+            desc = "Set a timer/countdown using the Android Clock app for a specified number of minutes and seconds (e.g. '10 minute ka timer', '5 minutes countdown', '45 seconds timer'). Call ONLY for countdown durations. NEVER call for clock times like '7:00 AM' (use create_alarm instead).",
             params = mapOf(
                 "minutes" to "integer",
                 "seconds" to "integer",
                 "label" to "string"
             ),
-            required = listOf("minutes")
+            required = listOf("minutes"),
+            paramDescriptions = mapOf(
+                "minutes" to "Number of minutes for the countdown timer",
+                "seconds" to "Optional additional seconds",
+                "label" to "Optional label or description for the timer"
+            )
         ))
 
         // 35. Maps & Navigation
         toolsArray.add(createFunction(
             name = "navigate_maps",
-            desc = "Open turn-by-turn navigation or search directions to a destination (address, landmark, restaurant, petrol pump, etc.) using Google Maps.",
+            desc = "Open turn-by-turn navigation or search directions to a destination (address, landmark, restaurant, petrol pump, city) using Google Maps. ALWAYS call when user asks for directions or route (e.g. 'navigate to X', 'rasta dikhao', 'kaise jayein').",
             params = mapOf(
                 "destination" to "string",
                 "mode" to "string"
             ),
-            required = listOf("destination")
+            required = listOf("destination"),
+            paramDescriptions = mapOf(
+                "destination" to "Target address, city, landmark, or establishment name",
+                "mode" to "Travel mode: 'driving', 'walking', 'transit', or 'bicycling'"
+            )
         ))
 
         // 36. Web Search / Search Internet
         toolsArray.add(createFunction(
             name = "search_internet",
-            desc = "Search the internet in real-time to answer questions, look up facts, scores, people, definitions, or current information. Returns titles and informative snippets directly so Aura can synthesize the answer without opening a browser.",
+            desc = "Search the internet in real-time to answer questions, look up facts, scores, people, definitions, live weather, or current information. ALWAYS call for real-time web knowledge. Returns informative snippets directly so Aura can synthesize the answer without opening a browser.",
             params = mapOf("query" to "string"),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Search query to find live web information"
+            )
         ))
 
         // 36b. Live News Feed
         toolsArray.add(createFunction(
             name = "get_latest_news",
-            desc = "Fetch latest top news headlines, breaking news, or news on a specific topic (e.g. India, sports, technology, world) directly via live news feeds. Returns headlines and summaries for direct spoken synthesis without opening a browser.",
+            desc = "Fetch latest top news headlines, breaking news, or news on a specific topic (e.g. India, sports, technology, world) directly via live news feeds. ALWAYS call when user asks for 'news', 'taaza khabar', 'samachar', 'aaj ki khabrein'. Returns headlines and summaries for direct spoken synthesis without opening a browser.",
             params = mapOf(
                 "topic" to "string",
                 "language" to "string"
             ),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "topic" to "Topic category like 'top', 'india', 'sports', 'technology', 'world', or blank for general",
+                "language" to "News language: 'en' or 'hi'"
+            )
         ))
 
         // 36c. Media Storage Stats
         toolsArray.add(createFunction(
             name = "get_media_storage_stats",
-            desc = "Query the device's camera and media storage to count how many photos, videos, and audio files are stored on the phone, along with recent media dates. Call this when user asks how many photos, videos, or camera items they have.",
+            desc = "Query the device's camera and media storage to count how many photos, videos, and audio files are stored on the phone. ALWAYS call when user asks how many photos, videos, or camera items they have (e.g. 'kitne photos hain', 'videos count'). NEVER call for general disk storage in GB (use get_storage_space instead)!",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -446,112 +586,156 @@ object JarvisToolRegistry {
                 "query" to "string",
                 "open_browser" to "boolean"
             ),
-            required = listOf("query")
+            required = listOf("query"),
+            paramDescriptions = mapOf(
+                "query" to "Search query",
+                "open_browser" to "true to open results in web browser, false to return snippets"
+            )
         ))
 
         // 37. Open Camera
         toolsArray.add(createFunction(
             name = "open_camera",
-            desc = "Open the phone Camera app to take a photo, record video, or take a selfie ('photo', 'video', 'selfie').",
+            desc = "Open the phone Camera app to take a photo, record video, or take a selfie ('photo', 'video', 'selfie'). ALWAYS call when user says 'camera kholo', 'photo kheecho', 'selfie lo'.",
             params = mapOf("mode" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "mode" to "'photo', 'video', or 'selfie'"
+            )
         ))
 
         // 38. Screen Brightness
         toolsArray.add(createFunction(
             name = "set_brightness",
-            desc = "Set screen brightness percentage (0 to 100).",
+            desc = "Set screen display brightness percentage (0 to 100). Call when user asks to adjust screen brightness or display light (e.g. 'brightness 70% karo', 'screen ki roshni kam karo'). NEVER call for audio volume (use set_volume instead).",
             params = mapOf("level_percent" to "integer"),
-            required = listOf("level_percent")
+            required = listOf("level_percent"),
+            paramDescriptions = mapOf(
+                "level_percent" to "Target screen brightness percentage from 0 (darkest) to 100 (brightest)"
+            )
         ))
 
         // 39. Do Not Disturb (DND)
         toolsArray.add(createFunction(
             name = "set_dnd",
-            desc = "Turn Do Not Disturb (DND) mode ON or OFF.",
+            desc = "Turn Do Not Disturb (DND) silent mode ON or OFF. Call when user asks 'DND on karo', 'Do Not Disturb lagao', 'DND band karo'.",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn DND ON, false to turn DND OFF"
+            )
         ))
 
         // 40. Open System Settings
         toolsArray.add(createFunction(
             name = "open_system_settings",
-            desc = "Open a specific Android System Settings page (e.g. wifi, bluetooth, display, sound, battery, apps, accessibility, developer, storage, date, airplane, location, nfc, notification).",
+            desc = "Open a specific Android System Settings page. Call ONLY when the user explicitly asks to open settings or navigate to a settings page (e.g. 'open wifi settings', 'hotspot setting kholo', 'bluetooth settings').",
             params = mapOf("setting_name" to "string"),
-            required = listOf("setting_name")
+            required = listOf("setting_name"),
+            paramDescriptions = mapOf(
+                "setting_name" to "Target setting: 'wifi', 'bluetooth', 'hotspot', 'display', 'sound', 'battery', 'apps', 'storage', 'date', 'airplane', 'location'"
+            )
         ))
 
         // 41. Calendar Event
         toolsArray.add(createFunction(
             name = "add_calendar_event",
-            desc = "Create a calendar event or schedule a meeting in the default Calendar app.",
+            desc = "Create a calendar event or schedule a meeting in the default Calendar app (e.g. 'kal sham 5 baje meeting schedule karo').",
             params = mapOf(
                 "title" to "string",
                 "description" to "string",
                 "location" to "string"
             ),
-            required = listOf("title")
+            required = listOf("title"),
+            paramDescriptions = mapOf(
+                "title" to "Title of the calendar event",
+                "description" to "Optional details or agenda",
+                "location" to "Optional location or venue"
+            )
         ))
 
         // 42. Send Email
         toolsArray.add(createFunction(
             name = "send_email",
-            desc = "Compose an email in Gmail or default email app.",
+            desc = "Compose and send an email in Gmail or default email app.",
             params = mapOf(
                 "to" to "string",
                 "subject" to "string",
                 "body" to "string"
             ),
-            required = listOf("to")
+            required = listOf("to"),
+            paramDescriptions = mapOf(
+                "to" to "Recipient email address",
+                "subject" to "Email subject",
+                "body" to "Email message body"
+            )
         ))
 
         // 43. Read Recent SMS
         toolsArray.add(createFunction(
             name = "read_recent_sms",
-            desc = "Read the latest received SMS text messages from the phone's inbox.",
+            desc = "Read the latest received cellular SMS text messages from the phone's inbox. Call when user asks 'recent SMS padho', 'aakhiri SMS kiska aaya'.",
             params = mapOf("count" to "integer"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "count" to "Number of recent SMS messages to read (e.g. 3 or 5)"
+            )
         ))
 
         // 44. Query Contact Details
         toolsArray.add(createFunction(
             name = "query_contact",
-            desc = "Look up a person's contact number or details from phone contacts.",
+            desc = "Look up and read a person's contact number or details from phone contacts without calling. ALWAYS call when user asks 'Rahul ka number kya hai', 'Mom ka number batao', 'contact details dikhao'.",
             params = mapOf("name" to "string"),
-            required = listOf("name")
+            required = listOf("name"),
+            paramDescriptions = mapOf(
+                "name" to "Name of the person or contact to search"
+            )
         ))
 
         // 45. Emergency SOS
         toolsArray.add(createFunction(
             name = "emergency_sos",
-            desc = "Trigger emergency SOS call to 112 or emergency contact, and optionally send emergency alert SMS.",
+            desc = "Trigger emergency SOS call to 112 or emergency contact, and optionally send emergency alert SMS. ALWAYS call immediately when user asks for emergency, Police, Ambulance, Fire, or SOS.",
             params = mapOf(
                 "target" to "string",
                 "message" to "string"
             ),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target" to "Emergency target: 'police', 'ambulance', 'fire', or contact name",
+                "message" to "Optional emergency message"
+            )
         ))
 
         // 46. Create Quick Note
         toolsArray.add(createFunction(
             name = "create_quick_note",
-            desc = "Save a quick personal note, reminder, or thought to the AURA permanent memory vault.",
+            desc = "Save a quick personal note, reminder, or thought to the AURA permanent memory vault (e.g. 'note likho...', 'yaad rakhna ki ye note save kar lo').",
             params = mapOf(
                 "note_text" to "string",
                 "title" to "string"
             ),
-            required = listOf("note_text")
+            required = listOf("note_text"),
+            paramDescriptions = mapOf(
+                "note_text" to "The note content to store",
+                "title" to "Optional title for the note"
+            )
         ))
 
         // 47. Read Status Bar Notifications
         toolsArray.add(createFunction(
             name = "read_notifications",
-            desc = "Read or check active status bar notifications (e.g. WhatsApp messages, SMS, OTPs, emails, food delivery, banking alerts) received on the device.",
+            desc = "Read or check active status bar notifications (e.g. WhatsApp messages, SMS, OTPs, emails, food delivery, banking alerts) received on the device. Call when user asks 'notifications padho', 'kiska notification aaya hai'.",
             params = mapOf(
                 "app_filter" to "string",
                 "count" to "integer"
             ),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "app_filter" to "Optional app name filter like 'whatsapp', 'sms', 'zomato'",
+                "count" to "Number of notifications to read"
+            )
         ))
 
         // 48. Screen Vision — Get Screen Context
@@ -567,13 +751,16 @@ object JarvisToolRegistry {
             name = "find_and_tap",
             desc = "Find and tap any button, link, icon, or UI element on screen by its visible text label, content description, or view ID (e.g. 'Submit', 'Confirm', 'Skip Ad', 'Like', 'Send'). Uses semantic matching — no hardcoded coordinates required.",
             params = mapOf("target" to "string"),
-            required = listOf("target")
+            required = listOf("target"),
+            paramDescriptions = mapOf(
+                "target" to "Visible text, button label, or description of the UI element to tap"
+            )
         ))
 
         // 50. Screen Vision — Read Screen Text
         toolsArray.add(createFunction(
             name = "read_screen_text",
-            desc = "Extract and read all readable text, chat messages, articles, or bill details currently visible on the screen.",
+            desc = "Extract and read all readable text, chat messages, articles, or bill details currently visible on the screen. Call when user asks 'screen padho', 'screen par kya likha hai'.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -581,23 +768,29 @@ object JarvisToolRegistry {
         // 51. Set Clipboard Text
         toolsArray.add(createFunction(
             name = "set_clipboard",
-            desc = "Copy text to the Android system clipboard.",
+            desc = "Copy text to the Android system clipboard (e.g. 'ye text copy kar lo').",
             params = mapOf("text" to "string"),
-            required = listOf("text")
+            required = listOf("text"),
+            paramDescriptions = mapOf(
+                "text" to "The text to copy to the system clipboard"
+            )
         ))
 
         // 52. Get Running / Installed Apps
         toolsArray.add(createFunction(
             name = "get_running_apps",
-            desc = "List installed applications or find apps matching a query.",
+            desc = "List installed applications on the device or search for installed apps matching a query.",
             params = mapOf("query" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "query" to "Optional app name filter or search keyword"
+            )
         ))
 
         // 53. Get Geographic Location
         toolsArray.add(createFunction(
             name = "get_location",
-            desc = "Get the device's current GPS geographic location (latitude, longitude, and accuracy).",
+            desc = "Get the device's current GPS geographic location (latitude, longitude, and accuracy). Call when user asks 'meri location kya hai', 'main kahan hoon'.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -605,7 +798,7 @@ object JarvisToolRegistry {
         // 54. Get WiFi Network Status
         toolsArray.add(createFunction(
             name = "get_wifi_networks",
-            desc = "Check WiFi status and get the currently connected WiFi network name (SSID).",
+            desc = "Check WiFi status and get the currently connected WiFi network name (SSID). ALWAYS call when user asks 'wifi ka naam batao', 'kis wifi se connect hoon', 'wifi status kya hai'. NEVER call toggle_wifi for this!",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -621,17 +814,24 @@ object JarvisToolRegistry {
         // 56. Get Recent Calls
         toolsArray.add(createFunction(
             name = "get_recent_calls",
-            desc = "Read recent call logs (incoming, outgoing, missed calls) with contact names and timestamps.",
+            desc = "Read recent call logs (incoming, outgoing, missed calls) with contact names and timestamps (e.g. 'kiska phone aaya tha', 'call log dikhao').",
             params = mapOf("count" to "integer"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "count" to "Number of recent call logs to read (e.g. 5)"
+            )
         ))
 
         // 57. Get Contacts List
         toolsArray.add(createFunction(
             name = "get_contacts_list",
-            desc = "Search and list contacts with their names and phone numbers.",
+            desc = "Search and list contacts with their names and phone numbers from the phone book.",
             params = mapOf("query" to "string", "limit" to "integer"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "query" to "Search query for contact name",
+                "limit" to "Maximum number of contacts to list"
+            )
         ))
 
         // 58. Get Internal Device Storage Space
@@ -655,7 +855,10 @@ object JarvisToolRegistry {
             name = "clear_notifications",
             desc = "Dismiss notifications from the status bar. Set target='all' to clear all clearable notifications, or set target to an app name or keyword (e.g. 'melodify', 'screenshot', 'instagram') to dismiss specific ones. ALWAYS call when user asks 'notification hata do', 'clear notification panel', 'sab notifications saaf kardo'.",
             params = mapOf("target" to "string"),
-            required = emptyList()
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target" to "'all' to clear all notifications, or specific app keyword like 'whatsapp', 'melodify'"
+            )
         ))
 
         // 61. Toggle Incoming Message Voice Announcements
@@ -663,13 +866,16 @@ object JarvisToolRegistry {
             name = "toggle_message_announcements",
             desc = "Turn ON or OFF the automatic voice reading / announcement of incoming messages (WhatsApp, SMS, OTP) when they arrive. ALWAYS call when user asks 'message padhna band karo', 'msg aane par mat bolo', 'message announcement on/off karo', 'turn off message speak'.",
             params = mapOf("enable" to "boolean"),
-            required = listOf("enable")
+            required = listOf("enable"),
+            paramDescriptions = mapOf(
+                "enable" to "true to turn message announcement ON, false to turn OFF"
+            )
         ))
 
         // 62. Get Current Live Device Time & Date
         toolsArray.add(createFunction(
             name = "get_current_time",
-            desc = "Get the exact, live system clock time, day, and date right now from the device. ALWAYS call when user asks 'time kya hai', 'time batao', 'kitne baje hain', 'kya time ho raha hai', 'aaj kaun sa din hai'. NEVER rely on memory or guess the time!",
+            desc = "Get the exact, live system clock time, day, and date right now from the device. ALWAYS call when user asks 'time kya hai', 'time batao', 'kitne baje hain', 'kya time ho raha hai', 'aaj kaun sa din hai', 'aaj ki date kya hai'. NEVER rely on memory or guess the time!",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -677,7 +883,7 @@ object JarvisToolRegistry {
         // 63. Get Network Data Usage & Connected Devices
         toolsArray.add(createFunction(
             name = "get_device_connectivity_and_usage",
-            desc = "Get real-time device network data consumption (Mobile Data and Wi-Fi data used in MB/GB), connected Wi-Fi name, personal hotspot status, connected hotspot devices count, and active connected Bluetooth devices (smartwatch, earbuds, headphones). ALWAYS call when user asks 'kitna data consume kiya', 'hotspot usage', 'kitna data bacha/use hua', 'kaun kaun si device connect hai', 'bluetooth devices connected', 'active connections'.",
+            desc = "Get real-time device network data consumption (Mobile Data and Wi-Fi data used in MB/GB), connected Wi-Fi name, personal hotspot status, connected hotspot devices count, and active connected Bluetooth devices (smartwatch, earbuds, headphones). ALWAYS call when user asks 'kitna data consume kiya', 'hotspot usage', 'kitna data bacha/use hua', 'kaun kaun si device connect hai', 'bluetooth devices connected', 'active connections', 'wifi ka naam batao'.",
             params = emptyMap(),
             required = emptyList()
         ))
@@ -689,7 +895,8 @@ object JarvisToolRegistry {
         name: String,
         desc: String,
         params: Map<String, String>,
-        required: List<String>
+        required: List<String>,
+        paramDescriptions: Map<String, String> = emptyMap()
     ): JsonObject {
         val fn = JsonObject()
         fn.addProperty("name", name)
@@ -707,6 +914,9 @@ object JarvisToolRegistry {
                 "boolean" -> "BOOLEAN"
                 else -> "STRING"
             })
+            paramDescriptions[pName]?.let { pDesc ->
+                prop.addProperty("description", pDesc)
+            }
             properties.add(pName, prop)
         }
         parameters.add("properties", properties)
