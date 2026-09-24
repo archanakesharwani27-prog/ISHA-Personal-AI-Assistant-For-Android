@@ -532,22 +532,30 @@ class GeminiChatService(private val context: Context) {
 
     private fun createHistoryContents(history: List<ChatMessage>): JsonArray {
         val contents = JsonArray()
-        // Only include completed USER and ASSISTANT messages, strictly alternating
+        // Include recent USER, ASSISTANT, and TOOL messages (up to 30 items) for maximum context retention
         val cleanHistory = history.filter {
-            (it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT) &&
-            it.text.isNotBlank() &&
-            !it.isStreaming
-        }.takeLast(12)
+            it.text.isNotBlank() && !it.isStreaming
+        }.takeLast(30)
 
         var lastRole: String? = null
         for (msg in cleanHistory) {
             val role = if (msg.role == MessageRole.USER) "user" else "model"
+            val messageText = when {
+                msg.role == MessageRole.TOOL -> {
+                    "[Tool Output (${msg.toolName ?: "action"})]: ${msg.text}"
+                }
+                !msg.toolResult.isNullOrBlank() -> {
+                    "${msg.text}\n[Executed Action Output]: ${msg.toolResult}"
+                }
+                else -> msg.text
+            }
+
             if (role == lastRole) {
                 // If consecutive messages of same role exist, append to previous turn
                 if (contents.size() > 0) {
                     val lastTurn = contents.get(contents.size() - 1).asJsonObject
                     val parts = lastTurn.getAsJsonArray("parts")
-                    val part = JsonObject().apply { addProperty("text", msg.text) }
+                    val part = JsonObject().apply { addProperty("text", messageText) }
                     parts.add(part)
                 }
                 continue
@@ -555,7 +563,7 @@ class GeminiChatService(private val context: Context) {
             val turn = JsonObject().apply {
                 addProperty("role", role)
                 val parts = JsonArray().apply {
-                    val part = JsonObject().apply { addProperty("text", msg.text) }
+                    val part = JsonObject().apply { addProperty("text", messageText) }
                     add(part)
                 }
                 add("parts", parts)
