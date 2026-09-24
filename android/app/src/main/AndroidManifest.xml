@@ -151,8 +151,8 @@
         android:label="Aura"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
-        android:allowBackup="true"
-        android:fullBackupContent="true">
+        android:allowBackup="false"
+        android:fullBackupContent="false">
 
         <!-- ── Main Activity ─────────────────────────────────────────────── -->
         <activity
