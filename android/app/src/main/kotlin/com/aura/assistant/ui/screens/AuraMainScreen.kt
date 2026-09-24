@@ -84,6 +84,7 @@ fun AuraMainScreen(
     }
 
     val listState = rememberLazyListState()
+    var editingPrompt by remember { mutableStateOf("") }
 
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
 
@@ -154,7 +155,9 @@ fun AuraMainScreen(
                         onPlusClick = { viewModel.showToolsSheet() },
                         isGenerating = isGenerating,
                         attachedMedia = selectedAttachment,
-                        onClearAttachment = { viewModel.clearAttachment() }
+                        onClearAttachment = { viewModel.clearAttachment() },
+                        initialText = editingPrompt,
+                        onTextConsumed = { editingPrompt = "" }
                     )
                 }
             ) { innerPadding ->
@@ -180,7 +183,8 @@ fun AuraMainScreen(
                                 ChatMessageItem(
                                     message = message,
                                     onSpeak = { text -> viewModel.speakText(text) },
-                                    onRegenerate = { viewModel.regenerateLastMessage() }
+                                    onRegenerate = { viewModel.regenerateLastMessage() },
+                                    onEditPrompt = { prompt -> editingPrompt = prompt }
                                 )
                             }
                         }

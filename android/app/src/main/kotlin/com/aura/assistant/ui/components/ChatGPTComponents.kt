@@ -99,21 +99,12 @@ fun ChatGPTTopBar(
                                 color = ChatGptTextPrimary
                             )
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Gemini",
-                            style = AuraTypography.bodyMedium.copy(
-                                fontSize = 11.sp,
-                                color = ChatGptAccentGreen,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = ChatGptTextSecondary,
-                            modifier = Modifier.size(16.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(ChatGptAccentGreen)
                         )
                     }
                 }
@@ -669,6 +660,7 @@ fun ChatMessageItem(
     message: ChatMessage,
     onSpeak: (String) -> Unit,
     onRegenerate: () -> Unit,
+    onEditPrompt: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -681,13 +673,29 @@ fun ChatMessageItem(
     }
 
     if (isUser) {
-        // Right-aligned User Bubble
+        // Right-aligned User Bubble with optional Edit button
         Row(
             modifier = modifier
                 .fillMaxWidth()
                 .padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.Bottom
         ) {
+            if (onEditPrompt != null && message.text.isNotBlank() && message.text != "Attached image") {
+                IconButton(
+                    onClick = { onEditPrompt(message.text) },
+                    modifier = Modifier
+                        .size(32.dp)
+                        .padding(end = 4.dp, bottom = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit message",
+                        tint = ChatGptTextSecondary.copy(alpha = 0.5f),
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
             Surface(
                 color = ChatGptUserBubble,
                 shape = RoundedCornerShape(
@@ -1144,9 +1152,18 @@ fun ChatGPTBottomBar(
     isGenerating: Boolean,
     attachedMedia: com.aura.assistant.ui.contract.AttachedMedia? = null,
     onClearAttachment: () -> Unit = {},
+    initialText: String = "",
+    onTextConsumed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var text by remember { mutableStateOf("") }
+
+    LaunchedEffect(initialText) {
+        if (initialText.isNotBlank()) {
+            text = initialText
+            onTextConsumed()
+        }
+    }
 
     Column(
         modifier = modifier
