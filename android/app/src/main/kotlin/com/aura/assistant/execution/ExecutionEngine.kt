@@ -8,6 +8,7 @@ import com.aura.assistant.tools.AuthorizationResult
 import com.aura.assistant.tools.AuraTool
 import com.aura.assistant.tools.CapabilityStatus
 import com.aura.assistant.tools.ToolContext
+import com.aura.assistant.tools.ToolRegistry
 import com.aura.assistant.tools.ToolResult
 import com.aura.assistant.tools.ToolStatus
 import com.google.gson.JsonObject
@@ -146,8 +147,20 @@ object ExecutionEngine {
 
         // Check for autonomous fallback if all attempts failed
         val fallbackToolName = RetryPolicy.getFallback(tool.name)
-        if (fallbackToolName != null) {
+        if (fallbackToolName != null && fallbackToolName != tool.name) {
             Log.i(TAG, "Tool '${tool.name}' failed after $attempts attempts. Fallback tool available: '$fallbackToolName'")
+            val fallbackTool = ToolRegistry.getTool(fallbackToolName)
+            if (fallbackTool != null) {
+                Log.i(TAG, "Executing fallback tool '$fallbackToolName' for failed '${tool.name}'")
+                return execute(
+                    tool = fallbackTool,
+                    arguments = arguments,
+                    context = context,
+                    scope = scope,
+                    callId = callId,
+                    retryPolicy = RetryPolicy.NO_RETRY
+                )
+            }
         }
 
         val finalResult = lastResult ?: ToolResult.failure(

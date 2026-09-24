@@ -1,5 +1,6 @@
 package com.aura.assistant.ai
 
+import android.annotation.SuppressLint
 import android.app.SearchManager
 import android.content.ClipboardManager
 import android.content.ContentValues
@@ -90,6 +91,36 @@ object JarvisToolRegistry {
             paramDescriptions = mapOf(
                 "contact_name" to "Exact or approximate name of the WhatsApp contact as stored in contacts",
                 "message" to "The text message content to send"
+            )
+        ))
+
+        // WhatsApp / Universal Text Typing (No auto-send)
+        toolsArray.add(createFunction(
+            name = "type_message",
+            desc = "Type text or a message into an input field or WhatsApp chat WITHOUT sending it automatically. ALWAYS call when the user explicitly says 'type karo', 'ye message type kar do', 'WhatsApp par type karo', 'keyboard se likho', 'msg type karo'. Focuses the chat input field, opens keyboard, and types the exact text.",
+            params = mapOf(
+                "text" to "string",
+                "contact_name" to "string",
+                "app_name" to "string"
+            ),
+            required = listOf("text"),
+            paramDescriptions = mapOf(
+                "text" to "The exact message or text to type into the input field",
+                "contact_name" to "Optional contact name if typing into WhatsApp chat",
+                "app_name" to "Target app: 'whatsapp' or blank for current active screen"
+            )
+        ))
+
+        // WhatsApp Autonomous Conversation & Reply Agent
+        toolsArray.add(createFunction(
+            name = "chat_on_whatsapp",
+            desc = "Open a WhatsApp chat with a contact and inspect recent received messages to converse with them. ALWAYS call when the user says 'WhatsApp par [contact] se baat karo / baat kar lo', 'unse chat karo', 'unka message dekh kar reply do'. Opens the conversation and reads visible messages on screen so you can understand what they sent and formulate an intelligent reply.",
+            params = mapOf(
+                "contact_name" to "string"
+            ),
+            required = listOf("contact_name"),
+            paramDescriptions = mapOf(
+                "contact_name" to "The contact name to open chat with and converse"
             )
         ))
 
@@ -1033,6 +1064,7 @@ object JarvisToolRegistry {
     /**
      * Executes a tool call requested by Gemini and returns the structured result.
      */
+    @SuppressLint("MissingPermission")
     fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
         Log.i(TAG, "Executing tool: $name with args: $args")
         val result = JsonObject()
@@ -1142,6 +1174,126 @@ object JarvisToolRegistry {
                     }
                 }
 
+                "type_message", "type_text" -> {
+                    val text = args.get("text")?.asString
+                        ?: args.get("message")?.asString
+                        ?: ""
+                    val contact = args.get("contact_name")?.asString
+                        ?: args.get("contact")?.asString
+                        ?: ""
+                    val app = args.get("app_name")?.asString?.lowercase() ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    if (text.isBlank()) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Type karne ke liye text nahi mila Boss.")
+                    } else if (app == "whatsapp" || contact.isNotBlank()) {
+                        val waPkg = try {
+                            context.packageManager.getPackageInfo("com.whatsapp", 0)
+                            "com.whatsapp"
+                        } catch (_: Exception) {
+                            "com.whatsapp.w4b"
+                        }
+
+                        val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+                        val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+
+                        if (!resolvedPhone.isNullOrBlank()) {
+                            val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+                            val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                            val uri = Uri.parse("https://wa.me/$waNumber")
+                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                setPackage(waPkg)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        } else {
+                            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                            if (intent != null) {
+                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                context.startActivity(intent)
+                            }
+                        }
+
+                        if (a11y != null) {
+                            a11y.armWhatsappTypeMessage(text)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "WhatsApp par \"$text\" type kar diya hai Boss! Keyboard open hai, aap review karke bhej sakte hain. ✍️")
+                        } else {
+                            result.addProperty("status", "partial")
+                            result.addProperty("message", "WhatsApp open kar diya hai Boss. Typing ke liye Accessibility Service enable karein.")
+                        }
+                    } else {
+                        if (a11y != null) {
+                            val typed = a11y.performTypeText(text)
+                            if (typed) {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Screen par \"$text\" type kar diya hai Boss! ✍️")
+                            } else {
+                                a11y.armWhatsappTypeMessage(text)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "\"$text\" type kar diya hai Boss! ✍️")
+                            }
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Type karne ke liye Accessibility Service required hai Boss.")
+                        }
+                    }
+                }
+
+                "chat_on_whatsapp" -> {
+                    val contact = args.get("contact_name")?.asString
+                        ?: args.get("contact")?.asString
+                        ?: ""
+                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+                    val waPkg = try {
+                        context.packageManager.getPackageInfo("com.whatsapp", 0)
+                        "com.whatsapp"
+                    } catch (_: Exception) {
+                        "com.whatsapp.w4b"
+                    }
+                    val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+                    val a11y = AuraAccessibilityService.instance
+
+                    if (!resolvedPhone.isNullOrBlank()) {
+                        val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+                        val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                        val uri = Uri.parse("https://wa.me/$waNumber")
+                        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                            setPackage(waPkg)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                    } else if (cleanContact.isNotBlank()) {
+                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                        if (intent != null) {
+                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            context.startActivity(intent)
+                        }
+                        a11y?.armWhatsappOpenContactChat(cleanContact) {}
+                    } else {
+                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                        if (intent != null) {
+                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            context.startActivity(intent)
+                        }
+                    }
+
+                    // Wait 1200ms for chat screen to render
+                    try {
+                        Thread.sleep(1200L)
+                    } catch (_: Exception) {}
+
+                    val screenHierarchy = a11y?.getScreenTextHierarchy() ?: ""
+                    result.addProperty("status", "success")
+                    result.addProperty("contact", contact)
+                    result.addProperty("screen_messages", screenHierarchy)
+                    result.addProperty(
+                        "message",
+                        "WhatsApp chat with $contact open ho gayi hai Boss! Screen text:\n$screenHierarchy\nAb in messages ko samajhkar reply dene ke liye send_whatsapp call karein."
+                    )
+                }
+
                 "send_whatsapp_media" -> {
                     val contact = args.get("contact_name")?.asString
                         ?: args.get("contact")?.asString
@@ -1214,7 +1366,7 @@ object JarvisToolRegistry {
                     }
                 }
 
-                "delete_whatsapp_media" -> {
+                "clear_whatsapp_chat" -> {
                     val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
                     val target = args.get("target")?.asString ?: "chat"
                     val a11y = AuraAccessibilityService.instance
@@ -1746,15 +1898,20 @@ object JarvisToolRegistry {
                         result.addProperty("status", if (declined) "success" else "attempted")
                         result.addProperty("message", if (declined) "Call declined" else "Tried to decline — enable Accessibility for best results")
                     } else {
-                        // Android 9+ allows ending via TelecomManager with ANSWER_PHONE_CALLS permission
-                        try {
-                            val telecom = context.getSystemService(android.telecom.TelecomManager::class.java)
-                            telecom?.endCall()
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Call ended")
-                        } catch (e: SecurityException) {
+                        // Android 9+ (API 28) allows ending via TelecomManager with ANSWER_PHONE_CALLS permission
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            try {
+                                val telecom = context.getSystemService(android.telecom.TelecomManager::class.java)
+                                telecom?.endCall()
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Call ended")
+                            } catch (e: SecurityException) {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Permission denied — enable Accessibility Service for call control")
+                            }
+                        } else {
                             result.addProperty("status", "error")
-                            result.addProperty("message", "Permission denied — enable Accessibility Service for call control")
+                            result.addProperty("message", "Ending calls requires Android 9 (API 28)+ or Accessibility Service")
                         }
                     }
                 }

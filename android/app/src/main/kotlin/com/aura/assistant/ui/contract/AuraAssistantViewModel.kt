@@ -124,6 +124,9 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     private val _isSettingsVisible = MutableStateFlow(false)
     val isSettingsVisible: StateFlow<Boolean> = _isSettingsVisible.asStateFlow()
 
+    private val _isApiKeyScreenVisible = MutableStateFlow(false)
+    val isApiKeyScreenVisible: StateFlow<Boolean> = _isApiKeyScreenVisible.asStateFlow()
+
     init {
         initTts()
         loadInitialSessions()
@@ -646,6 +649,9 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun showSettings() { _isSettingsVisible.value = true }
     fun hideSettings() { _isSettingsVisible.value = false }
+
+    fun showApiKeyScreen() { _isApiKeyScreenVisible.value = true }
+    fun hideApiKeyScreen() { _isApiKeyScreenVisible.value = false }
 
     fun setWakeWordEnabled(enabled: Boolean) {
         _isWakeWordEnabled.value = enabled

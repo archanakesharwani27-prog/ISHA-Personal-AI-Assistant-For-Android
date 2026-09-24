@@ -93,10 +93,13 @@ class GeminiLiveClient(private val context: Context) {
         private const val TAG = "GeminiLiveClient"
         private const val BASE_WS_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        // Primary low-latency Live Audio API model (verified from Google v1beta GenerativeService)
+        // ╔══════════════════════════════════════════════════════════════════════════════════╗
+        // ║ 🔒 STRICTLY FROZEN - DO NOT MODIFY, REVERT, OR RENAME THESE LIVE MODELS          ║
+        // ║ Verified & tested on real hardware via live Google Gemini Live WebSocket API.    ║
+        // ╚══════════════════════════════════════════════════════════════════════════════════╝
         private const val PRIMARY_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
-        // Fallback model
         private const val FALLBACK_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
+        const val FROZEN_VOICE_NAME = "Aoede" // 🔒 FROZEN: Sweet natural female persona
     }
 
     private var activeModel = PRIMARY_LIVE_MODEL
@@ -321,7 +324,7 @@ class GeminiLiveClient(private val context: Context) {
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
         AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
-        val key = Secrets.getActiveGeminiKey()
+        val key = Secrets.getActiveGeminiKey(context)
         val url = "$BASE_WS_URL?key=$key"
         val request = Request.Builder().url(url).build()
 
@@ -375,7 +378,7 @@ class GeminiLiveClient(private val context: Context) {
                     val speechConfig = JsonObject().apply {
                         val voiceConfig = JsonObject().apply {
                             val prebuilt = JsonObject().apply {
-                                addProperty("voiceName", "Aoede")
+                                addProperty("voiceName", FROZEN_VOICE_NAME)
                             }
                             add("prebuiltVoiceConfig", prebuilt)
                         }

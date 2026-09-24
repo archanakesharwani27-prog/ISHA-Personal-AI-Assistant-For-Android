@@ -380,6 +380,56 @@ class AuraAccessibilityService : AccessibilityService() {
         ))
     }
 
+    /**
+     * Types a message into WhatsApp message entry field without clicking send.
+     * Brings up keyboard and leaves text ready for review.
+     */
+    fun armWhatsappTypeMessage(message: String, onTyped: (() -> Unit)? = null) {
+        val inputHints = listOf(
+            "type a message", "message", "संदेश लिखें", "संदेश",
+            "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry"
+        )
+        val delays = listOf(600L, 1200L, 2000L)
+        var typed = false
+        delays.forEachIndexed { index, delay ->
+            stepHandler.postDelayed({
+                if (!typed) {
+                    val root = rootInActiveWindow
+                    if (root != null) {
+                        val inputNode = findNode(root, inputHints)
+                        if (inputNode != null) {
+                            inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                            inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            typeIntoNode(inputNode, message)
+                            typed = true
+                            Log.i(TAG, "armWhatsappTypeMessage: Typed into input node at ${delay}ms")
+                            onTyped?.invoke()
+                        } else {
+                            val edit = findFocusedEditText(root)
+                            if (edit != null) {
+                                typeIntoNode(edit, message)
+                                typed = true
+                                Log.i(TAG, "armWhatsappTypeMessage: Typed into focused edit at ${delay}ms")
+                                onTyped?.invoke()
+                            } else if (index == delays.size - 1) {
+                                val dm = resources.displayMetrics
+                                performTap(dm.widthPixels * 0.35f, dm.heightPixels * 0.94f)
+                                stepHandler.postDelayed({
+                                    val finalEdit = findFocusedEditText(rootInActiveWindow)
+                                    if (finalEdit != null) {
+                                        typeIntoNode(finalEdit, message)
+                                        typed = true
+                                        onTyped?.invoke()
+                                    }
+                                }, 500L)
+                            }
+                        }
+                    }
+                }
+            }, delay)
+        }
+    }
+
     fun armWhatsappSendImage() {
         val delays = listOf(800L, 1600L, 2600L, 3800L)
         val imageSendHints = listOf("send", "com.whatsapp:id/send", "भेजें", "send photo", "send image")

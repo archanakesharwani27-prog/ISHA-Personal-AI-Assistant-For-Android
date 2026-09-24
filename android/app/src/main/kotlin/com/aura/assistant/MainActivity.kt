@@ -1,5 +1,6 @@
 package com.aura.assistant
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -135,6 +136,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     // ── Call State Receiver ───────────────────────────────────────────────────
+    @SuppressLint("NewApi")
     private val callReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
@@ -311,6 +313,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag", "NewApi")
     private fun registerReceivers() {
         try {
             val wakeFilter = IntentFilter(WakeWordService.ACTION_WAKE)

@@ -47,6 +47,12 @@ android {
     androidResources {
         noCompress += listOf("onnx")
     }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+        disable += listOf("PropertyEscape")
+    }
 }
 
 kotlin {

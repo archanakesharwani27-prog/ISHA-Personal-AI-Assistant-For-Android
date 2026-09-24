@@ -52,6 +52,7 @@ fun AuraMainScreen(
 
     val isToolsSheetVisible by viewModel.isToolsSheetVisible.collectAsState()
     val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
+    val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     val isShakeEnabled by viewModel.isShakeEnabled.collectAsState()
     val isMessageSpeakEnabled by viewModel.isMessageSpeakEnabled.collectAsState()
@@ -122,6 +123,10 @@ fun AuraMainScreen(
                     onOpenSettings = {
                         coroutineScope.launch { drawerState.close() }
                         viewModel.showSettings()
+                    },
+                    onOpenApiKeyEntry = {
+                        coroutineScope.launch { drawerState.close() }
+                        viewModel.showApiKeyScreen()
                     }
                 )
             }
@@ -238,6 +243,7 @@ fun AuraMainScreen(
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },
                     onClearAllChats = { viewModel.clearAllChats() },
                     onOpenDiagnostics = { isDiagnosticsVisible = true },
+                    onOpenApiKeyEntry = { viewModel.showApiKeyScreen() },
                     onDismiss = { viewModel.hideSettings() }
                 )
             }
@@ -246,6 +252,13 @@ fun AuraMainScreen(
             if (isDiagnosticsVisible) {
                 AuraDiagnosticsScreen(
                     onBack = { isDiagnosticsVisible = false }
+                )
+            }
+
+            // ── API Key Entry Screen ─────────────────────────────────────────
+            if (isApiKeyScreenVisible) {
+                AuraApiKeyScreen(
+                    onBack = { viewModel.hideApiKeyScreen() }
                 )
             }
         }

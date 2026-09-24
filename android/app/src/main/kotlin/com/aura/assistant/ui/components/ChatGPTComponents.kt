@@ -142,6 +142,7 @@ fun ChatGPTDrawer(
     onDeleteSession: (String) -> Unit,
     onClearAllChats: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenApiKeyEntry: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -299,6 +300,56 @@ fun ChatGPTDrawer(
             HorizontalDivider(color = ChatGptBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
 
             // ── Drawer Footer Items ────────────────────────────────────────────
+            // Gemini API Key Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenApiKeyEntry)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(ChatGptCard)
+                        .border(1.dp, ChatGptBorder, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = "API Key",
+                        tint = ChatGptAccentGreen,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Gemini API Key",
+                        style = AuraTypography.titleMedium.copy(
+                            color = ChatGptTextPrimary,
+                            fontSize = 14.sp
+                        )
+                    )
+                    Text(
+                        text = "Manage AI model key",
+                        style = AuraTypography.bodyMedium.copy(
+                            color = ChatGptTextMuted,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                    contentDescription = null,
+                    tint = ChatGptTextSecondary,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             // Settings Row
             Row(
                 modifier = Modifier

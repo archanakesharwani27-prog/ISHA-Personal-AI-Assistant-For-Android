@@ -15,8 +15,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
+import com.aura.assistant.config.ApiKeyManager
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,6 +56,7 @@ fun AuraSettingsSheet(
     onMessageSpeakToggle: (Boolean) -> Unit = {},
     onClearAllChats: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
+    onOpenApiKeyEntry: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -323,6 +326,77 @@ fun AuraSettingsSheet(
                             }
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── Section: Gemini API Key ───────────────────────────────────────
+            SettingsSectionHeader(icon = Icons.Default.VpnKey, title = "Gemini API Key")
+
+            val userCustomKey = remember { ApiKeyManager.getApiKey(context) }
+            val hasCustomKeySet = userCustomKey.isNotBlank()
+
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onDismiss()
+                        onOpenApiKeyEntry()
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (hasCustomKeySet) ChatGptAccentGreen.copy(alpha = 0.15f) else AuraAmberGold.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            tint = if (hasCustomKeySet) ChatGptAccentGreen else AuraAmberGold,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Gemini API Key",
+                            style = AuraTypography.bodyLarge.copy(
+                                color = ChatGptTextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        Text(
+                            text = if (hasCustomKeySet) ApiKeyManager.maskKey(userCustomKey) else "Using default system key",
+                            style = AuraTypography.bodySmall.copy(
+                                color = ChatGptTextSecondary,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Text(
+                        text = "Edit",
+                        color = ChatGptAccentGreen,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = null,
+                        tint = ChatGptTextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
 

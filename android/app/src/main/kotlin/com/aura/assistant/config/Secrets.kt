@@ -1,15 +1,26 @@
 package com.aura.assistant.config
 
+import android.content.Context
+
 /**
  * Verified primary API credentials for AURA.
- * This file is git-ignored and never committed to version control.
+ * Supports user-entered custom keys from ApiKeyManager with fallback.
  */
 object Secrets {
-    // ── Primary Verified Gemini API Key (anshkesharwani0807@gmail.com) ─────────
+    // Default fallback key (used if no custom key has been entered)
     const val GEMINI_API_KEY = "AQ.Ab8RN6KGIOlNrVk9A0XwRGWS6WMu99oz8XhKk-AQ3s9u7WDMxg"
 
     /**
      * Returns the active Gemini API key.
+     * Prioritizes user-entered key from ApiKeyManager if context is available.
      */
-    fun getActiveGeminiKey(): String = GEMINI_API_KEY
+    fun getActiveGeminiKey(context: Context? = null): String {
+        if (context != null) {
+            val userKey = ApiKeyManager.getApiKey(context)
+            if (userKey.isNotBlank()) {
+                return userKey
+            }
+        }
+        return GEMINI_API_KEY
+    }
 }

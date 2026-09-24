@@ -34,11 +34,15 @@ class GeminiChatService(private val context: Context) {
 
     companion object {
         private const val TAG = "GeminiChatService"
-        // Models prioritized by availability — each is a DISTINCT fallback.
-        private val CANDIDATE_MODELS = listOf(
+        // ╔══════════════════════════════════════════════════════════════════════════════════╗
+        // ║ 🔒 STRICTLY FROZEN - DO NOT MODIFY, REVERT, OR RENAME THESE MODELS               ║
+        // ║ Verified & tested on real device via live Google Gemini v1beta API endpoints.     ║
+        // ║ Changing these to 1.5/2.0 causes immediate HTTP 404 Not Found from Google server. ║
+        // ╚══════════════════════════════════════════════════════════════════════════════════╝
+        val CANDIDATE_MODELS = listOf(
             "gemini-3.6-flash",
-            "gemini-3.5-flash-lite",
             "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
             "gemini-flash-latest"
         )
@@ -97,27 +101,27 @@ class GeminiChatService(private val context: Context) {
                     isSuccess = false
                 )
             } catch (_: Exception) {}
-        } else if (positivePhrases.any { cleanInput == it }) {
-            try {
-                AuraExperienceDatabase.getInstance(context).recordUserFeedback(
-                    taskId = "recent_task",
-                    feedbackText = newPrompt,
-                    isSuccess = true
-                )
-            } catch (_: Exception) {}
-        }
+        } else if (positivePhrases.any { cleanInput.contains(it) }) {
+                try {
+                    AuraExperienceDatabase.getInstance(context).recordUserFeedback(
+                        taskId = "recent_task",
+                        feedbackText = newPrompt,
+                        isSuccess = true
+                    )
+                } catch (_: Exception) {}
+            }
 
-        // Check if user's prompt matches a user-taught command rule
-        val matchingRule = AuraMemoryManager.findMatchingRule(context, newPrompt)
-        val promptToSend = if (matchingRule != null) {
-            Log.i(TAG, "🎯 Taught Rule Matched for prompt '$newPrompt': trigger='${matchingRule.triggerPattern}', action='${matchingRule.actionInstruction}', tool=${matchingRule.primaryTool}")
-            val toolHint = if (!matchingRule.primaryTool.isNullOrBlank()) " using tool '${matchingRule.primaryTool}'" else ""
-            "$newPrompt\n\n[USER-TAUGHT ACTION RULE ACTIVE]: The Boss taught you that for trigger '${matchingRule.triggerPattern}', you MUST execute: ${matchingRule.actionInstruction}$toolHint. Execute this exact action now!"
-        } else {
-            newPrompt
-        }
+            // Check if user's prompt matches a user-taught command rule
+            val matchingRule = AuraMemoryManager.findMatchingRule(context, newPrompt)
+            val promptToSend = if (matchingRule != null) {
+                Log.i(TAG, "🎯 Taught Rule Matched for prompt '$newPrompt': trigger='${matchingRule.triggerPattern}', action='${matchingRule.actionInstruction}', tool=${matchingRule.primaryTool}")
+                val toolHint = if (!matchingRule.primaryTool.isNullOrBlank()) " using tool '${matchingRule.primaryTool}'" else ""
+                "$newPrompt\n\n[USER-TAUGHT ACTION RULE ACTIVE]: The Boss taught you that for trigger '${matchingRule.triggerPattern}', you MUST execute: ${matchingRule.actionInstruction}$toolHint. Execute this exact action now!"
+            } else {
+                newPrompt
+            }
 
-        val apiKey = Secrets.getActiveGeminiKey()
+        val apiKey = Secrets.getActiveGeminiKey(context)
         val requestBodyJson = buildRequestBody(history, promptToSend, imageBytes)
         val bodyStr = requestBodyJson.toString()
 
@@ -272,7 +276,7 @@ class GeminiChatService(private val context: Context) {
         currentStep: Int = 1,
         priorContents: JsonArray? = null
     ) {
-        val apiKey = Secrets.getActiveGeminiKey()
+        val apiKey = Secrets.getActiveGeminiKey(context)
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
 
         val root = JsonObject().apply {
@@ -322,7 +326,12 @@ class GeminiChatService(private val context: Context) {
                         val fnRespObj = JsonObject().apply {
                             addProperty("name", toolName)
                             val resp = JsonObject().apply {
-                                add("output", toolResult)
+                                val outputObj = if (toolResult.isJsonObject) toolResult.asJsonObject.deepCopy() else JsonObject()
+                                outputObj.addProperty(
+                                    "_task_guidance",
+                                    "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise chat_on_whatsapp ke baad reply bhejna), to IMMEDIATELY unka tool call karo — text summary abhi mat do!"
+                                )
+                                add("output", outputObj)
                             }
                             add("response", resp)
                         }
@@ -330,19 +339,6 @@ class GeminiChatService(private val context: Context) {
                     }
                     parts.add(fnRespPart)
                 }
-                // Inject a reminder so Gemini continues calling tools for remaining tasks
-                // in the original compound/multi-task request instead of giving a text reply.
-                val taskReminderPart = JsonObject().apply {
-                    addProperty(
-                        "text",
-                        "[AURA_TASK_ENGINE — Step $currentStep complete]: Tool executed successfully. " +
-                        "Original user request was: \"$originalPrompt\". " +
-                        "Agar is request mein aur tasks baaki hain jo abhi execute NAHI hue, " +
-                        "to IMMEDIATELY unka tool call karo — text response MAT do abhi! " +
-                        "Sare requested tasks complete hone ke baad hi final summary do."
-                    )
-                }
-                parts.add(taskReminderPart)
                 add("parts", parts)
             }
             contents.add(fnResponseTurn)
@@ -356,6 +352,14 @@ class GeminiChatService(private val context: Context) {
                 add(toolHolder)
             }
             add("tools", tools)
+
+            // Generation Config for rich multi-turn reasoning without truncation
+            val genConfig = JsonObject().apply {
+                addProperty("temperature", 0.7)
+                addProperty("topP", 0.95)
+                addProperty("maxOutputTokens", 8192)
+            }
+            add("generationConfig", genConfig)
         }
 
         val body = root.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -511,7 +515,7 @@ class GeminiChatService(private val context: Context) {
         val genConfig = JsonObject().apply {
             addProperty("temperature", 0.7)
             addProperty("topP", 0.95)
-            addProperty("maxOutputTokens", 2048)
+            addProperty("maxOutputTokens", 8192)
         }
         root.add("generationConfig", genConfig)
 

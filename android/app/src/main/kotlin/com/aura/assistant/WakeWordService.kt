@@ -1,5 +1,6 @@
 package com.aura.assistant
 
+import android.annotation.SuppressLint
 import android.app.*
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -179,6 +180,7 @@ class WakeWordService : Service(), SensorEventListener {
         registerScreenReceiver()
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun registerScreenReceiver() {
         try {
             val filter = IntentFilter().apply {

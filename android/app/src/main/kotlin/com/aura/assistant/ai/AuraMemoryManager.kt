@@ -227,9 +227,11 @@ object AuraMemoryManager {
         return sb.toString()
     }
 
-    /**
-     * Builds the complete, rich system prompt for Chat and Voice.
-     */
+    // ╔══════════════════════════════════════════════════════════════════════════════════╗
+    // ║ 🔒 STRICTLY FROZEN - AURA PERSONA, CREATOR ATTRIBUTION & WORKING ARCHITECTURE  ║
+    // ║ Female AI companion created by Ansh Kesharwani, addressing user as "Boss".       ║
+    // ║ Do NOT alter this persona, its core tone, or device execution rules.            ║
+    // ╚══════════════════════════════════════════════════════════════════════════════════╝
     fun buildSystemPrompt(context: Context, isVoiceMode: Boolean = false): String {
         val userName = getUserName(context)
         val now = SimpleDateFormat("EEEE, dd MMMM yyyy HH:mm:ss", Locale.getDefault()).format(Date())
@@ -335,7 +337,7 @@ Call made       → [Name] ko call kar rahi hoon Boss!
 Time checked    → Abhi [time] baje hain Boss!
 
 COMPLETE TOOL REFERENCE (use EXACTLY these — no variations):
-COMMUNICATION: make_call, send_sms, send_whatsapp, send_whatsapp_media,
+COMMUNICATION: make_call, send_sms, send_whatsapp, type_message, chat_on_whatsapp, send_whatsapp_media,
   delete_whatsapp_media, send_email, accept_call, decline_call,
   identify_caller, read_recent_sms, query_contact, manage_contacts, get_recent_calls, get_contacts_list
 HARDWARE CONTROLS: toggle_flashlight, set_volume, set_brightness, toggle_wifi,
@@ -366,7 +368,13 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 2. COMMUNICATION DISAMBIGUATION:
    - 'Call lagao / phone karo' → make_call.
    - 'Contact number kya hai / details batao' → query_contact (phone mat lagao, sirf number read karo).
-   - 'WhatsApp message' → send_whatsapp.
+   - 'WhatsApp message bhejo / bolo' → send_whatsapp.
+   - 'WhatsApp par ye message type karo / likho' → type_message(text=..., contact_name=...). KABHI BHI type command par send_whatsapp mat call karo! type_message chat input field focus karke keyboard open karega aur message type karega bina send kiye.
+   - 'WhatsApp par [contact] se baat karo / baat karlo / unka message dekh kar reply do' →
+     STEP 1: IMMEDIATELY call chat_on_whatsapp(contact_name='...').
+     STEP 2: chat_on_whatsapp se jo recent messages return hon, unhe dhyan se padho aur unka context samjho.
+     STEP 3: AURA ki sweet female persona mein badhiya reply formulate karo aur IMMEDIATELY send_whatsapp(contact_name='...', message=reply) call karke send kar do!
+     STEP 4: Reply bhej lene ke baad Boss ko update do: 'Boss, maine unka message dekha: "[msg]" aur reply bhej diya: "[reply]"'.
    - 'SMS / normal text message' → send_sms.
    - 'Screenshot/photo WhatsApp karo' → send_whatsapp_media.
    - 'Call uthao' → accept_call, 'Call kaato' → decline_call.
