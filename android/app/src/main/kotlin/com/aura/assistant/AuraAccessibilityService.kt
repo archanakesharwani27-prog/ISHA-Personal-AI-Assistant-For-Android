@@ -1792,15 +1792,46 @@ class AuraAccessibilityService : AccessibilityService() {
      * - "highest_rated": Installs highest rated visible app.
      */
     fun armPlayStoreInstall(query: String, criteria: String = "top") {
+        val cleanQuery = query.trim().lowercase()
+        val knownPackages = mapOf(
+            "whatsapp" to "com.whatsapp",
+            "whatsapp business" to "com.whatsapp.w4b",
+            "instagram" to "com.instagram.android",
+            "telegram" to "org.telegram.messenger",
+            "snapchat" to "com.snapchat.android",
+            "facebook" to "com.facebook.katana",
+            "messenger" to "com.facebook.orca",
+            "youtube" to "com.google.android.youtube",
+            "chrome" to "com.android.chrome",
+            "spotify" to "com.spotify.music",
+            "truecaller" to "com.truecaller",
+            "zomato" to "com.application.zomato",
+            "swiggy" to "in.swiggy.android",
+            "paytm" to "net.one97.paytm",
+            "phonepe" to "com.phonepe.app",
+            "gpay" to "com.google.android.apps.nfc.payment",
+            "google pay" to "com.google.android.apps.nfc.payment"
+        )
+
+        val directPkg = knownPackages[cleanQuery]
+        val uri = if (directPkg != null) {
+            Uri.parse("market://details?id=$directPkg")
+        } else {
+            Uri.parse("market://search?q=" + URLEncoder.encode(query, "UTF-8"))
+        }
+
         try {
-            val uri = Uri.parse("market://search?q=" + URLEncoder.encode(query, "UTF-8"))
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 setPackage("com.android.vending")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             startActivity(intent)
         } catch (_: Exception) {
-            val webUri = Uri.parse("https://play.google.com/store/search?q=" + URLEncoder.encode(query, "UTF-8"))
+            val webUri = if (directPkg != null) {
+                Uri.parse("https://play.google.com/store/apps/details?id=$directPkg")
+            } else {
+                Uri.parse("https://play.google.com/store/search?q=" + URLEncoder.encode(query, "UTF-8"))
+            }
             startActivity(Intent(Intent.ACTION_VIEW, webUri).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
         }
 
