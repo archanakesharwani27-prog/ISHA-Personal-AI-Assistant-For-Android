@@ -296,7 +296,7 @@ fun ChatGPTDrawer(
                 }
             }
 
-            Divider(color = ChatGptBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
+            HorizontalDivider(color = ChatGptBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
 
             // ── Drawer Footer Items ────────────────────────────────────────────
             // Settings Row

@@ -123,9 +123,7 @@ fun AuraDiagnosticsScreen(
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = AuraAlertRed
                         ),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(AuraAlertRed.copy(alpha = 0.4f))
-                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AuraAlertRed.copy(alpha = 0.4f)),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
