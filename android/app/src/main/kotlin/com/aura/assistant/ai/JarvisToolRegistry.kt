@@ -888,6 +888,22 @@ object JarvisToolRegistry {
             required = emptyList()
         ))
 
+        // 64. Clear Chrome History
+        toolsArray.add(createFunction(
+            name = "clear_chrome_history",
+            desc = "Clear Chrome browser history, cache, or browsing data hands-free. Call when user asks 'Chrome history delete kar do', 'Chrome browsing history clear karo'.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
+        // 65. Clear YouTube History
+        toolsArray.add(createFunction(
+            name = "clear_youtube_history",
+            desc = "Clear YouTube search history or watch history hands-free. Call when user asks 'YouTube search history delete kar do', 'YouTube history saaf karo'.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
         return toolsArray
     }
 
@@ -1195,6 +1211,47 @@ object JarvisToolRegistry {
                     } catch (e: Exception) {
                         result.addProperty("status", "error")
                         result.addProperty("message", "WhatsApp me screenshot bhejne me issue aaya: ${e.message}")
+                    }
+                }
+
+                "delete_whatsapp_media" -> {
+                    val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
+                    val target = args.get("target")?.asString ?: "chat"
+                    val a11y = AuraAccessibilityService.instance
+                    if (contact.isNotBlank()) {
+                        executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "whatsapp") })
+                        a11y?.armClearWhatsappChat(contact)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "WhatsApp me $contact ke saath $target clear karne ka process initiate kar diya hai Boss! 🧹")
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Contact name provide karna zaroori hai.")
+                    }
+                }
+
+                "clear_chrome_history" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "chrome") })
+                    if (a11y != null) {
+                        a11y.armClearChromeHistory()
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Chrome browsing history clear karne ka action start kar diya hai Boss! 🌐🧹")
+                    } else {
+                        result.addProperty("status", "warning")
+                        result.addProperty("message", "Chrome open ho gaya hai, lekin auto-clear ke liye Accessibility settings me AURA ko turn ON karein.")
+                    }
+                }
+
+                "clear_youtube_history" -> {
+                    val a11y = AuraAccessibilityService.instance
+                    executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "youtube") })
+                    if (a11y != null) {
+                        a11y.armClearYouTubeHistory()
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "YouTube search/watch history clear karne ka action start kar diya hai Boss! ▶️🧹")
+                    } else {
+                        result.addProperty("status", "warning")
+                        result.addProperty("message", "YouTube open ho gaya hai, lekin auto-clear ke liye Accessibility settings me AURA ko turn ON karein.")
                     }
                 }
 

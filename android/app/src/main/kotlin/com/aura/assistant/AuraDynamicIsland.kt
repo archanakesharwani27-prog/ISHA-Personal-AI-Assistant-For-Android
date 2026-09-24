@@ -866,6 +866,22 @@ object AuraDynamicIsland {
                                 waveView?.setThinking(false)
                                 waveView?.setSpeaking(true)
                                 speakText(fullText)
+
+                                // Persist user voice prompt and Aura response to Chat History
+                                try {
+                                    val repo = com.aura.assistant.data.AuraChatRepository(ctx)
+                                    val sessions = repo.getAllSessions()
+                                    val sessId = sessions.firstOrNull()?.id ?: repo.createSession(if (command.length > 28) command.take(25) + "..." else command).id
+                                    val msgs = repo.getMessages(sessId)
+                                    msgs.add(ChatMessage(sessionId = sessId, role = com.aura.assistant.data.MessageRole.USER, text = command))
+                                    if (fullText.isNotBlank()) {
+                                        msgs.add(ChatMessage(sessionId = sessId, role = com.aura.assistant.data.MessageRole.ASSISTANT, text = fullText))
+                                    }
+                                    repo.saveMessages(sessId, msgs)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to save voice chat history: $e")
+                                }
+
                                 handler.postDelayed({ hide() }, 4000L)
                             }
                         }

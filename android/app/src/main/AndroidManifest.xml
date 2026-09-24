@@ -215,6 +215,14 @@
             </intent-filter>
         </receiver>
 
+        <!-- ── Headless ADB Command Injection Receiver for Testing ── -->
+        <receiver
+            android:name=".AuraAdbReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.aura.assistant.ADB_INJECT" />
+            </intent-filter>
+        </receiver>
 
         <!--
           Accessibility service: Powers WhatsApp auto-send, Gmail compose,

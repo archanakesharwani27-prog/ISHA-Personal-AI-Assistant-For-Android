@@ -35,20 +35,20 @@ class GeminiChatService(private val context: Context) {
     companion object {
         private const val TAG = "GeminiChatService"
         // Models prioritized by availability — each is a DISTINCT fallback.
-        // gemini-3.5-flash is primary (tested and verified working).
         private val CANDIDATE_MODELS = listOf(
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
             "gemini-3.5-flash",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
+            "gemini-3.1-flash-lite",
             "gemini-flash-latest"
         )
     }
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private var activeCall: Call? = null

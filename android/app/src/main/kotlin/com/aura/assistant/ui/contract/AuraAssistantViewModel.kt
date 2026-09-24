@@ -131,45 +131,51 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         // Sync completed Gemini Live turns into current chat session
         viewModelScope.launch {
             liveClient.turnCompletedFlow.collect { turn ->
-                val currentSessionId = _activeSessionId.value
-                if (currentSessionId.isNotBlank()) {
-                    // Filter out acoustic echo fragments or empty turns
-                    val cleanAsst = turn.assistantText.trim()
-                    if (turn.userText == "Spoken query" && (cleanAsst.length < 35 || cleanAsst.endsWith("…") || cleanAsst.split(" ").size < 4)) {
-                        return@collect
-                    }
-                    val newMsgs = mutableListOf<ChatMessage>()
-                    if (turn.userText.isNotBlank()) {
-                        newMsgs.add(
-                            ChatMessage(
-                                sessionId = currentSessionId,
-                                role = MessageRole.USER,
-                                text = turn.userText
-                            )
-                        )
-                    }
-                    if (turn.assistantText.isNotBlank()) {
-                        newMsgs.add(
-                            ChatMessage(
-                                sessionId = currentSessionId,
-                                role = MessageRole.ASSISTANT,
-                                text = turn.assistantText
-                            )
-                        )
-                    }
-                    if (newMsgs.isNotEmpty()) {
-                        val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
-                        _chatMessages.value = updated
-                        repository.saveMessages(currentSessionId, updated)
+                val userTextClean = turn.userText.trim()
+                val asstTextClean = turn.assistantText.trim()
+                if (userTextClean.isBlank() && asstTextClean.isBlank()) return@collect
 
-                        // If it's "New Chat", auto-title with the user prompt
-                        val session = _sessions.value.find { it.id == currentSessionId }
-                        if (session != null && session.title == "New Chat" && turn.userText.isNotBlank()) {
-                            val autoTitle = if (turn.userText.length > 28) turn.userText.take(25) + "..." else turn.userText
-                            repository.renameSession(currentSessionId, autoTitle)
-                            _sessions.value = repository.getAllSessions()
-                        }
-                    }
+                val currentSessionId = if (_activeSessionId.value.isNotBlank()) {
+                    _activeSessionId.value
+                } else {
+                    val promptTitle = if (userTextClean.isNotBlank() && userTextClean != "Spoken query") userTextClean else "Voice Conversation"
+                    val autoTitle = if (promptTitle.length > 28) promptTitle.take(25) + "..." else promptTitle
+                    val newSess = repository.createSession(autoTitle)
+                    _activeSessionId.value = newSess.id
+                    _sessions.value = repository.getAllSessions()
+                    newSess.id
+                }
+
+                val finalUserMsgText = if (userTextClean == "Spoken query" || userTextClean.isBlank()) "Voice input" else userTextClean
+                val newMsgs = mutableListOf<ChatMessage>()
+                newMsgs.add(
+                    ChatMessage(
+                        sessionId = currentSessionId,
+                        role = MessageRole.USER,
+                        text = finalUserMsgText
+                    )
+                )
+                if (asstTextClean.isNotBlank()) {
+                    newMsgs.add(
+                        ChatMessage(
+                            sessionId = currentSessionId,
+                            role = MessageRole.ASSISTANT,
+                            text = asstTextClean
+                        )
+                    )
+                }
+
+                val updated = _chatMessages.value.toMutableList().apply { addAll(newMsgs) }
+                _chatMessages.value = updated
+                repository.saveMessages(currentSessionId, updated)
+                _sessions.value = repository.getAllSessions()
+
+                // Auto-title if session title is generic
+                val session = _sessions.value.find { it.id == currentSessionId }
+                if (session != null && (session.title == "New Chat" || session.title == "Voice Conversation") && userTextClean.isNotBlank() && userTextClean != "Spoken query") {
+                    val autoTitle = if (userTextClean.length > 28) userTextClean.take(25) + "..." else userTextClean
+                    repository.renameSession(currentSessionId, autoTitle)
+                    _sessions.value = repository.getAllSessions()
                 }
             }
         }

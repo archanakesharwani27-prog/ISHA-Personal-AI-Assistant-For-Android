@@ -1145,6 +1145,47 @@ class AuraAccessibilityService : AccessibilityService() {
         startPlan("search_action", steps)
     }
 
+    /**
+     * Clear Chrome browsing history automatically via Accessibility UI navigation.
+     */
+    fun armClearChromeHistory() {
+        startPlan("clear_chrome_history", listOf(
+            A11yStep(clickHint = "more options", delayMs = 1000),
+            A11yStep(clickHint = "history", delayMs = 1200),
+            A11yStep(clickHint = "clear browsing data", delayMs = 1000),
+            A11yStep(clickHint = "clear data", delayMs = 800)
+        ))
+    }
+
+    /**
+     * Clear YouTube search/watch history automatically via Accessibility UI navigation.
+     */
+    fun armClearYouTubeHistory() {
+        startPlan("clear_youtube_history", listOf(
+            A11yStep(clickHint = "you", delayMs = 1000),
+            A11yStep(clickHint = "settings", delayMs = 1200),
+            A11yStep(clickHint = "manage all history", delayMs = 1200),
+            A11yStep(clickHint = "delete", delayMs = 1000)
+        ))
+    }
+
+    /**
+     * Clear WhatsApp chat with a contact automatically via Accessibility UI navigation.
+     */
+    fun armClearWhatsappChat(contactName: String) {
+        val cleanContact = contactName.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val steps = listOf(
+            A11yStep(clickHint = "search", delayMs = 1000),
+            A11yStep(typeText  = cleanContact, delayMs = 1200),
+            A11yStep(clickHint = cleanContact.split(" ").firstOrNull() ?: cleanContact, delayMs = 1500),
+            A11yStep(clickHint = "more options", delayMs = 1000),
+            A11yStep(clickHint = "more", delayMs = 800),
+            A11yStep(clickHint = "clear chat", delayMs = 800),
+            A11yStep(clickHint = "clear chat", delayMs = 800)
+        )
+        startPlan("clear_wa_chat", steps)
+    }
+
     fun takeScreenCapture(callback: (ByteArray?) -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
