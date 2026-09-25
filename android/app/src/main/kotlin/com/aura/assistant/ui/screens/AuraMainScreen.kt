@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.aura.assistant.ui.components.*
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
 import com.aura.assistant.ui.theme.ChatGptBackground
+import com.aura.assistant.auth.UserProfile
 import kotlinx.coroutines.launch
 
 /**
@@ -32,6 +33,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AuraMainScreen(
     viewModel: AuraAssistantViewModel,
+    userProfile: UserProfile = UserProfile(),
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -128,6 +131,11 @@ fun AuraMainScreen(
                     onOpenApiKeyEntry = {
                         coroutineScope.launch { drawerState.close() }
                         viewModel.showApiKeyScreen()
+                    },
+                    userProfile = userProfile,
+                    onLogout = {
+                        coroutineScope.launch { drawerState.close() }
+                        onLogout()
                     }
                 )
             }
@@ -242,12 +250,14 @@ fun AuraMainScreen(
                     isWakeWordEnabled = isWakeWordEnabled,
                     isShakeEnabled = isShakeEnabled,
                     isMessageSpeakEnabled = isMessageSpeakEnabled,
+                    userProfile = userProfile,
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },
                     onClearAllChats = { viewModel.clearAllChats() },
                     onOpenDiagnostics = { isDiagnosticsVisible = true },
                     onOpenApiKeyEntry = { viewModel.showApiKeyScreen() },
+                    onLogout = onLogout,
                     onDismiss = { viewModel.hideSettings() }
                 )
             }

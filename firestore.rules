@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User presence, profiles, and active session telemetry
+    match /users/{userId} {
+      // Authenticated users or guest sessions can read & write their telemetry
+      allow read: if request.auth != null || userId.matches('guest_.*') || userId.matches('user_.*') || userId.matches('local_.*');
+      allow create, update: if request.auth != null || userId.matches('guest_.*') || userId.matches('user_.*') || userId.matches('local_.*');
+      allow delete: if false;
+    }
+  }
+}

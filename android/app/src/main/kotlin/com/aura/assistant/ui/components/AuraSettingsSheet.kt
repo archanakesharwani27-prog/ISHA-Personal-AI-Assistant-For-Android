@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import com.aura.assistant.config.ApiKeyManager
+import com.aura.assistant.auth.UserProfile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,12 +52,14 @@ fun AuraSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
     isMessageSpeakEnabled: Boolean = true,
+    userProfile: UserProfile = UserProfile(),
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,
     onMessageSpeakToggle: (Boolean) -> Unit = {},
     onClearAllChats: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onOpenApiKeyEntry: () -> Unit = {},
+    onLogout: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -127,6 +130,68 @@ fun AuraSettingsSheet(
                         text = "Personalize your AI assistant",
                         style = AuraTypography.bodyMedium.copy(color = ChatGptTextMuted, fontSize = 12.sp)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── User Account Card ───────────────────────────────────────────
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = ChatGptCard,
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(userProfile.avatarColorHex)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = userProfile.avatarInitial,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = userProfile.name,
+                            style = AuraTypography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = ChatGptTextPrimary,
+                                fontSize = 15.sp
+                            )
+                        )
+                        Text(
+                            text = userProfile.email.ifBlank { "Personal Account • ${userProfile.provider}" },
+                            style = AuraTypography.bodySmall.copy(
+                                color = ChatGptTextMuted,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            onDismiss()
+                            onLogout()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF2E1A1A),
+                            contentColor = Color(0xFFFF5252)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Sign Out", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
 

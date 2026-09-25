@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.aura.assistant.auth.UserProfile
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -134,6 +135,8 @@ fun ChatGPTDrawer(
     onClearAllChats: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenApiKeyEntry: () -> Unit = {},
+    userProfile: UserProfile = UserProfile(),
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -381,6 +384,64 @@ fun ChatGPTDrawer(
                     tint = ChatGptTextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // User Profile & Logout Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(userProfile.avatarColorHex)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = userProfile.avatarInitial,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = userProfile.name,
+                        style = AuraTypography.titleMedium.copy(
+                            color = ChatGptTextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = userProfile.email.ifBlank { "Personal Profile" },
+                        style = AuraTypography.bodyMedium.copy(
+                            color = ChatGptTextMuted,
+                            fontSize = 11.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(
+                    onClick = onLogout,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = "Sign Out",
+                        tint = Color(0xFFFF5252),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }

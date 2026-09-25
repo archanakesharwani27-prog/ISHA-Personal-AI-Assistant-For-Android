@@ -27,7 +27,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.aura.assistant.auth.AuraAuthManager
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
+import com.aura.assistant.ui.screens.AuraLoginScreen
 import com.aura.assistant.ui.screens.AuraMainScreen
 import com.aura.assistant.ui.theme.AuraTheme
 import java.util.Locale
@@ -192,12 +200,32 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         initNativeTts()
 
 
+        AuraAuthManager.init(this)
         startWakeWordService()
         handleWakeIntent(intent)
 
         setContent {
             AuraTheme {
-                AuraMainScreen(viewModel = viewModel)
+                val session by AuraAuthManager.sessionState.collectAsState()
+                AnimatedContent(
+                    targetState = session.isLoggedIn,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    label = "AuthTransition"
+                ) { loggedIn ->
+                    if (loggedIn) {
+                        AuraMainScreen(
+                            viewModel = viewModel,
+                            userProfile = session,
+                            onLogout = { AuraAuthManager.logout(this@MainActivity) }
+                        )
+                    } else {
+                        AuraLoginScreen(
+                            onLoginSuccess = {
+                                // Session flow triggers automatic crossfade
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -210,6 +238,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun handleWakeIntent(intent: Intent?) {
         if (intent == null) return
+        val action = intent.action
+        if (action == "com.aura.assistant.LOGOUT") {
+            AuraAuthManager.logout(this)
+            return
+        }
         val injectText = intent.getStringExtra("inject_text")
         if (!injectText.isNullOrBlank()) {
             mainHandler.postDelayed({
@@ -217,7 +250,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }, 300)
             return
         }
-        val action = intent.action
         val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON)
         if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null) {
             mainHandler.postDelayed({
