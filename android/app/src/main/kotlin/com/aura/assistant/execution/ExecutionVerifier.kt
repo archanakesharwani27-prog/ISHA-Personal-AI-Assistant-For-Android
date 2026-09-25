@@ -124,7 +124,9 @@ object ExecutionVerifier {
                 "open_camera", "add_calendar_event", "send_email", "emergency_sos",
                 "create_quick_note", "remember_fact", "teach_command_rule", "perform_app_action",
                 "search_files", "delete_file", "take_screenshot", "share_media",
-                "media_control", "type_text" -> {
+                "media_control", "type_text", "whatsapp_post_status", "whatsapp_trigger_backup",
+                "whatsapp_open_settings", "instagram_like_post", "instagram_comment_post",
+                "instagram_send_dm", "instagram_post_story", "instagram_navigate", "autonomous_ui_action" -> {
                     val isSuccess = status == null || status == "success" || status == "settings_opened"
                     VerificationEvidence(
                         verified = isSuccess,

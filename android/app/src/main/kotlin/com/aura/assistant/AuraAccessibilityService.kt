@@ -1488,6 +1488,165 @@ class AuraAccessibilityService : AccessibilityService() {
         ))
     }
 
+    /**
+     * Autonomously likes the current post or reel on Instagram.
+     * Strategy 1: Finds node matching "like", "heart", "like button" and clicks it.
+     * Strategy 2: Fast double-tap at the center of the screen (universal Instagram like gesture).
+     */
+    fun armInstagramLike(): Boolean {
+        val root = rootInActiveWindow
+        val likeHints = listOf("like", "like button", "heart", "like this post", "like reel", "पसंद करें")
+        if (root != null && clickFirstMatch(root, likeHints)) {
+            Log.i(TAG, "Instagram like button clicked via accessibility node")
+            return true
+        }
+        // Universal center double-tap gesture fallback for Reels / Feed posts
+        val dm = resources.displayMetrics
+        val cx = dm.widthPixels * 0.5f
+        val cy = dm.heightPixels * 0.45f
+        performTap(cx, cy)
+        stepHandler.postDelayed({
+            performTap(cx, cy)
+            Log.i(TAG, "Instagram double-tap like gesture executed at ($cx, $cy)")
+        }, 120L)
+        return true
+    }
+
+    /**
+     * Autonomously comments on the current Instagram post or reel.
+     */
+    fun armInstagramComment(comment: String) {
+        startPlan("instagram_comment", listOf(
+            A11yStep(clickHint = "comment", delayMs = 600),
+            A11yStep(clickHint = "add a comment", delayMs = 600),
+            A11yStep(typeText = comment, delayMs = 700),
+            A11yStep(clickHint = "post", delayMs = 500, verifyHint = comment.take(15))
+        ))
+    }
+
+    /**
+     * Autonomously creates and posts a story on Instagram.
+     */
+    fun armInstagramStory(caption: String? = null) {
+        val steps = mutableListOf(
+            A11yStep(clickHint = "your story", delayMs = 1200),
+            A11yStep(clickHint = "create", delayMs = 1000)
+        )
+        if (!caption.isNullOrBlank()) {
+            steps.add(A11yStep(clickHint = "type something", delayMs = 800))
+            steps.add(A11yStep(typeText = caption, delayMs = 800))
+        }
+        steps.add(A11yStep(clickHint = "your story", delayMs = 900))
+        steps.add(A11yStep(clickHint = "share", delayMs = 800))
+        startPlan("instagram_story", steps)
+    }
+
+    /**
+     * Autonomously navigates inside Instagram to reels, dms, profile, explore, or settings.
+     */
+    fun armInstagramNavigate(destination: String) {
+        val dest = destination.lowercase().trim()
+        when {
+            dest.contains("reel") -> {
+                startPlan("instagram_nav_reels", listOf(
+                    A11yStep(clickHint = "reels", delayMs = 800)
+                ))
+            }
+            dest.contains("profile") -> {
+                startPlan("instagram_nav_profile", listOf(
+                    A11yStep(clickHint = "profile", delayMs = 800)
+                ))
+            }
+            dest.contains("explore") || dest.contains("search") -> {
+                startPlan("instagram_nav_explore", listOf(
+                    A11yStep(clickHint = "search and explore", delayMs = 800),
+                    A11yStep(clickHint = "explore", delayMs = 600)
+                ))
+            }
+            dest.contains("setting") -> {
+                startPlan("instagram_nav_settings", listOf(
+                    A11yStep(clickHint = "profile", delayMs = 800),
+                    A11yStep(clickHint = "menu", delayMs = 800),
+                    A11yStep(clickHint = "settings and privacy", delayMs = 800),
+                    A11yStep(clickHint = "settings", delayMs = 600)
+                ))
+            }
+            dest.contains("dm") || dest.contains("msg") || dest.contains("message") -> {
+                startPlan("instagram_nav_dms", listOf(
+                    A11yStep(clickHint = "messages", delayMs = 800),
+                    A11yStep(clickHint = "direct", delayMs = 600)
+                ))
+            }
+        }
+    }
+
+    // ── WhatsApp Full Automation Suite (Status, Backup, Settings) ─────────────
+
+    /**
+     * Autonomously posts a WhatsApp Status / Story.
+     */
+    fun armWhatsappStatus(statusText: String? = null) {
+        val steps = mutableListOf(
+            A11yStep(clickHint = "updates", delayMs = 1000),
+            A11yStep(clickHint = "status", delayMs = 800)
+        )
+        if (!statusText.isNullOrBlank()) {
+            steps.add(A11yStep(clickHint = "text status", delayMs = 900))
+            steps.add(A11yStep(clickHint = "pencil", delayMs = 700))
+            steps.add(A11yStep(typeText = statusText, delayMs = 800))
+            steps.add(A11yStep(clickHint = "send", delayMs = 600, verifyHint = "just now"))
+        } else {
+            steps.add(A11yStep(clickHint = "camera", delayMs = 900))
+        }
+        startPlan("whatsapp_status", steps)
+    }
+
+    /**
+     * Autonomously triggers WhatsApp Chat Backup (Settings > Chats > Chat backup > Back up).
+     */
+    fun armWhatsappBackup() {
+        startPlan("whatsapp_backup", listOf(
+            A11yStep(clickHint = "more options", delayMs = 900),
+            A11yStep(clickHint = "settings", delayMs = 800),
+            A11yStep(clickHint = "chats", delayMs = 800),
+            A11yStep(clickHint = "chat backup", delayMs = 900),
+            A11yStep(clickHint = "back up", delayMs = 1000, verifyHint = "backing up")
+        ))
+    }
+
+    /**
+     * Autonomously opens WhatsApp Settings and navigates to the requested sub-section.
+     */
+    fun armWhatsappOpenSettings(section: String? = null) {
+        val steps = mutableListOf(
+            A11yStep(clickHint = "more options", delayMs = 800),
+            A11yStep(clickHint = "settings", delayMs = 800)
+        )
+        if (!section.isNullOrBlank()) {
+            val secClean = section.lowercase().trim()
+            steps.add(A11yStep(clickHint = secClean, delayMs = 800))
+        }
+        startPlan("whatsapp_settings", steps)
+    }
+
+    /**
+     * Universal Autonomous UI Action: Millisecond element matcher and activator.
+     * Searches active hierarchy for any matching button/text keyword and taps or types into it.
+     */
+    fun armAutonomousUiAction(targetKeywords: List<String>, typeText: String? = null): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val matched = clickFirstMatch(root, targetKeywords.map { it.lowercase() })
+        if (matched && !typeText.isNullOrBlank()) {
+            stepHandler.postDelayed({
+                val edit = findFocusedEditText(rootInActiveWindow)
+                if (edit != null) {
+                    typeIntoNode(edit, typeText)
+                }
+            }, 500L)
+        }
+        return matched
+    }
+
     // ── New: Facebook Post ────────────────────────────────────────────────────
 
     fun armFacebookPost(text: String) {
