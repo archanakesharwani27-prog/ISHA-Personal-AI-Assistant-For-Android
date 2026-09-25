@@ -1045,6 +1045,166 @@ object JarvisToolRegistry {
             )
         ))
 
+        // 75. Telegram Control
+        toolsArray.add(createFunction(
+            name = "telegram_action",
+            desc = "Control Telegram: send a message to a contact, open a chat, or search in Telegram. ALWAYS call when user asks to message or chat on Telegram (e.g. 'Telegram par Rahul ko message bhejo: Hello', 'Telegram chat kholo').",
+            params = mapOf(
+                "action" to "string",
+                "recipient" to "string",
+                "message" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'send_message', 'open_chat', or 'search'",
+                "recipient" to "Contact name or Telegram username",
+                "message" to "Message text to send"
+            )
+        ))
+
+        // 76. YouTube & Shorts Interaction
+        toolsArray.add(createFunction(
+            name = "youtube_interact",
+            desc = "Interact with active YouTube video or YouTube Shorts: 'like' (like video), 'subscribe' (subscribe to channel), 'skip_ad' (skip active ad), 'comment' (post comment), 'next_short' (scroll to next Short), 'prev_short' (previous Short). ALWAYS call for YouTube video/Shorts UI interaction.",
+            params = mapOf(
+                "action" to "string",
+                "comment" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'like', 'subscribe', 'skip_ad', 'comment', 'next_short', or 'prev_short'",
+                "comment" to "Comment text if action is 'comment'"
+            )
+        ))
+
+        // 77. Food Delivery Control (Zomato / Swiggy)
+        toolsArray.add(createFunction(
+            name = "food_delivery_control",
+            desc = "Control Zomato or Swiggy: search dishes/restaurants, track live delivery order, or open cart. ALWAYS call when user asks about ordering food, tracking delivery, or checking cart (e.g. 'Zomato par pizza search karo', 'Swiggy order track karo', 'Zomato cart dikhao').",
+            params = mapOf(
+                "app" to "string",
+                "action" to "string",
+                "query" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "app" to "'zomato' or 'swiggy' (defaults to 'zomato')",
+                "action" to "'search', 'track_order', or 'cart'",
+                "query" to "Dish, food, or restaurant name to search"
+            )
+        ))
+
+        // 78. Ride Booking Control (Uber / Ola / Rapido)
+        toolsArray.add(createFunction(
+            name = "ride_booking_control",
+            desc = "Control Uber, Ola, or Rapido: search ride/destination, open booking screen, or track active ride/driver. ALWAYS call when user asks to book a cab, search Uber/Ola, or track ride (e.g. 'Uber par airport ka cab search karo', 'Ola ride track karo').",
+            params = mapOf(
+                "app" to "string",
+                "action" to "string",
+                "destination" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "app" to "'uber', 'ola', or 'rapido' (defaults to 'uber')",
+                "action" to "'search_ride' or 'track_ride'",
+                "destination" to "Drop destination address or landmark"
+            )
+        ))
+
+        // 79. Shopping Control (Amazon / Flipkart)
+        toolsArray.add(createFunction(
+            name = "shopping_control",
+            desc = "Control Amazon or Flipkart: search products, track current orders/packages, or view shopping cart. ALWAYS call when user asks to search products or track shopping orders (e.g. 'Amazon par iPhone search karo', 'Flipkart order track karo', 'Amazon cart kholo').",
+            params = mapOf(
+                "app" to "string",
+                "action" to "string",
+                "query" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "app" to "'amazon' or 'flipkart' (defaults to 'amazon')",
+                "action" to "'search', 'track_orders', or 'cart'",
+                "query" to "Product name or search keywords"
+            )
+        ))
+
+        // 80. UPI Payment Control (Google Pay / PhonePe / Paytm)
+        toolsArray.add(createFunction(
+            name = "upi_payment_control",
+            desc = "Control Google Pay (GPay), PhonePe, or Paytm: 'scan_qr' (open QR scanner), 'send_money' (initiate payment to contact/number), 'check_balance' (open bank balance check), 'history' (view transaction history). ALWAYS call when user asks to scan QR or make UPI payment (e.g. 'QR scan karo', 'PhonePe par 500 bhejo', 'GPay balance check karo').",
+            params = mapOf(
+                "app" to "string",
+                "action" to "string",
+                "recipient" to "string",
+                "amount" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "app" to "'gpay', 'phonepe', or 'paytm' (defaults to 'gpay')",
+                "action" to "'scan_qr', 'send_money', 'check_balance', or 'history'",
+                "recipient" to "Name or mobile number of the payee",
+                "amount" to "Amount in rupees (e.g. '500')"
+            )
+        ))
+
+        // 81. Twitter / X Control
+        toolsArray.add(createFunction(
+            name = "twitter_control",
+            desc = "Control Twitter / X: post a new tweet, like active tweet, search tweets, or open notifications. ALWAYS call when user asks to tweet or use Twitter (e.g. 'Twitter par tweet karo: Hello world', 'ye tweet like karo').",
+            params = mapOf(
+                "action" to "string",
+                "text" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'post_tweet', 'like', 'search', or 'notifications'",
+                "text" to "Tweet content or search query"
+            )
+        ))
+
+        // 82. Snapchat Control
+        toolsArray.add(createFunction(
+            name = "snapchat_control",
+            desc = "Control Snapchat: open camera to take a snap, switch to stories, or open chats. ALWAYS call when user asks to open Snapchat camera, stories, or chats.",
+            params = mapOf(
+                "action" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'camera', 'stories', or 'chats'"
+            )
+        ))
+
+        // 83. Chrome / Browser Control
+        toolsArray.add(createFunction(
+            name = "browser_control",
+            desc = "Control Chrome or default web browser: 'open_url' (open specific website), 'new_tab' (open new tab), 'incognito' (open incognito/private tab), 'search' (search query in browser), 'bookmark' (bookmark current page). ALWAYS call when user asks to browse or use browser tabs.",
+            params = mapOf(
+                "action" to "string",
+                "query_or_url" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'open_url', 'new_tab', 'incognito', 'search', or 'bookmark'",
+                "query_or_url" to "Website URL or search query"
+            )
+        ))
+
+        // 84. Spotify Control
+        toolsArray.add(createFunction(
+            name = "spotify_control",
+            desc = "Control Spotify: like current playing song ('like'), search playlist/song ('search'), play/pause, or skip next/previous. ALWAYS call when user specifically asks to like a Spotify track or control Spotify playback.",
+            params = mapOf(
+                "action" to "string",
+                "query" to "string"
+            ),
+            required = listOf("action"),
+            paramDescriptions = mapOf(
+                "action" to "'like', 'search', 'play', 'pause', 'next', 'previous'",
+                "query" to "Search song or playlist name"
+            )
+        ))
+
         return toolsArray
     }
 
@@ -1922,6 +2082,440 @@ object JarvisToolRegistry {
                         "message",
                         "Autonomous UI action \"$goal\" executed in ${elapsedMs}ms Boss! ${if (webKnowledge.isNotBlank()) "Knowledge: $webKnowledge" else ""}"
                     )
+                }
+
+                "telegram_action" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "open_chat"
+                    val recipient = args.get("recipient")?.asString ?: args.get("contact")?.asString ?: ""
+                    val message = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    val cleanUser = recipient.replace("@", "").trim()
+                    var launched = false
+                    if (cleanUser.isNotBlank()) {
+                        val uri = Uri.parse("tg://resolve?domain=$cleanUser")
+                        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                            setPackage("org.telegram.messenger")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try {
+                            context.startActivity(intent)
+                            launched = true
+                        } catch (_: Exception) {}
+                    }
+                    if (!launched) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage("org.telegram.messenger")
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        }
+                    }
+
+                    if (action == "send_message" && message.isNotBlank()) {
+                        a11y?.armTelegramMessage(cleanUser.ifBlank { recipient }, message)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Telegram par $recipient ko message: \"$message\" bhej diya ja raha hai Boss! ✈️")
+                    } else {
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Telegram chat with $recipient open kar di gayi hai Boss! ✈️")
+                    }
+                }
+
+                "youtube_interact" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "like"
+                    val comment = args.get("comment")?.asString ?: args.get("text")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    when (action) {
+                        "like" -> {
+                            val success = a11y?.performYoutubeLike() ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "YouTube video like kar diya hai Boss! 👍")
+                        }
+                        "subscribe" -> {
+                            val success = a11y?.performYoutubeSubscribe() ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "YouTube channel subscribe kar diya hai Boss! 🔔")
+                        }
+                        "skip_ad" -> {
+                            val success = a11y?.performYoutubeSkipAd() ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "YouTube advertisement skip kar diya gaya hai Boss! ⏭️")
+                        }
+                        "comment" -> {
+                            if (comment.isNotBlank()) {
+                                a11y?.armYoutubeComment(comment)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "YouTube par comment: \"$comment\" post kar diya hai Boss! 💬")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "YouTube comment text missing hai.")
+                            }
+                        }
+                        "next_short" -> {
+                            val success = a11y?.scrollVideo("down") ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "Next YouTube Short par scroll kar diya hai Boss! 📱")
+                        }
+                        "prev_short" -> {
+                            val success = a11y?.scrollVideo("up") ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "Previous YouTube Short par scroll kar diya hai Boss! 📱")
+                        }
+                        else -> {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Unknown YouTube action: $action")
+                        }
+                    }
+                }
+
+                "food_delivery_control" -> {
+                    val app = args.get("app")?.asString?.lowercase() ?: "zomato"
+                    val action = args.get("action")?.asString?.lowercase() ?: "search"
+                    val query = args.get("query")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    val isZomato = app.contains("zomato")
+                    val pkg = if (isZomato) "com.application.zomato" else "in.swiggy.android"
+
+                    var launched = false
+                    if (action == "search" && query.isNotBlank()) {
+                        val searchUri = if (isZomato) {
+                            Uri.parse("zomato://search?q=${URLEncoder.encode(query, "UTF-8")}")
+                        } else {
+                            Uri.parse("swiggy://explore?query=${URLEncoder.encode(query, "UTF-8")}")
+                        }
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                                setPackage(pkg)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                            launched = true
+                        } catch (_: Exception) {}
+                    }
+                    if (!launched) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        }
+                    }
+
+                    when (action) {
+                        "search" -> {
+                            if (query.isNotBlank()) a11y?.armFoodSearch(query)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🍕")
+                        }
+                        "track_order" -> {
+                            val clicked = a11y?.armFoodTrackOrder() ?: false
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} active order tracking screen open kar di hai Boss! 🛵")
+                        }
+                        "cart" -> {
+                            val clicked = a11y?.armFoodOpenCart() ?: false
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} cart open kar di hai Boss! 🛒")
+                        }
+                        else -> {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "$app open kar diya hai Boss!")
+                        }
+                    }
+                }
+
+                "ride_booking_control" -> {
+                    val app = args.get("app")?.asString?.lowercase() ?: "uber"
+                    val action = args.get("action")?.asString?.lowercase() ?: "search_ride"
+                    val destination = args.get("destination")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    val pkg = when {
+                        app.contains("ola") -> "com.olacabs.customer"
+                        app.contains("rapido") -> "com.rapido.passenger"
+                        else -> "com.ubercab"
+                    }
+
+                    var launched = false
+                    if (destination.isNotBlank() && pkg == "com.ubercab") {
+                        try {
+                            val uberUri = Uri.parse("uber://?action=setPickup&dropoff[formatted_address]=${URLEncoder.encode(destination, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, uberUri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                            launched = true
+                        } catch (_: Exception) {}
+                    }
+                    if (!launched) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        }
+                    }
+
+                    if (action == "search_ride" && destination.isNotBlank()) {
+                        a11y?.armRideSearch(destination)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} me destination: \"$destination\" ke liye ride search ki ja rahi hai Boss! 🚖")
+                    } else if (action == "track_ride") {
+                        a11y?.armRideTrack()
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} active ride tracking open kar di hai Boss! 📍")
+                    } else {
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "$app open kar diya hai Boss!")
+                    }
+                }
+
+                "shopping_control" -> {
+                    val app = args.get("app")?.asString?.lowercase() ?: "amazon"
+                    val action = args.get("action")?.asString?.lowercase() ?: "search"
+                    val query = args.get("query")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    val isAmazon = app.contains("amazon")
+                    val pkg = if (isAmazon) "com.amazon.mShop.android.shopping" else "com.flipkart.android"
+
+                    var launched = false
+                    if (action == "search" && query.isNotBlank() && isAmazon) {
+                        try {
+                            val amazonUri = Uri.parse("amazon://search?k=${URLEncoder.encode(query, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, amazonUri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                            launched = true
+                        } catch (_: Exception) {}
+                    }
+                    if (!launched) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        }
+                    }
+
+                    when (action) {
+                        "search" -> {
+                            if (query.isNotBlank()) a11y?.armShoppingSearch(query)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🛍️")
+                        }
+                        "track_orders" -> {
+                            val clicked = a11y?.armShoppingTrackOrders() ?: false
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Your Orders section open kar diya hai Boss! 📦")
+                        }
+                        "cart" -> {
+                            val clicked = a11y?.armShoppingOpenCart() ?: false
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Cart open kar di hai Boss! 🛒")
+                        }
+                        else -> {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "$app open kar diya hai Boss!")
+                        }
+                    }
+                }
+
+                "upi_payment_control" -> {
+                    val app = args.get("app")?.asString?.lowercase() ?: "gpay"
+                    val action = args.get("action")?.asString?.lowercase() ?: "scan_qr"
+                    val recipient = args.get("recipient")?.asString ?: ""
+                    val amount = args.get("amount")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    val pkg = when {
+                        app.contains("phonepe") -> "com.phonepe.app"
+                        app.contains("paytm") -> "net.one97.paytm"
+                        else -> "com.google.android.apps.nfc.payment"
+                    }
+
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                    if (launchIntent != null) {
+                        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                    }
+
+                    when (action) {
+                        "scan_qr" -> {
+                            a11y?.armUpiScanQr()
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.uppercase()} QR Scanner open kar diya gaya hai Boss! 📷 Scan karke pay karein.")
+                        }
+                        "send_money" -> {
+                            if (recipient.isNotBlank()) {
+                                a11y?.armUpiSendMoney(recipient, amount.ifBlank { null })
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.uppercase()} par $recipient ko ${if (amount.isNotBlank()) "₹$amount" else ""} payment shuru kar di hai Boss! 💳")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Payment ke liye recipient ka naam ya number batayein Boss.")
+                            }
+                        }
+                        "check_balance" -> {
+                            a11y?.armUpiCheckBalance()
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.uppercase()} Bank Balance check screen open kar di hai Boss! 🏦")
+                        }
+                        "history" -> {
+                            a11y?.armUpiHistory()
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.uppercase()} Payment transaction history open kar di hai Boss! 📜")
+                        }
+                        else -> {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${app.uppercase()} payment app open kar diya hai Boss!")
+                        }
+                    }
+                }
+
+                "twitter_control" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "post_tweet"
+                    val text = args.get("text")?.asString ?: args.get("query")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    when (action) {
+                        "post_tweet" -> {
+                            var launched = false
+                            if (text.isNotBlank()) {
+                                try {
+                                    val tweetUri = Uri.parse("https://twitter.com/intent/tweet?text=${URLEncoder.encode(text, "UTF-8")}")
+                                    val intent = Intent(Intent.ACTION_VIEW, tweetUri).apply {
+                                        setPackage("com.twitter.android")
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                    launched = true
+                                } catch (_: Exception) {}
+                            }
+                            if (!launched) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
+                                if (launchIntent != null) {
+                                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                                }
+                                if (text.isNotBlank()) a11y?.armTwitterPost(text)
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Twitter / X par tweet: \"$text\" post kar diya ja raha hai Boss! 🐦")
+                        }
+                        "like" -> {
+                            val success = a11y?.armTwitterLike() ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "Tweet like kar diya gaya hai Boss! ❤️")
+                        }
+                        "search" -> {
+                            val searchUri = Uri.parse("twitter://search?query=${URLEncoder.encode(text, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                                setPackage("com.twitter.android")
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
+                                if (launchIntent != null) {
+                                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                                }
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Twitter par \"$text\" search kar diya hai Boss! 🔍")
+                        }
+                        else -> {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
+                            if (launchIntent != null) {
+                                launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Twitter / X open kar diya hai Boss!")
+                        }
+                    }
+                }
+
+                "snapchat_control" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "camera"
+                    val a11y = AuraAccessibilityService.instance
+
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage("com.snapchat.android")
+                    if (launchIntent != null) {
+                        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                    }
+                    a11y?.armSnapchatAction(action)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Snapchat $action open kar diya hai Boss! 👻")
+                }
+
+                "browser_control" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "search"
+                    val queryOrUrl = args.get("query_or_url")?.asString ?: args.get("query")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    if (action == "open_url" && queryOrUrl.isNotBlank()) {
+                        val fixedUrl = if (!queryOrUrl.startsWith("http://") && !queryOrUrl.startsWith("https://")) {
+                            "https://$queryOrUrl"
+                        } else queryOrUrl
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(fixedUrl)).apply {
+                            setPackage("com.android.chrome")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            val alt = Intent(Intent.ACTION_VIEW, Uri.parse(fixedUrl)).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(alt)
+                        }
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Website \"$fixedUrl\" browser me open kar di hai Boss! 🌐")
+                    } else {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.android.chrome")
+                        if (launchIntent != null) {
+                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        }
+                        a11y?.armBrowserAction(action, queryOrUrl.ifBlank { null })
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Browser $action execute kar diya hai Boss! 🌐")
+                    }
+                }
+
+                "spotify_control" -> {
+                    val action = args.get("action")?.asString?.lowercase() ?: "like"
+                    val query = args.get("query")?.asString ?: ""
+                    val a11y = AuraAccessibilityService.instance
+
+                    if (action == "search" && query.isNotBlank()) {
+                        try {
+                            val uri = Uri.parse("spotify:search:${URLEncoder.encode(query, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.spotify.music")
+                            if (launchIntent != null) {
+                                launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                            }
+                        }
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Spotify par \"$query\" search kar diya hai Boss! 🎵")
+                    } else if (action == "like") {
+                        val success = a11y?.armSpotifyLike() ?: false
+                        result.addProperty("status", if (success) "success" else "error")
+                        result.addProperty("message", "Playing Spotify song ko Liked Songs me add kar diya hai Boss! 💚")
+                    } else {
+                        val mediaArgs = JsonObject().apply { addProperty("action", action) }
+                        return executeTool(context, "media_control", mediaArgs)
+                    }
                 }
 
                 "show_recent_media" -> {
@@ -4417,6 +5011,38 @@ object JarvisToolRegistry {
                 if (name == "autonomous_ui_action") {
                     score += 1.2f
                 }
+            }
+
+            // Everyday Apps domain boosts
+            if (clean.contains("telegram") || clean.contains("tg")) {
+                if (name == "telegram_action") score += 2.2f
+            }
+            if ((clean.contains("youtube") || clean.contains("short") || clean.contains("shorts") || clean.contains("skip ad")) && (clean.contains("like") || clean.contains("subscribe") || clean.contains("comment") || clean.contains("skip") || clean.contains("next") || clean.contains("scroll"))) {
+                if (name == "youtube_interact") score += 2.2f
+            }
+            if (clean.contains("zomato") || clean.contains("swiggy") || clean.contains("food") || clean.contains("khana") || clean.contains("pizza") || clean.contains("burger") || clean.contains("biryani")) {
+                if (name == "food_delivery_control") score += 2.2f
+            }
+            if (clean.contains("uber") || clean.contains("ola") || clean.contains("rapido") || clean.contains("cab") || clean.contains("taxi") || clean.contains("ride")) {
+                if (name == "ride_booking_control") score += 2.2f
+            }
+            if (clean.contains("amazon") || clean.contains("flipkart") || clean.contains("shopping") || clean.contains("cart") || clean.contains("order track")) {
+                if (name == "shopping_control") score += 2.2f
+            }
+            if (clean.contains("gpay") || clean.contains("phonepe") || clean.contains("paytm") || clean.contains("upi") || clean.contains("qr") || clean.contains("scan") || clean.contains("paise") || clean.contains("payment")) {
+                if (name == "upi_payment_control") score += 2.2f
+            }
+            if (clean.contains("twitter") || clean.contains("tweet") || clean.contains(" x ")) {
+                if (name == "twitter_control") score += 2.2f
+            }
+            if (clean.contains("snapchat") || clean.contains("snap") || clean.contains("streak")) {
+                if (name == "snapchat_control") score += 2.2f
+            }
+            if (clean.contains("chrome") || clean.contains("browser") || clean.contains("incognito") || clean.contains("tab") || clean.contains("url") || clean.contains("website")) {
+                if (name == "browser_control") score += 2.0f
+            }
+            if (clean.contains("spotify")) {
+                if (name == "spotify_control") score += 2.2f
             }
 
             scored.add(ScoredDecl(fn, score))

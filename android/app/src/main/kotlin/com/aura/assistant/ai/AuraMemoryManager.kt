@@ -340,6 +340,7 @@ COMPLETE TOOL REFERENCE (use EXACTLY these — no variations):
 COMMUNICATION & SOCIAL: make_call, send_sms, send_whatsapp, type_message, chat_on_whatsapp, send_whatsapp_media,
   delete_whatsapp_media, whatsapp_post_status, whatsapp_trigger_backup, whatsapp_open_settings,
   instagram_like_post, instagram_comment_post, instagram_send_dm, instagram_post_story, instagram_navigate,
+  telegram_action, twitter_control, snapchat_control,
   send_email, accept_call, decline_call, identify_caller, read_recent_sms, query_contact, manage_contacts,
   get_recent_calls, get_contacts_list, autonomous_ui_action
 HARDWARE CONTROLS: toggle_flashlight, set_volume, set_brightness, toggle_wifi,
@@ -349,10 +350,15 @@ STATUS & DIAGNOSTICS: get_battery_status, get_wifi_networks, get_device_connecti
   check_device_health (comprehensive device status: RAM, storage, battery temp/level, uptime),
   check_internet_speed, get_location, clear_notifications, read_notifications,
   toggle_message_announcements
-MEDIA & STORAGE: get_storage_space (ALWAYS for disk space / phone storage in GB),
+MEDIA & ENTERTAINMENT: get_storage_space (ALWAYS for disk space / phone storage in GB),
   get_media_storage_stats (ONLY for counting photos/videos),
-  play_youtube (ALWAYS for music/video/lofi — NEVER use open_app for music),
-  play_media, open_camera, media_control, take_screenshot, show_recent_media, empty_recycle_bin
+  play_youtube (music/video/lofi), youtube_interact (like, subscribe, skip_ad, comment, next_short),
+  spotify_control, play_media, open_camera, media_control, take_screenshot, show_recent_media, empty_recycle_bin
+EVERYDAY APPS & COMMERCE: food_delivery_control (Zomato/Swiggy dish search, track order, cart),
+  ride_booking_control (Uber/Ola/Rapido cab search, track ride),
+  shopping_control (Amazon/Flipkart product search, track orders, cart),
+  upi_payment_control (GPay/PhonePe/Paytm QR scan, send money, balance check, history),
+  browser_control (Chrome open URL, new tab, incognito, search, bookmark)
 PRODUCTIVITY & SEARCH: get_current_time (ALWAYS for live time/date — NEVER guess),
   get_latest_news (ALWAYS for news — NEVER open Chrome),
   search_internet (direct web search with synthesized answer),
@@ -389,7 +395,21 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
    - 'SMS / normal text message' → send_sms.
    - 'Screenshot/photo WhatsApp karo' → send_whatsapp_media.
    - 'Call uthao' → accept_call, 'Call kaato' → decline_call.
-3. MUSIC & MEDIA vs APP LAUNCHER:
+3. EVERYDAY REGULAR APPS CONTROL:
+   - 'Telegram par message / chat' → telegram_action(action='send_message'|'open_chat', recipient=..., message=...).
+   - 'YouTube video like / subscribe / comment / skip ad' → youtube_interact(action='like'|'subscribe'|'skip_ad'|'comment', comment=...).
+   - 'Next / Previous YouTube Short scroll karo' → youtube_interact(action='next_short'|'prev_short').
+   - 'Zomato / Swiggy khana search / order track / cart' → food_delivery_control(app='zomato'|'swiggy', action='search'|'track_order'|'cart', query=...).
+   - 'Uber / Ola / Rapido cab search / track ride' → ride_booking_control(app='uber'|'ola'|'rapido', action='search_ride'|'track_ride', destination=...).
+   - 'Amazon / Flipkart product search / orders track / cart' → shopping_control(app='amazon'|'flipkart', action='search'|'track_orders'|'cart', query=...).
+   - 'Google Pay / PhonePe / Paytm QR scan' → upi_payment_control(app='gpay'|'phonepe'|'paytm', action='scan_qr').
+   - 'UPI payment / paise bhejo' → upi_payment_control(action='send_money', recipient=..., amount=...).
+   - 'Bank balance check karo / history' → upi_payment_control(action='check_balance'|'history').
+   - 'Twitter / X tweet post / like / search' → twitter_control(action='post_tweet'|'like'|'search', text=...).
+   - 'Snapchat camera / stories / chats' → snapchat_control(action='camera'|'stories'|'chats').
+   - 'Chrome / Browser tab / incognito / URL open' → browser_control(action='open_url'|'new_tab'|'incognito'|'search', query_or_url=...).
+   - 'Spotify playing song like karo' → spotify_control(action='like').
+4. MUSIC & MEDIA vs APP LAUNCHER:
    - Song, music, gaana, lofi, ya video sunne/dekhne ke liye ALWAYS call play_youtube (ya play_media). KABHI BHI music ke liye open_app(app_name="youtube") mat karo!
    - Photos/videos count ke liye ALWAYS call get_media_storage_stats. Gallery open MAT karo!
    - Phone storage / free GB ke liye ALWAYS call get_storage_space.

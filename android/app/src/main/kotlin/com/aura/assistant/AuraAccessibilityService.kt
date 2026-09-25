@@ -55,6 +55,20 @@ class AuraAccessibilityService : AccessibilityService() {
         private const val PKG_INSTAGRAM  = "com.instagram.android"
         private const val PKG_FACEBOOK   = "com.facebook.katana"
         private const val PKG_YOUTUBE    = "com.google.android.youtube"
+        private const val PKG_TELEGRAM   = "org.telegram.messenger"
+        private const val PKG_TWITTER    = "com.twitter.android"
+        private const val PKG_SNAPCHAT   = "com.snapchat.android"
+        private const val PKG_SPOTIFY    = "com.spotify.music"
+        private const val PKG_ZOMATO     = "com.application.zomato"
+        private const val PKG_SWIGGY     = "in.swiggy.android"
+        private const val PKG_UBER       = "com.ubercab"
+        private const val PKG_OLA        = "com.olacabs.customer"
+        private const val PKG_AMAZON     = "com.amazon.mShop.android.shopping"
+        private const val PKG_FLIPKART   = "com.flipkart.android"
+        private const val PKG_GPAY       = "com.google.android.apps.nfc.payment"
+        private const val PKG_PHONEPE    = "com.phonepe.app"
+        private const val PKG_PAYTM      = "net.one97.paytm"
+        private const val PKG_CHROME     = "com.android.chrome"
 
         // Hint lists for WhatsApp / install / uninstall (enhanced for multilingual & IDs)
         private val SEND_HINTS     = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "bhejo", "send message")
@@ -1655,6 +1669,187 @@ class AuraAccessibilityService : AccessibilityService() {
             A11yStep(typeText  = text,                  delayMs = 600),
             A11yStep(clickHint = "post",                delayMs = 800),
         ))
+    }
+
+    // ── Regular Everyday Apps Autonomous Automation Suite ─────────────────────
+
+    /** Telegram: Autonomously search contact and send message */
+    fun armTelegramMessage(recipient: String, message: String) {
+        startPlan("telegram_message", listOf(
+            A11yStep(clickHint = "search", delayMs = 900),
+            A11yStep(typeText = recipient, delayMs = 800),
+            A11yStep(clickHint = recipient.lowercase(), delayMs = 1000),
+            A11yStep(clickHint = "message", delayMs = 700),
+            A11yStep(typeText = message, delayMs = 700),
+            A11yStep(clickHint = "send", delayMs = 500, verifyHint = message.take(15))
+        ))
+    }
+
+    /** YouTube & Shorts: Like, Comment, Subscribe, Next/Prev Shorts */
+    fun armYoutubeComment(comment: String) {
+        startPlan("youtube_comment", listOf(
+            A11yStep(clickHint = "comments", delayMs = 900),
+            A11yStep(clickHint = "add a comment", delayMs = 700),
+            A11yStep(typeText = comment, delayMs = 800),
+            A11yStep(clickHint = "comment", delayMs = 600)
+        ))
+    }
+
+    /** Twitter / X: Post tweet or like */
+    fun armTwitterPost(text: String) {
+        startPlan("twitter_post", listOf(
+            A11yStep(clickHint = "compose", delayMs = 900),
+            A11yStep(clickHint = "post", delayMs = 700),
+            A11yStep(typeText = text, delayMs = 800),
+            A11yStep(clickHint = "post", delayMs = 600, verifyHint = text.take(15))
+        ))
+    }
+
+    fun armTwitterLike(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val likeHints = listOf("like", "like button", "heart", "पसंद करें")
+        return clickFirstMatch(root, likeHints)
+    }
+
+    /** Food Delivery (Zomato / Swiggy): Search dish, track order, open cart */
+    fun armFoodSearch(dishOrRestaurant: String) {
+        startPlan("food_search", listOf(
+            A11yStep(clickHint = "search", delayMs = 900),
+            A11yStep(typeText = dishOrRestaurant, delayMs = 800),
+            A11yStep(clickHint = dishOrRestaurant.split(" ").firstOrNull() ?: dishOrRestaurant, delayMs = 1000)
+        ))
+    }
+
+    fun armFoodTrackOrder(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val trackHints = listOf("track order", "track", "order status", "view order", "delivery status", "order tracking", "ट्रैक करें")
+        return clickFirstMatch(root, trackHints)
+    }
+
+    fun armFoodOpenCart(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val cartHints = listOf("cart", "view cart", "view basket", "checkout", "कार्ट")
+        return clickFirstMatch(root, cartHints)
+    }
+
+    /** Ride Booking (Uber / Ola / Rapido): Search ride & track */
+    fun armRideSearch(destination: String) {
+        startPlan("ride_search", listOf(
+            A11yStep(clickHint = "where to", delayMs = 900),
+            A11yStep(clickHint = "search", delayMs = 700),
+            A11yStep(typeText = destination, delayMs = 800),
+            A11yStep(clickHint = destination.split(" ").firstOrNull() ?: destination, delayMs = 1000)
+        ))
+    }
+
+    fun armRideTrack(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val rideHints = listOf("current ride", "trip details", "track driver", "ride status", "driver on the way", "ट्रिप")
+        return clickFirstMatch(root, rideHints)
+    }
+
+    /** Shopping (Amazon / Flipkart): Search product, track orders, cart */
+    fun armShoppingSearch(productQuery: String) {
+        startPlan("shopping_search", listOf(
+            A11yStep(clickHint = "search", delayMs = 900),
+            A11yStep(typeText = productQuery, delayMs = 800),
+            A11yStep(clickHint = productQuery.split(" ").firstOrNull() ?: productQuery, delayMs = 1000)
+        ))
+    }
+
+    fun armShoppingTrackOrders(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val orderHints = listOf("your orders", "my orders", "orders", "track package", "order history", "ऑर्डर्स")
+        return clickFirstMatch(root, orderHints)
+    }
+
+    fun armShoppingOpenCart(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val cartHints = listOf("cart", "shopping cart", "basket", "कार्ट")
+        return clickFirstMatch(root, cartHints)
+    }
+
+    /** UPI / Payments (PhonePe / GPay / Paytm): Scan QR, send money, balance, history */
+    fun armUpiScanQr(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val scanHints = listOf("scan qr", "scan any qr", "scan qr code", "qr scanner", "scanner", "स्कैन करें")
+        return clickFirstMatch(root, scanHints)
+    }
+
+    fun armUpiSendMoney(recipient: String, amount: String? = null) {
+        val steps = mutableListOf(
+            A11yStep(clickHint = "to mobile number", delayMs = 900),
+            A11yStep(clickHint = "to contact", delayMs = 700),
+            A11yStep(typeText = recipient, delayMs = 800),
+            A11yStep(clickHint = recipient.split(" ").firstOrNull() ?: recipient, delayMs = 1000)
+        )
+        if (!amount.isNullOrBlank()) {
+            steps.add(A11yStep(clickHint = "enter amount", delayMs = 800))
+            steps.add(A11yStep(typeText = amount, delayMs = 600))
+        }
+        startPlan("upi_send_money", steps)
+    }
+
+    fun armUpiCheckBalance(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val balHints = listOf("check balance", "check bank balance", "bank balance", "balance", "बैलेंस चेक करें")
+        return clickFirstMatch(root, balHints)
+    }
+
+    fun armUpiHistory(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val histHints = listOf("history", "transaction history", "see all payment history", "transactions", "लेनदेन")
+        return clickFirstMatch(root, histHints)
+    }
+
+    /** Snapchat: Switch between camera, stories, and chats */
+    fun armSnapchatAction(action: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val hints = when (action.lowercase()) {
+            "stories", "story" -> listOf("stories", "spotlight")
+            "chats", "chat", "messages" -> listOf("chat", "chats", "messages")
+            else -> listOf("camera", "capture", "snap")
+        }
+        return clickFirstMatch(root, hints)
+    }
+
+    /** Chrome / Web Browser: New tab, incognito, search, bookmark */
+    fun armBrowserAction(action: String, queryOrUrl: String? = null) {
+        val act = action.lowercase()
+        when {
+            act.contains("incognito") -> {
+                startPlan("browser_incognito", listOf(
+                    A11yStep(clickHint = "more options", delayMs = 800),
+                    A11yStep(clickHint = "new incognito tab", delayMs = 800)
+                ))
+            }
+            act.contains("new_tab") || act.contains("tab") -> {
+                startPlan("browser_new_tab", listOf(
+                    A11yStep(clickHint = "more options", delayMs = 800),
+                    A11yStep(clickHint = "new tab", delayMs = 800)
+                ))
+            }
+            act.contains("bookmark") -> {
+                startPlan("browser_bookmark", listOf(
+                    A11yStep(clickHint = "more options", delayMs = 800),
+                    A11yStep(clickHint = "bookmark", delayMs = 600)
+                ))
+            }
+            !queryOrUrl.isNullOrBlank() -> {
+                startPlan("browser_search", listOf(
+                    A11yStep(clickHint = "search or type url", delayMs = 800),
+                    A11yStep(clickHint = "search or type web address", delayMs = 600),
+                    A11yStep(typeText = queryOrUrl, delayMs = 700)
+                ))
+            }
+        }
+    }
+
+    /** Spotify / Media: Like current track */
+    fun armSpotifyLike(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val likeHints = listOf("like", "add to liked songs", "favorite", "heart", "liked")
+        return clickFirstMatch(root, likeHints)
     }
 
     // ── New: App Search Bar Launch Fallback ──────────────────────────────────
