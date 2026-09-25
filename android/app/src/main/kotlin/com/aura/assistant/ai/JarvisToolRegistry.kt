@@ -1284,10 +1284,34 @@ object JarvisToolRegistry {
             "instagram" to "com.instagram.android",
             "facebook" to "com.facebook.katana",
             "telegram" to "org.telegram.messenger",
-            "spotify" to "com.spotify.music"
+            "spotify" to "com.spotify.music",
+            "amazon" to "in.amazon.mShop.android.shopping",
+            "flipkart" to "com.flipkart.android",
+            "zomato" to "com.application.zomato",
+            "swiggy" to "in.swiggy.android",
+            "uber" to "com.ubercab",
+            "ola" to "com.olacabs.customer",
+            "rapido" to "com.rapido.passenger",
+            "paytm" to "net.one97.paytm",
+            "phonepe" to "com.phonepe.app",
+            "gpay" to "com.google.android.apps.nbu.paisa.user",
+            "google pay" to "com.google.android.apps.nbu.paisa.user",
+            "bhim" to "in.org.npci.upiapp",
+            "meesho" to "com.meesho.supply",
+            "wynk" to "tv.accedo.airtel.wynk",
+            "twitter" to "com.twitter.android",
+            "x" to "com.twitter.android",
+            "snapchat" to "com.snapchat.android"
         )
 
-        // 1. Check known packages
+        // 1. Dynamic lookup via resolveAppPackage (handles multi-package alternatives like India Amazon & Vanced/YouTube)
+        val dynamicPkg = resolveAppPackage(context, clean)
+        if (dynamicPkg != null) {
+            val intent = pm.getLaunchIntentForPackage(dynamicPkg)
+            if (intent != null) return intent
+        }
+
+        // 2. Check known packages
         var targetPkg = knownPackages[clean]
         if (targetPkg == null) {
             for ((k, v) in knownPackages) {
@@ -1302,10 +1326,10 @@ object JarvisToolRegistry {
             if (intent != null) return intent
         }
 
-        // 2. Direct package lookup
+        // 3. Direct package lookup
         pm.getLaunchIntentForPackage(appName)?.let { return it }
 
-        // 3. Query all launcher activities (Samsung / Android 11+ safe)
+        // 4. Query all launcher activities (Samsung / Android 11+ safe)
         try {
             val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
             val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
@@ -1320,11 +1344,22 @@ object JarvisToolRegistry {
             }
         } catch (_: Exception) {}
 
-        // 4. Browser fallback if user wanted Chrome / web
-        if (clean.contains("chrome") || clean.contains("browser") || clean.contains("web") || clean.contains("internet")) {
-            return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).apply {
-                addCategory(Intent.CATEGORY_BROWSABLE)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        // 5. Universal Web / App fallback intents for common apps if not installed
+        when {
+            clean.contains("amazon") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.amazon.in")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("flipkart") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.flipkart.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("zomato") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.zomato.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("swiggy") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.swiggy.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("uber") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://m.uber.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("ola") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://book.olacabs.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("spotify") -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("twitter") || clean == "x" -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://twitter.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("youtube") || clean == "yt" -> return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com")).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            clean.contains("chrome") || clean.contains("browser") || clean.contains("web") || clean.contains("internet") -> {
+                return Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
             }
         }
 
@@ -2122,11 +2157,64 @@ object JarvisToolRegistry {
                 }
 
                 "youtube_interact" -> {
-                    val action = args.get("action")?.asString?.lowercase() ?: "like"
+                    val action = args.get("action")?.asString?.lowercase() ?: "open"
+                    val query = args.get("query")?.asString ?: args.get("search")?.asString ?: ""
                     val comment = args.get("comment")?.asString ?: args.get("text")?.asString ?: ""
                     val a11y = AuraAccessibilityService.instance
+                    val ytPkg = resolveAppPackage(context, "youtube") ?: "com.google.android.youtube"
 
                     when (action) {
+                        "open" -> {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage(ytPkg)?.apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "YouTube open kar diya hai Boss! ▶️")
+                            } else {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com")).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "YouTube browser me open kar diya hai Boss! ▶️")
+                            }
+                        }
+                        "search" -> {
+                            val searchUrl = "https://www.youtube.com/results?search_query=${URLEncoder.encode(query, "UTF-8")}"
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl)).apply {
+                                setPackage(ytPkg)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                val fallback = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(fallback)
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "YouTube par \"$query\" search kar diya hai Boss! ▶️")
+                        }
+                        "shorts" -> {
+                            val shortsUrl = "https://www.youtube.com/shorts"
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(shortsUrl)).apply {
+                                setPackage(ytPkg)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                val fallback = Intent(Intent.ACTION_VIEW, Uri.parse(shortsUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(fallback)
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "YouTube Shorts open kar diya hai Boss! 📱")
+                        }
                         "like" -> {
                             val success = a11y?.performYoutubeLike() ?: false
                             result.addProperty("status", if (success) "success" else "error")
@@ -2176,49 +2264,95 @@ object JarvisToolRegistry {
                     val a11y = AuraAccessibilityService.instance
 
                     val isZomato = app.contains("zomato")
-                    val pkg = if (isZomato) "com.application.zomato" else "in.swiggy.android"
-
-                    var launched = false
-                    if (action == "search" && query.isNotBlank()) {
-                        val searchUri = if (isZomato) {
-                            Uri.parse("zomato://search?q=${URLEncoder.encode(query, "UTF-8")}")
-                        } else {
-                            Uri.parse("swiggy://explore?query=${URLEncoder.encode(query, "UTF-8")}")
-                        }
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
-                                setPackage(pkg)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            context.startActivity(intent)
-                            launched = true
-                        } catch (_: Exception) {}
-                    }
-                    if (!launched) {
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
-                        if (launchIntent != null) {
-                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
-                        }
-                    }
+                    val installedPkg = if (isZomato) resolveAppPackage(context, "zomato") else resolveAppPackage(context, "swiggy")
 
                     when (action) {
                         "search" -> {
-                            if (query.isNotBlank()) a11y?.armFoodSearch(query)
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🍕")
+                            if (installedPkg != null) {
+                                val searchUri = if (isZomato) {
+                                    Uri.parse("zomato://search?q=${URLEncoder.encode(query, "UTF-8")}")
+                                } else {
+                                    Uri.parse("swiggy://explore?query=${URLEncoder.encode(query, "UTF-8")}")
+                                }
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                                        setPackage(installedPkg)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {
+                                    val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    if (launchIntent != null) context.startActivity(launchIntent)
+                                }
+                                if (query.isNotBlank()) a11y?.armFoodSearch(query)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🍕")
+                            } else {
+                                val webUrl = if (isZomato) {
+                                    "https://www.zomato.com/search?q=${URLEncoder.encode(query, "UTF-8")}"
+                                } else {
+                                    "https://www.swiggy.com/search?query=${URLEncoder.encode(query, "UTF-8")}"
+                                }
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                try {
+                                    context.startActivity(intent)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} app phone mein nahi mila Boss, isliye maine web browser me \"$query\" search open kar diya hai! 🍕")
+                                } catch (e: Exception) {
+                                    result.addProperty("status", "error")
+                                    result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} open nahi ho saka: ${e.message}")
+                                }
+                            }
                         }
                         "track_order" -> {
-                            val clicked = a11y?.armFoodTrackOrder() ?: false
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} active order tracking screen open kar di hai Boss! 🛵")
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                                a11y?.armFoodTrackOrder()
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} active order tracking screen open kar di hai Boss! 🛵")
+                            } else {
+                                val webUrl = if (isZomato) "https://www.zomato.com/order-history" else "https://www.swiggy.com/my-account/orders"
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                                try { context.startActivity(intent) } catch (_: Exception) {}
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} order history web par open kar di hai Boss! 🛵")
+                            }
                         }
                         "cart" -> {
-                            val clicked = a11y?.armFoodOpenCart() ?: false
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} cart open kar di hai Boss! 🛒")
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                                a11y?.armFoodOpenCart()
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} cart open kar di hai Boss! 🛒")
+                            } else {
+                                val webUrl = if (isZomato) "https://www.zomato.com/cart" else "https://www.swiggy.com/checkout"
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                                try { context.startActivity(intent) } catch (_: Exception) {}
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} cart web par open kar di hai Boss! 🛒")
+                            }
                         }
                         else -> {
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                            } else {
+                                val webUrl = if (isZomato) "https://www.zomato.com" else "https://www.swiggy.com"
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                                try { context.startActivity(intent) } catch (_: Exception) {}
+                            }
                             result.addProperty("status", "success")
                             result.addProperty("message", "$app open kar diya hai Boss!")
                         }
@@ -2231,42 +2365,81 @@ object JarvisToolRegistry {
                     val destination = args.get("destination")?.asString ?: ""
                     val a11y = AuraAccessibilityService.instance
 
-                    val pkg = when {
-                        app.contains("ola") -> "com.olacabs.customer"
-                        app.contains("rapido") -> "com.rapido.passenger"
-                        else -> "com.ubercab"
+                    val targetApp = when {
+                        app.contains("ola") -> "ola"
+                        app.contains("rapido") -> "rapido"
+                        else -> "uber"
                     }
+                    val installedPkg = resolveAppPackage(context, targetApp)
 
-                    var launched = false
-                    if (destination.isNotBlank() && pkg == "com.ubercab") {
-                        try {
-                            val uberUri = Uri.parse("uber://?action=setPickup&dropoff[formatted_address]=${URLEncoder.encode(destination, "UTF-8")}")
-                            val intent = Intent(Intent.ACTION_VIEW, uberUri).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    when (action) {
+                        "search_ride" -> {
+                            if (installedPkg != null) {
+                                if (targetApp == "uber" && destination.isNotBlank()) {
+                                    try {
+                                        val uberUri = Uri.parse("uber://?action=setPickup&dropoff[formatted_address]=${URLEncoder.encode(destination, "UTF-8")}")
+                                        val intent = Intent(Intent.ACTION_VIEW, uberUri).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {
+                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        if (launchIntent != null) context.startActivity(launchIntent)
+                                    }
+                                } else {
+                                    val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    if (launchIntent != null) context.startActivity(launchIntent)
+                                }
+                                if (destination.isNotBlank()) a11y?.armRideSearch(destination)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${targetApp.uppercase()} me destination: \"$destination\" ke liye ride search ki ja rahi hai Boss! 🚖")
+                            } else {
+                                val webUrl = when (targetApp) {
+                                    "ola" -> "https://book.olacabs.com/"
+                                    "rapido" -> "https://www.rapido.bike/"
+                                    else -> "https://m.uber.com/looking" + if (destination.isNotBlank()) "?drop=${URLEncoder.encode(destination, "UTF-8")}" else ""
+                                }
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                try {
+                                    context.startActivity(intent)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("message", "${targetApp.uppercase()} app installed nahi tha Boss, isliye web browser me ride booking open kar di hai! 🚖")
+                                } catch (e: Exception) {
+                                    result.addProperty("status", "error")
+                                    result.addProperty("message", "${targetApp.uppercase()} ride book nahi ho saki: ${e.message}")
+                                }
                             }
-                            context.startActivity(intent)
-                            launched = true
-                        } catch (_: Exception) {}
-                    }
-                    if (!launched) {
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
-                        if (launchIntent != null) {
-                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
                         }
-                    }
-
-                    if (action == "search_ride" && destination.isNotBlank()) {
-                        a11y?.armRideSearch(destination)
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} me destination: \"$destination\" ke liye ride search ki ja rahi hai Boss! 🚖")
-                    } else if (action == "track_ride") {
-                        a11y?.armRideTrack()
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} active ride tracking open kar di hai Boss! 📍")
-                    } else {
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "$app open kar diya hai Boss!")
+                        "track_ride" -> {
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                                a11y?.armRideTrack()
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${targetApp.uppercase()} active ride tracking open kar di hai Boss! 📍")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Boss, ${targetApp.uppercase()} app phone me installed nahi hai.")
+                            }
+                        }
+                        else -> {
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                            }
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${targetApp.uppercase()} open kar diya hai Boss!")
+                        }
                     }
                 }
 
@@ -2277,46 +2450,161 @@ object JarvisToolRegistry {
                     val a11y = AuraAccessibilityService.instance
 
                     val isAmazon = app.contains("amazon")
-                    val pkg = if (isAmazon) "com.amazon.mShop.android.shopping" else "com.flipkart.android"
-
-                    var launched = false
-                    if (action == "search" && query.isNotBlank() && isAmazon) {
-                        try {
-                            val amazonUri = Uri.parse("amazon://search?k=${URLEncoder.encode(query, "UTF-8")}")
-                            val intent = Intent(Intent.ACTION_VIEW, amazonUri).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            context.startActivity(intent)
-                            launched = true
-                        } catch (_: Exception) {}
-                    }
-                    if (!launched) {
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
-                        if (launchIntent != null) {
-                            launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            try { context.startActivity(launchIntent) } catch (_: Exception) {}
-                        }
-                    }
+                    val installedPkg = if (isAmazon) resolveAppPackage(context, "amazon") else resolveAppPackage(context, "flipkart")
 
                     when (action) {
                         "search" -> {
+                            val targetUrl = if (isAmazon) {
+                                "https://www.amazon.in/s?k=${URLEncoder.encode(query, "UTF-8")}"
+                            } else {
+                                "https://www.flipkart.com/search?q=${URLEncoder.encode(query, "UTF-8")}"
+                            }
+                            var opened = false
+                            if (installedPkg != null) {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        setPackage(installedPkg)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                    opened = true
+                                } catch (_: Exception) {}
+                            }
+                            if (!opened) {
+                                try {
+                                    val fallback = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(fallback)
+                                    opened = true
+                                } catch (_: Exception) {
+                                    if (installedPkg != null) {
+                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        if (launchIntent != null) {
+                                            try {
+                                                context.startActivity(launchIntent)
+                                                opened = true
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            }
                             if (query.isNotBlank()) a11y?.armShoppingSearch(query)
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🛍️")
+                            if (opened) {
+                                result.addProperty("status", "success")
+                                val appName = if (installedPkg != null) app.replaceFirstChar { it.uppercase() } else "${app.replaceFirstChar { it.uppercase() }} (Web)"
+                                result.addProperty("message", "$appName par \"$query\" search open kar diya hai Boss! 🛍️ Screen par product options dekh sakte hain.")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Boss, ${app.replaceFirstChar { it.uppercase() }} open nahi ho saka.")
+                            }
                         }
                         "track_orders" -> {
-                            val clicked = a11y?.armShoppingTrackOrders() ?: false
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Your Orders section open kar diya hai Boss! 📦")
+                            val targetUrl = if (isAmazon) "https://www.amazon.in/gp/css/order-history" else "https://www.flipkart.com/account/orders"
+                            var opened = false
+                            if (installedPkg != null) {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        setPackage(installedPkg)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                    opened = true
+                                } catch (_: Exception) {}
+                            }
+                            if (!opened) {
+                                try {
+                                    val fallback = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(fallback)
+                                    opened = true
+                                } catch (_: Exception) {
+                                    if (installedPkg != null) {
+                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        if (launchIntent != null) {
+                                            try { context.startActivity(launchIntent); opened = true } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            }
+                            a11y?.armShoppingTrackOrders()
+                            if (opened) {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Orders section open kar diya hai Boss! 📦")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Boss, ${app.replaceFirstChar { it.uppercase() }} orders open nahi ho saka.")
+                            }
                         }
                         "cart" -> {
-                            val clicked = a11y?.armShoppingOpenCart() ?: false
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Cart open kar di hai Boss! 🛒")
+                            val targetUrl = if (isAmazon) "https://www.amazon.in/gp/cart/view.html" else "https://www.flipkart.com/viewcart"
+                            var opened = false
+                            if (installedPkg != null) {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        setPackage(installedPkg)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                    opened = true
+                                } catch (_: Exception) {}
+                            }
+                            if (!opened) {
+                                try {
+                                    val fallback = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(fallback)
+                                    opened = true
+                                } catch (_: Exception) {
+                                    if (installedPkg != null) {
+                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        if (launchIntent != null) {
+                                            try { context.startActivity(launchIntent); opened = true } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            }
+                            a11y?.armShoppingOpenCart()
+                            if (opened) {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} Cart open kar di hai Boss! 🛒")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Boss, ${app.replaceFirstChar { it.uppercase() }} Cart open nahi ho saki.")
+                            }
                         }
                         else -> {
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "$app open kar diya hai Boss!")
+                            var opened = false
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) {
+                                    try { context.startActivity(launchIntent); opened = true } catch (_: Exception) {}
+                                }
+                            }
+                            if (!opened) {
+                                val url = if (isAmazon) "https://www.amazon.in" else "https://www.flipkart.com"
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                try { context.startActivity(intent); opened = true } catch (_: Exception) {}
+                            }
+                            if (opened) {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} open kar diya hai Boss!")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Boss, ${app.replaceFirstChar { it.uppercase() }} open nahi ho saka.")
+                            }
                         }
                     }
                 }
@@ -2328,16 +2616,38 @@ object JarvisToolRegistry {
                     val amount = args.get("amount")?.asString ?: ""
                     val a11y = AuraAccessibilityService.instance
 
-                    val pkg = when {
-                        app.contains("phonepe") -> "com.phonepe.app"
-                        app.contains("paytm") -> "net.one97.paytm"
-                        else -> "com.google.android.apps.nfc.payment"
+                    val targetAlias = when {
+                        app.contains("phonepe") -> "phonepe"
+                        app.contains("paytm") -> "paytm"
+                        app.contains("bhim") -> "bhim"
+                        else -> "gpay"
+                    }
+                    val installedPkg = resolveAppPackage(context, targetAlias)
+                        ?: resolveAppPackage(context, "gpay")
+                        ?: resolveAppPackage(context, "bhim")
+                        ?: resolveAppPackage(context, "phonepe")
+                        ?: resolveAppPackage(context, "paytm")
+
+                    if (installedPkg == null) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Boss, aapke phone mein koi bhi UPI app (Google Pay, PhonePe, Paytm, BHIM) installed nahi mila.")
+                        return result
                     }
 
-                    val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                    var launched = false
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
                     if (launchIntent != null) {
-                        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                        try {
+                            context.startActivity(launchIntent)
+                            launched = true
+                        } catch (_: Exception) {}
+                    }
+                    if (!launched) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Boss, ${app.uppercase()} app launch nahi ho saka.")
+                        return result
                     }
 
                     when (action) {
@@ -2377,31 +2687,26 @@ object JarvisToolRegistry {
                     val action = args.get("action")?.asString?.lowercase() ?: "post_tweet"
                     val text = args.get("text")?.asString ?: args.get("query")?.asString ?: ""
                     val a11y = AuraAccessibilityService.instance
+                    val installedPkg = resolveAppPackage(context, "twitter") ?: resolveAppPackage(context, "x")
 
                     when (action) {
                         "post_tweet" -> {
-                            var launched = false
-                            if (text.isNotBlank()) {
-                                try {
-                                    val tweetUri = Uri.parse("https://twitter.com/intent/tweet?text=${URLEncoder.encode(text, "UTF-8")}")
-                                    val intent = Intent(Intent.ACTION_VIEW, tweetUri).apply {
-                                        setPackage("com.twitter.android")
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    }
-                                    context.startActivity(intent)
-                                    launched = true
-                                } catch (_: Exception) {}
+                            val tweetUri = Uri.parse("https://twitter.com/intent/tweet?text=${URLEncoder.encode(text, "UTF-8")}")
+                            val intent = Intent(Intent.ACTION_VIEW, tweetUri).apply {
+                                if (installedPkg != null) setPackage(installedPkg)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
-                            if (!launched) {
-                                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
-                                if (launchIntent != null) {
-                                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                val fallback = Intent(Intent.ACTION_VIEW, tweetUri).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                 }
-                                if (text.isNotBlank()) a11y?.armTwitterPost(text)
+                                context.startActivity(fallback)
                             }
+                            if (text.isNotBlank() && installedPkg != null) a11y?.armTwitterPost(text)
                             result.addProperty("status", "success")
-                            result.addProperty("message", "Twitter / X par tweet: \"$text\" post kar diya ja raha hai Boss! 🐦")
+                            result.addProperty("message", "Twitter / X par tweet: \"$text\" post screen open kar di hai Boss! 🐦")
                         }
                         "like" -> {
                             val success = a11y?.armTwitterLike() ?: false
@@ -2409,28 +2714,33 @@ object JarvisToolRegistry {
                             result.addProperty("message", "Tweet like kar diya gaya hai Boss! ❤️")
                         }
                         "search" -> {
-                            val searchUri = Uri.parse("twitter://search?query=${URLEncoder.encode(text, "UTF-8")}")
+                            val searchUri = Uri.parse("https://twitter.com/search?q=${URLEncoder.encode(text, "UTF-8")}")
                             val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
-                                setPackage("com.twitter.android")
+                                if (installedPkg != null) setPackage(installedPkg)
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             try {
                                 context.startActivity(intent)
                             } catch (_: Exception) {
-                                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
-                                if (launchIntent != null) {
-                                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                                val fallback = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                 }
+                                context.startActivity(fallback)
                             }
                             result.addProperty("status", "success")
                             result.addProperty("message", "Twitter par \"$text\" search kar diya hai Boss! 🔍")
                         }
                         else -> {
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.twitter.android")
-                            if (launchIntent != null) {
-                                launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                            if (installedPkg != null) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
+                            } else {
+                                val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://twitter.com")).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(fallback)
                             }
                             result.addProperty("status", "success")
                             result.addProperty("message", "Twitter / X open kar diya hai Boss!")
@@ -2441,10 +2751,12 @@ object JarvisToolRegistry {
                 "snapchat_control" -> {
                     val action = args.get("action")?.asString?.lowercase() ?: "camera"
                     val a11y = AuraAccessibilityService.instance
+                    val snapPkg = resolveAppPackage(context, "snapchat") ?: "com.snapchat.android"
 
-                    val launchIntent = context.packageManager.getLaunchIntentForPackage("com.snapchat.android")
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(snapPkg)?.apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
                     if (launchIntent != null) {
-                        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         try { context.startActivity(launchIntent) } catch (_: Exception) {}
                     }
                     a11y?.armSnapchatAction(action)
@@ -2488,30 +2800,51 @@ object JarvisToolRegistry {
                 }
 
                 "spotify_control" -> {
-                    val action = args.get("action")?.asString?.lowercase() ?: "like"
+                    val action = args.get("action")?.asString?.lowercase() ?: "search"
                     val query = args.get("query")?.asString ?: ""
                     val a11y = AuraAccessibilityService.instance
+                    val installedPkg = resolveAppPackage(context, "spotify")
 
                     if (action == "search" && query.isNotBlank()) {
-                        try {
-                            val uri = Uri.parse("spotify:search:${URLEncoder.encode(query, "UTF-8")}")
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        if (installedPkg != null) {
+                            try {
+                                val uri = Uri.parse("spotify:search:${URLEncoder.encode(query, "UTF-8")}")
+                                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                if (launchIntent != null) context.startActivity(launchIntent)
                             }
-                            context.startActivity(intent)
-                        } catch (_: Exception) {
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.spotify.music")
-                            if (launchIntent != null) {
-                                launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                try { context.startActivity(launchIntent) } catch (_: Exception) {}
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Spotify par \"$query\" search kar diya hai Boss! 🎵")
+                        } else {
+                            val webUrl = "https://open.spotify.com/search/${URLEncoder.encode(query, "UTF-8")}"
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(webUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Spotify app phone me nahi mila, isliye maine web player par \"$query\" search open kar diya hai Boss! 🎵")
+                            } catch (_: Exception) {
+                                playMediaInApp(context, query, "youtube")
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Spotify installed nahi tha, isliye maine YouTube par \"$query\" chala diya hai Boss! 🎵")
                             }
                         }
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "Spotify par \"$query\" search kar diya hai Boss! 🎵")
                     } else if (action == "like") {
-                        val success = a11y?.armSpotifyLike() ?: false
-                        result.addProperty("status", if (success) "success" else "error")
-                        result.addProperty("message", "Playing Spotify song ko Liked Songs me add kar diya hai Boss! 💚")
+                        if (installedPkg != null) {
+                            val success = a11y?.armSpotifyLike() ?: false
+                            result.addProperty("status", if (success) "success" else "error")
+                            result.addProperty("message", "Playing Spotify song ko Liked Songs me add kar diya hai Boss! 💚")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Boss, Spotify app phone mein installed nahi hai.")
+                        }
                     } else {
                         val mediaArgs = JsonObject().apply { addProperty("action", action) }
                         return executeTool(context, "media_control", mediaArgs)
@@ -4633,10 +4966,43 @@ object JarvisToolRegistry {
         return true
     }
 
-    private fun resolveAppPackage(context: Context, appName: String): String? {
+    fun resolveAppPackage(context: Context, appName: String): String? {
         val pm = context.packageManager
         val clean = appName.lowercase().trim()
         if (pm.getLaunchIntentForPackage(appName) != null) return appName
+
+        // Direct package aliases mapping (handles India/global package variations)
+        val aliasMap = mapOf(
+            "amazon" to listOf("in.amazon.mShop.android.shopping", "com.amazon.mShop.android.shopping"),
+            "youtube" to listOf("com.google.android.youtube", "app.revanced.android.youtube"),
+            "flipkart" to listOf("com.flipkart.android"),
+            "zomato" to listOf("com.application.zomato"),
+            "swiggy" to listOf("in.swiggy.android"),
+            "uber" to listOf("com.ubercab"),
+            "ola" to listOf("com.olacabs.customer"),
+            "rapido" to listOf("com.rapido.passenger"),
+            "spotify" to listOf("com.spotify.music"),
+            "twitter" to listOf("com.twitter.android", "com.twitter.android.lite"),
+            "x" to listOf("com.twitter.android", "com.twitter.android.lite"),
+            "snapchat" to listOf("com.snapchat.android"),
+            "chrome" to listOf("com.android.chrome"),
+            "telegram" to listOf("org.telegram.messenger"),
+            "gpay" to listOf("com.google.android.apps.nbu.paisa.user", "com.google.android.apps.nfc.payment", "com.google.android.apps.walletnfcrel"),
+            "google pay" to listOf("com.google.android.apps.nbu.paisa.user", "com.google.android.apps.nfc.payment", "com.google.android.apps.walletnfcrel"),
+            "phonepe" to listOf("com.phonepe.app"),
+            "paytm" to listOf("net.one97.paytm"),
+            "bhim" to listOf("in.org.npci.upiapp"),
+            "meesho" to listOf("com.meesho.supply"),
+            "wynk" to listOf("tv.accedo.airtel.wynk"),
+            "chatgpt" to listOf("com.openai.chatgpt")
+        )
+        for ((alias, pkgs) in aliasMap) {
+            if (clean == alias || clean.contains(alias)) {
+                for (p in pkgs) {
+                    if (pm.getLaunchIntentForPackage(p) != null) return p
+                }
+            }
+        }
 
         try {
             // 1. Check all launcher activities (user's app drawer)
