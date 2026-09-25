@@ -2195,6 +2195,7 @@ object JarvisToolRegistry {
                                 }
                                 context.startActivity(fallback)
                             }
+                            if (query.isNotBlank()) a11y?.armAdaptiveSearch(query, listOf("search youtube", "search", "voice search"), "youtube")
                             result.addProperty("status", "success")
                             result.addProperty("message", "YouTube par \"$query\" search kar diya hai Boss! ▶️")
                         }
@@ -2286,7 +2287,7 @@ object JarvisToolRegistry {
                                     }
                                     if (launchIntent != null) context.startActivity(launchIntent)
                                 }
-                                if (query.isNotBlank()) a11y?.armFoodSearch(query)
+                                if (query.isNotBlank()) a11y?.armFoodSearch(query, if (isZomato) "zomato" else "swiggy")
                                 result.addProperty("status", "success")
                                 result.addProperty("message", "${app.replaceFirstChar { it.uppercase() }} par \"$query\" search kar diya gaya hai Boss! 🍕")
                             } else {
@@ -2394,7 +2395,7 @@ object JarvisToolRegistry {
                                     }
                                     if (launchIntent != null) context.startActivity(launchIntent)
                                 }
-                                if (destination.isNotBlank()) a11y?.armRideSearch(destination)
+                                if (destination.isNotBlank()) a11y?.armRideSearch(destination, targetApp)
                                 result.addProperty("status", "success")
                                 result.addProperty("message", "${targetApp.uppercase()} me destination: \"$destination\" ke liye ride search ki ja rahi hai Boss! 🚖")
                             } else {
@@ -2468,7 +2469,17 @@ object JarvisToolRegistry {
                                     }
                                     context.startActivity(intent)
                                     opened = true
-                                } catch (_: Exception) {}
+                                } catch (_: Exception) {
+                                    val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    if (launchIntent != null) {
+                                        try {
+                                            context.startActivity(launchIntent)
+                                            opened = true
+                                        } catch (_: Exception) {}
+                                    }
+                                }
                             }
                             if (!opened) {
                                 try {
@@ -2477,21 +2488,9 @@ object JarvisToolRegistry {
                                     }
                                     context.startActivity(fallback)
                                     opened = true
-                                } catch (_: Exception) {
-                                    if (installedPkg != null) {
-                                        val launchIntent = context.packageManager.getLaunchIntentForPackage(installedPkg)?.apply {
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        }
-                                        if (launchIntent != null) {
-                                            try {
-                                                context.startActivity(launchIntent)
-                                                opened = true
-                                            } catch (_: Exception) {}
-                                        }
-                                    }
-                                }
+                                } catch (_: Exception) {}
                             }
-                            if (query.isNotBlank()) a11y?.armShoppingSearch(query)
+                            if (query.isNotBlank()) a11y?.armShoppingSearch(query, if (isAmazon) "amazon" else "flipkart")
                             if (opened) {
                                 result.addProperty("status", "success")
                                 val appName = if (installedPkg != null) app.replaceFirstChar { it.uppercase() } else "${app.replaceFirstChar { it.uppercase() }} (Web)"

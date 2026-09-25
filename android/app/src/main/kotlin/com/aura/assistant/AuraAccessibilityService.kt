@@ -120,6 +120,8 @@ class AuraAccessibilityService : AccessibilityService() {
     @Volatile private var planTag: String = ""
     private var planIndex = 0
     private val stepHandler = Handler(Looper.getMainLooper())
+    private val hybridHandler = Handler(Looper.getMainLooper())
+    @Volatile private var hybridSearchToken = 0
     // Timeout runnable: if plan doesn't complete in 25s → broadcast failure
     private val planTimeoutRunnable = Runnable { onPlanFinished(false) }
 
@@ -1187,26 +1189,34 @@ class AuraAccessibilityService : AccessibilityService() {
      * Universal in-app autonomous search & play for ANY music/media app (Spotify, Melodify, JioSaavn, Wynk, etc.)
      */
     fun armAutoSearchAndPlayInApp(appName: String, query: String) {
-        val queryFirstWord = query.split(" ").firstOrNull { it.length > 2 }?.lowercase() ?: query.lowercase()
-        startPlan("app_search_play", listOf(
-            A11yStep(clickHint = "search", delayMs = 1200),
-            A11yStep(typeText  = query, delayMs = 900),
-            A11yStep(clickHint = queryFirstWord, delayMs = 1000)
-        ))
+        val hints = listOf("search", "find", "search_src_text", "explore", "songs, artists or podcasts")
+        armAdaptiveSearch(query, hints, "media_$appName") {
+            hybridHandler.postDelayed({
+                val root = rootInActiveWindow ?: return@postDelayed
+                val words = query.lowercase().split(" ").filter { it.length > 2 }
+                val targetNode = findNode(root, words)
+                if (targetNode != null) {
+                    clickNodeOrTap(targetNode)
+                } else {
+                    val dm = resources.displayMetrics
+                    performTap(dm.widthPixels * 0.5f, dm.heightPixels * 0.28f)
+                }
+            }, 1500)
+        }
     }
 
     /**
      * Universal in-app autonomous search and optional click for ANY arbitrary Android app.
      */
     fun armSearchAndClick(query: String, targetClick: String? = null) {
-        val steps = mutableListOf(
-            A11yStep(clickHint = "search", delayMs = 1000),
-            A11yStep(typeText  = query, delayMs = 800)
-        )
-        if (!targetClick.isNullOrBlank()) {
-            steps.add(A11yStep(clickHint = targetClick.lowercase(), delayMs = 900))
+        val hints = listOf("search", "find", "explore", "query", "search_src_text", "खोजें")
+        armAdaptiveSearch(query, hints, "universal_search") {
+            if (!targetClick.isNullOrBlank()) {
+                hybridHandler.postDelayed({
+                    performClickByText(targetClick)
+                }, 1200)
+            }
         }
-        startPlan("search_action", steps)
     }
 
     /**
@@ -1712,12 +1722,13 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     /** Food Delivery (Zomato / Swiggy): Search dish, track order, open cart */
-    fun armFoodSearch(dishOrRestaurant: String) {
-        startPlan("food_search", listOf(
-            A11yStep(clickHint = "search", delayMs = 900),
-            A11yStep(typeText = dishOrRestaurant, delayMs = 800),
-            A11yStep(clickHint = dishOrRestaurant.split(" ").firstOrNull() ?: dishOrRestaurant, delayMs = 1000)
-        ))
+    fun armFoodSearch(dishOrRestaurant: String, appName: String = "zomato") {
+        val hints = if (appName.contains("swiggy")) {
+            listOf("search for food", "search for restaurants and food", "search", "search_bar", "search_widget")
+        } else {
+            listOf("restaurant name or a dish", "search for restaurants", "search", "edit_search", "search_bar")
+        }
+        armAdaptiveSearch(dishOrRestaurant, hints, "food_$appName")
     }
 
     fun armFoodTrackOrder(): Boolean {
@@ -1733,13 +1744,13 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     /** Ride Booking (Uber / Ola / Rapido): Search ride & track */
-    fun armRideSearch(destination: String) {
-        startPlan("ride_search", listOf(
-            A11yStep(clickHint = "where to", delayMs = 900),
-            A11yStep(clickHint = "search", delayMs = 700),
-            A11yStep(typeText = destination, delayMs = 800),
-            A11yStep(clickHint = destination.split(" ").firstOrNull() ?: destination, delayMs = 1000)
-        ))
+    fun armRideSearch(destination: String, appName: String = "uber") {
+        val hints = if (appName.contains("ola")) {
+            listOf("search destination", "where are you going", "search", "destination_search")
+        } else {
+            listOf("where to", "where are you going", "search", "pickup_search")
+        }
+        armAdaptiveSearch(destination, hints, "ride_$appName")
     }
 
     fun armRideTrack(): Boolean {
@@ -1748,13 +1759,16 @@ class AuraAccessibilityService : AccessibilityService() {
         return clickFirstMatch(root, rideHints)
     }
 
-    /** Shopping (Amazon / Flipkart): Search product, track orders, cart */
-    fun armShoppingSearch(productQuery: String) {
-        startPlan("shopping_search", listOf(
-            A11yStep(clickHint = "search", delayMs = 900),
-            A11yStep(typeText = productQuery, delayMs = 800),
-            A11yStep(clickHint = productQuery.split(" ").firstOrNull() ?: productQuery, delayMs = 1000)
-        ))
+    /** Shopping (Amazon / Flipkart / Myntra / Meesho): Search product, track orders, cart */
+    fun armShoppingSearch(productQuery: String, appName: String = "amazon") {
+        val hints = if (appName.contains("flipkart")) {
+            listOf("search for products", "search products", "search", "search_widget_textbox", "search_text_box", "खोजें")
+        } else if (appName.contains("meesho")) {
+            listOf("search by keyword or product id", "search", "search_src_text")
+        } else {
+            listOf("search amazon.in", "search amazon", "search", "rs_search_src_text", "chrome_search_hint_view", "nav_search_keywords", "खोजें")
+        }
+        armAdaptiveSearch(productQuery, hints, "shopping_$appName")
     }
 
     fun armShoppingTrackOrders(): Boolean {
@@ -2055,6 +2069,16 @@ class AuraAccessibilityService : AccessibilityService() {
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
+    fun findAnyEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val found = findAnyEditable(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
     private fun findFocusedEditText(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (root == null) return null
         // 1. First pass: look specifically for focused + editable
@@ -2071,32 +2095,213 @@ class AuraAccessibilityService : AccessibilityService() {
         if (focused != null) return focused
 
         // 2. Second pass fallback: any editable field
-        fun searchAnyEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
-            if (node == null) return null
-            if (node.isEditable) return node
-            for (i in 0 until node.childCount) {
-                val found = searchAnyEditable(node.getChild(i))
-                if (found != null) return found
-            }
-            return null
-        }
-        return searchAnyEditable(root)
+        return findAnyEditable(root)
     }
 
-    private fun clickFirstMatch(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
-        val match = findNode(root, hints) ?: return false
-        var target: AccessibilityNodeInfo? = match
+    /**
+     * Click a node or traverse up to a clickable parent.
+     * If Accessibility click fails, performs physical touch tap on screen coordinates.
+     */
+    fun clickNodeOrTap(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        var target: AccessibilityNodeInfo? = node
         while (target != null && !target.isClickable) target = target.parent
         val clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
         if (clicked) return true
 
-        // Physical human-touch tap fallback using element bounding box on screen
         val rect = android.graphics.Rect()
-        match.getBoundsInScreen(rect)
+        node.getBoundsInScreen(rect)
         if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
             return performTap(rect.exactCenterX(), rect.exactCenterY())
         }
         return false
+    }
+
+    /**
+     * Recursively collects all text and content descriptions from a node hierarchy.
+     */
+    fun collectAllText(node: AccessibilityNodeInfo?, depth: Int = 0): String {
+        if (node == null || depth > 25) return ""
+        val sb = StringBuilder()
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+        if (!text.isNullOrEmpty()) sb.append(text).append(" ")
+        if (!desc.isNullOrEmpty() && desc != text) sb.append(desc).append(" ")
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                sb.append(collectAllText(child, depth + 1))
+            }
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Finds autocomplete suggestion items in search dropdown.
+     */
+    fun findSuggestionNodes(
+        root: AccessibilityNodeInfo?,
+        queryLower: String,
+        firstWord: String,
+        depth: Int = 0
+    ): List<AccessibilityNodeInfo> {
+        if (root == null || depth > 25) return emptyList()
+        val list = mutableListOf<AccessibilityNodeInfo>()
+        val text = (root.text?.toString() ?: "").lowercase()
+        val desc = (root.contentDescription?.toString() ?: "").lowercase()
+        val resId = (root.viewIdResourceName?.toString() ?: "").lowercase()
+
+        val isSuggestion = (resId.contains("suggestion") || resId.contains("autocomplete") || resId.contains("item") || resId.contains("title") || resId.contains("query")) &&
+                (text.contains(firstWord) || desc.contains(firstWord) || text.contains(queryLower) || desc.contains(queryLower))
+
+        if (isSuggestion && (root.isClickable || root.parent?.isClickable == true)) {
+            list.add(root)
+        }
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i)
+            if (child != null) {
+                list.addAll(findSuggestionNodes(child, queryLower, firstWord, depth + 1))
+            }
+        }
+        return list
+    }
+
+    /**
+     * True Multi-Layer Hybrid Autonomous Search Engine:
+     * 1. Perception Check: If search results are already rendered (from deep link), leaves screen untouched!
+     * 2. If on home/feed screen: Finds the search bar (hints, resourceId, or coordinate) and clicks it.
+     * 3. Types the search query into the focused or editable text field.
+     * 4. Submits search via:
+     *    - Autocomplete suggestion click
+     *    - Search/Submit icon button click
+     *    - Physical tap on the soft keyboard IME Search key at bottom-right (0.91w, 0.94h).
+     */
+    fun armAdaptiveSearch(
+        query: String,
+        searchHints: List<String>,
+        appTag: String = "hybrid_search",
+        onFinished: ((Boolean) -> Unit)? = null
+    ) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+
+        val currentToken = ++hybridSearchToken
+        var searchStep = 0 // 0: check or tap search bar, 1: type query, 2: submit search, 3: completed
+        var isDone = false
+
+        // Attempts scheduled at staggered intervals to handle app loading animations
+        val delays = listOf(800L, 1600L, 2600L, 3800L, 5200L)
+        delays.forEachIndexed { attemptIndex, delay ->
+            hybridHandler.postDelayed({
+                if (currentToken != hybridSearchToken || isDone) return@postDelayed
+                val root = rootInActiveWindow ?: return@postDelayed
+
+                val screenText = collectAllText(root).lowercase()
+                val cleanLower = clean.lowercase()
+                val queryFirstWord = cleanLower.split(" ").firstOrNull { it.length > 2 } ?: cleanLower
+
+                // 1. Perception check: Check if query results are already rendered
+                val hasResults = (screenText.contains("results for") || screenText.contains("results") ||
+                        (screenText.contains(queryFirstWord) && (
+                                screenText.contains("filter") || screenText.contains("sort") ||
+                                screenText.contains("price") || screenText.contains("₹") ||
+                                screenText.contains("delivered to") || screenText.contains("free delivery") ||
+                                screenText.contains("add to cart") || screenText.contains("rating") ||
+                                screenText.contains("reviews") || screenText.contains("delivery time")
+                        )))
+
+                if (hasResults && searchStep == 0) {
+                    Log.i(TAG, "[$appTag] Hybrid perception: Results for \"$clean\" already rendered on screen! Skipping manual tap.")
+                    isDone = true
+                    onFinished?.invoke(true)
+                    return@postDelayed
+                }
+
+                when (searchStep) {
+                    0 -> {
+                        // Check if an editable field is ALREADY focused
+                        val focusedEdit = findFocusedEditText(root)
+                        if (focusedEdit != null && focusedEdit.isEditable) {
+                            typeIntoNode(focusedEdit, clean)
+                            Log.i(TAG, "[$appTag] Search field already focused. Directly typed: \"$clean\"")
+                            searchStep = 2 // Move to submit
+                        } else {
+                            val searchNode = findNode(root, searchHints)
+                            if (searchNode != null) {
+                                val clicked = clickNodeOrTap(searchNode)
+                                Log.i(TAG, "[$appTag] Tapped search bar node: $clicked")
+                                searchStep = 1
+                            } else {
+                                // Screen coordinate fallback for top search bar (12% height)
+                                val dm = resources.displayMetrics
+                                performTap(dm.widthPixels * 0.5f, dm.heightPixels * 0.12f)
+                                Log.i(TAG, "[$appTag] Fallback tapped top search bar area at (0.5w, 0.12h)")
+                                searchStep = 1
+                            }
+                        }
+                    }
+
+                    1 -> {
+                        // After tapping search bar, locate active EditText and type query
+                        val edit = findFocusedEditText(root) ?: findAnyEditable(root)
+                        if (edit != null) {
+                            typeIntoNode(edit, clean)
+                            Log.i(TAG, "[$appTag] Typed \"$clean\" into active edit field")
+                            searchStep = 2
+                        } else {
+                            if (attemptIndex >= 2) {
+                                val dm = resources.displayMetrics
+                                performTap(dm.widthPixels * 0.5f, dm.heightPixels * 0.12f)
+                            }
+                        }
+                    }
+
+                    2 -> {
+                        // Submit search!
+                        var submitted = false
+
+                        // A. Check for matching suggestion in dropdown
+                        val suggestions = findSuggestionNodes(root, cleanLower, queryFirstWord)
+                        if (suggestions.isNotEmpty()) {
+                            val targetSuggestion = suggestions.first()
+                            if (clickNodeOrTap(targetSuggestion)) {
+                                submitted = true
+                                Log.i(TAG, "[$appTag] Submitted search by clicking suggestion item")
+                            }
+                        }
+
+                        // B. Check for Search icon / Go button in action bar
+                        if (!submitted) {
+                            val submitHints = listOf("search", "icon_search", "query_search", "submit", "go")
+                            val submitBtn = findNode(root, submitHints)
+                            if (submitBtn != null && (submitBtn.isClickable || submitBtn.parent?.isClickable == true)) {
+                                if (clickNodeOrTap(submitBtn)) {
+                                    submitted = true
+                                    Log.i(TAG, "[$appTag] Submitted search by clicking search button")
+                                }
+                            }
+                        }
+
+                        // C. Fallback: Tap bottom-right keyboard Search / Enter IME key
+                        if (!submitted) {
+                            val dm = resources.displayMetrics
+                            performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
+                            Log.i(TAG, "[$appTag] Submitted search via keyboard IME Enter key tap (0.91w, 0.94h)")
+                            submitted = true
+                        }
+
+                        searchStep = 3
+                        isDone = true
+                        onFinished?.invoke(true)
+                    }
+                }
+            }, delay)
+        }
+    }
+
+    private fun clickFirstMatch(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
+        val match = findNode(root, hints) ?: return false
+        return clickNodeOrTap(match)
     }
 
     private fun findNode(node: AccessibilityNodeInfo?, hints: List<String>): AccessibilityNodeInfo? {
