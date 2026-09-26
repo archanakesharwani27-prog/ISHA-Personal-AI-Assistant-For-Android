@@ -2275,9 +2275,20 @@ object JarvisToolRegistry {
                             result.addProperty("message", "YouTube channel subscribe kar diya hai Boss! 🔔")
                         }
                         "skip_ad" -> {
-                            val success = a11y?.performYoutubeSkipAd() ?: false
-                            result.addProperty("status", if (success) "success" else "error")
-                            result.addProperty("message", "YouTube advertisement skip kar diya gaya hai Boss! ⏭️")
+                            val isYtForeground = a11y?.isYouTubeInForeground() ?: false
+                            if (!isYtForeground) {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Screen par YouTube open nahi hai Boss! YouTube par video chalne aur skippable ad aane par hi skip kiya ja sakta hai.")
+                            } else {
+                                val success = a11y?.performYoutubeSkipAd() ?: false
+                                if (success) {
+                                    result.addProperty("status", "success")
+                                    result.addProperty("message", "YouTube advertisement skip kar diya gaya hai Boss! ⏭️")
+                                } else {
+                                    result.addProperty("status", "info")
+                                    result.addProperty("message", "YouTube screen par active hai, lekin abhi koi skippable ad button nahi mila Boss. (Ad unskippable ho sakta hai ya countdown chal raha ho).")
+                                }
+                            }
                         }
                         "comment" -> {
                             if (comment.isNotBlank()) {

@@ -93,6 +93,20 @@ class AuraAccessibilityService : AccessibilityService() {
         private val YOUTUBE_SKIP_AD_HINTS = listOf(
             "skip ad", "skip ads", "skip", "विज्ञापन छोड़ें", "skip in"
         )
+        private val YOUTUBE_SKIP_AD_RES_IDS = listOf(
+            "skip_ad_button",
+            "modern_skip_ad_button",
+            "skip_ad_button_text",
+            "ad_skip_button",
+            "skip_button",
+            "skip_ad_action"
+        )
+        private val YOUTUBE_SKIP_AD_STRICT_TEXTS = listOf(
+            "skip ad",
+            "skip ads",
+            "skip",
+            "विज्ञापन छोड़ें"
+        )
 
         // General dialog, ad overlay, and popup dismissal hints
         val INTERRUPTING_DIALOG_HINTS = listOf(
@@ -181,7 +195,7 @@ class AuraAccessibilityService : AccessibilityService() {
         }
         if (pkg == PKG_YOUTUBE) {
             // Auto skip ads if skip button is visible on YouTube
-            clickFirstMatch(root, YOUTUBE_SKIP_AD_HINTS)
+            performYoutubeSkipAd()
             if (pendingYouTubeAutoPlay) {
                 if (clickYouTubeFirstVideo(root, pendingYouTubeQuery)) {
                     pendingYouTubeAutoPlay = false
@@ -743,18 +757,77 @@ class AuraAccessibilityService : AccessibilityService() {
         return clickFirstMatch(root, YOUTUBE_SUBSCRIBE_HINTS)
     }
 
-    fun performYoutubeSkipAd(): Boolean {
-        val root = rootInActiveWindow
-        if (root != null && clickFirstMatch(root, YOUTUBE_SKIP_AD_HINTS)) {
-            Log.i(TAG, "performYoutubeSkipAd: Clicked YouTube skip ad button")
-            return true
+    fun isYouTubeInForeground(): Boolean {
+        val rootPkg = rootInActiveWindow?.packageName?.toString() ?: ""
+        if (rootPkg == PKG_YOUTUBE) return true
+        return try {
+            windows.any { it.root?.packageName?.toString() == PKG_YOUTUBE }
+        } catch (_: Exception) {
+            false
         }
+    }
+
+    fun performYoutubeSkipAd(): Boolean {
+        val activeRoot = rootInActiveWindow
+        val isYtActive = activeRoot?.packageName?.toString() == PKG_YOUTUBE
+        val ytRoot = if (isYtActive) activeRoot else {
+            try {
+                windows.firstOrNull { it.root?.packageName?.toString() == PKG_YOUTUBE }?.root
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        if (ytRoot == null) {
+            Log.w(TAG, "performYoutubeSkipAd: YouTube is not visible on screen (current foreground: ${activeRoot?.packageName})")
+            return false
+        }
+
+        val skipNode = findYoutubeSkipAdNode(ytRoot)
+        if (skipNode != null) {
+            val label = skipNode.text?.toString() ?: skipNode.contentDescription?.toString() ?: skipNode.viewIdResourceName ?: "skip button"
+            val clicked = clickNodeOrTap(skipNode)
+            if (clicked) {
+                Log.i(TAG, "performYoutubeSkipAd: Clicked genuine YouTube skip ad button: '$label'")
+                return true
+            }
+        }
+
         val (dismissed, detail) = dismissInterruptingDialogsOrAds(fallbackToBack = false)
-        if (dismissed) {
+        if (dismissed && (activeRoot?.packageName?.toString() == PKG_YOUTUBE)) {
             Log.i(TAG, "performYoutubeSkipAd: Dismissed via reflection agent ($detail)")
             return true
         }
+
+        Log.w(TAG, "performYoutubeSkipAd: No genuine skip ad button visible in YouTube window")
         return false
+    }
+
+    private fun findYoutubeSkipAdNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val resId = (node.viewIdResourceName?.toString() ?: "").lowercase()
+        val text = (node.text?.toString() ?: "").lowercase().trim()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+
+        if (resId.isNotEmpty() && YOUTUBE_SKIP_AD_RES_IDS.any { resId.contains(it) }) {
+            return node
+        }
+
+        val label = if (text.isNotEmpty()) text else desc
+        if (label.isNotEmpty() && label.length <= 20) {
+            val isStrictMatch = YOUTUBE_SKIP_AD_STRICT_TEXTS.any { label == it } ||
+                                label.startsWith("skip in ") ||
+                                label.startsWith("skip ad in ")
+            if (isStrictMatch) {
+                return node
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val match = findYoutubeSkipAdNode(node.getChild(i))
+            if (match != null) return match
+        }
+        return null
     }
 
     // ── Hands-Free YouTube Autonomous Playback (Panda-Style) ─────────────────
