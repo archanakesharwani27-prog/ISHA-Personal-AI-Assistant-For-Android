@@ -744,8 +744,17 @@ class AuraAccessibilityService : AccessibilityService() {
     }
 
     fun performYoutubeSkipAd(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        return clickFirstMatch(root, YOUTUBE_SKIP_AD_HINTS)
+        val root = rootInActiveWindow
+        if (root != null && clickFirstMatch(root, YOUTUBE_SKIP_AD_HINTS)) {
+            Log.i(TAG, "performYoutubeSkipAd: Clicked YouTube skip ad button")
+            return true
+        }
+        val (dismissed, detail) = dismissInterruptingDialogsOrAds(fallbackToBack = false)
+        if (dismissed) {
+            Log.i(TAG, "performYoutubeSkipAd: Dismissed via reflection agent ($detail)")
+            return true
+        }
+        return false
     }
 
     // ── Hands-Free YouTube Autonomous Playback (Panda-Style) ─────────────────
@@ -1671,8 +1680,22 @@ class AuraAccessibilityService : AccessibilityService() {
      * Searches active hierarchy for any matching button/text keyword and taps or types into it.
      */
     fun armAutonomousUiAction(targetKeywords: List<String>, typeText: String? = null): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val matched = clickFirstMatch(root, targetKeywords.map { it.lowercase() })
+        val root = rootInActiveWindow
+        var matched = false
+        if (root != null) {
+            matched = clickFirstMatch(root, targetKeywords.map { it.lowercase() })
+        }
+        if (!matched) {
+            try {
+                for (win in windows) {
+                    val winRoot = win.root ?: continue
+                    if (clickFirstMatch(winRoot, targetKeywords.map { it.lowercase() })) {
+                        matched = true
+                        break
+                    }
+                }
+            } catch (_: Exception) {}
+        }
         if (matched && !typeText.isNullOrBlank()) {
             stepHandler.postDelayed({
                 val edit = findFocusedEditText(rootInActiveWindow)

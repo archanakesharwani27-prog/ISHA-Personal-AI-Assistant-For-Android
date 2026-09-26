@@ -1418,6 +1418,7 @@ object JarvisToolRegistry {
      */
     @SuppressLint("MissingPermission")
     fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
+        val toolStartTime = System.currentTimeMillis()
         Log.i(TAG, "Executing tool: $name with args: $args")
         val result = JsonObject()
 
@@ -4854,6 +4855,10 @@ object JarvisToolRegistry {
         } catch (e: Exception) {
             Log.w(TAG, "Verification check skipped for $name: ${e.message}")
         }
+
+        val elapsedMs = System.currentTimeMillis() - toolStartTime
+        result.addProperty("execution_time_ms", elapsedMs)
+        Log.i(TAG, "⚡ [LATENCY] Tool '$name' completed in ${elapsedMs}ms | status: ${result.get("status")?.asString}")
 
         return result
     }
