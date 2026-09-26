@@ -310,6 +310,20 @@ object OfflineReflexEngine {
             }
         }
 
+        // 15. Dismiss Screen Popups / Interrupting Ads (Reflex)
+        if (clean.contains("popup") || clean.contains("ad hatao") || clean.contains("skip ad") || clean.contains("dialog dismiss") || (clean.contains("hatao") && clean.contains("screen"))) {
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "dismiss_screen_popups", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val msg = result.get("message")?.asString ?: "Screen se popup hata diya gaya hai Boss!"
+            return OfflineReflexResult("dismiss_screen_popups", msg, true)
+        }
+
+        // 16. Daily Briefing (Reflex)
+        if (clean.contains("briefing") || clean == "good morning" || clean == "morning update" || clean.contains("aaj ka din kaisa hai")) {
+            val result = if (execute) JarvisToolRegistry.executeTool(context, "get_daily_briefing", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val msg = result.get("message")?.asString ?: "Good morning Boss! Aaj ka briefing ready hai."
+            return OfflineReflexResult("get_daily_briefing", msg, true)
+        }
+
         return null // Needs Gemini reasoning
     }
 

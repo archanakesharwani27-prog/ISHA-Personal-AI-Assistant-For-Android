@@ -93,6 +93,19 @@ class AuraAccessibilityService : AccessibilityService() {
         private val YOUTUBE_SKIP_AD_HINTS = listOf(
             "skip ad", "skip ads", "skip", "विज्ञापन छोड़ें", "skip in"
         )
+
+        // General dialog, ad overlay, and popup dismissal hints
+        val INTERRUPTING_DIALOG_HINTS = listOf(
+            "skip ad", "skip ads", "skip in", "skip", "विज्ञापन छोड़ें",
+            "not now", "dismiss", "maybe later", "cancel", "close", "no thanks",
+            "later", "रद्द करें", "बंद करें", "remind me later", "ask me later",
+            "deny", "don't allow", "decline", "got it", "i agree", "allow",
+            "don't show again", "कभी नहीं", "बाद में"
+        )
+        val CLOSE_RESOURCE_HINTS = listOf(
+            "close", "dismiss", "cancel", "skip", "btn_close", "close_btn", "iv_close",
+            "close_button", "action_close", "skip_ad_button", "close_icon", "btn_dismiss", "img_close"
+        )
     }
 
     // ── Legacy pending booleans ────────────────────────────────────────────────
@@ -2532,5 +2545,62 @@ class AuraAccessibilityService : AccessibilityService() {
             }, delay)
         }
         return true
+    }
+
+    /**
+     * Visual Reflection Agent:
+     * Scans active screen hierarchy for interrupting popups, ads, rating banners,
+     * or consent sheets and autonomously dismisses them.
+     */
+    fun dismissInterruptingDialogsOrAds(fallbackToBack: Boolean = true): Pair<Boolean, String> {
+        val root = rootInActiveWindow ?: return if (fallbackToBack) {
+            val backed = performGlobalAction(GLOBAL_ACTION_BACK)
+            Pair(backed, if (backed) "Screen window root absent, sent system BACK key" else "Failed to access screen window")
+        } else Pair(false, "No active screen window")
+
+        // 1. Direct node match on text, contentDescription, or resource-id
+        val targetNode = findInterruptingNode(root)
+        if (targetNode != null) {
+            val label = targetNode.text?.toString() ?: targetNode.contentDescription?.toString() ?: targetNode.viewIdResourceName ?: "dismiss button"
+            val clicked = clickNodeOrTap(targetNode)
+            if (clicked) {
+                Log.i(TAG, "dismissInterruptingDialogsOrAds: Clicked '$label'")
+                return Pair(true, "Popup/Ad dismissed by clicking '$label'")
+            }
+        }
+
+        // 2. Fallback to system BACK if requested
+        if (fallbackToBack) {
+            val backed = performGlobalAction(GLOBAL_ACTION_BACK)
+            Log.i(TAG, "dismissInterruptingDialogsOrAds: Executed fallback system BACK: $backed")
+            return Pair(backed, if (backed) "Popup/Ad dismissed via system BACK gesture" else "No popup or dismiss target detected")
+        }
+
+        return Pair(false, "No interrupting popup or dismiss target detected on screen")
+    }
+
+    private fun findInterruptingNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val text = (node.text?.toString() ?: "").lowercase().trim()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+        val resId = (node.viewIdResourceName?.toString() ?: "").lowercase().trim()
+
+        if (text.isNotEmpty()) {
+            if (text == "x" || text == "×" || text == "✕" || text == "✖") return node
+            if (INTERRUPTING_DIALOG_HINTS.any { text == it || text.contains(it) }) return node
+        }
+        if (desc.isNotEmpty()) {
+            if (desc == "x" || desc == "×" || desc == "✕" || desc == "✖") return node
+            if (INTERRUPTING_DIALOG_HINTS.any { desc == it || desc.contains(it) }) return node
+        }
+        if (resId.isNotEmpty()) {
+            if (CLOSE_RESOURCE_HINTS.any { resId.contains(it) }) return node
+        }
+
+        for (i in 0 until node.childCount) {
+            val match = findInterruptingNode(node.getChild(i))
+            if (match != null) return match
+        }
+        return null
     }
 }

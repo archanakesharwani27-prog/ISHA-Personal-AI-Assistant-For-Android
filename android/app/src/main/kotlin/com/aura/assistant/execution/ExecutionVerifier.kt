@@ -99,7 +99,7 @@ object ExecutionVerifier {
                 "toggle_wifi" -> verifyWifi(context, arguments)
 
                 // Read-only queries & information tools
-                "get_current_time", "get_battery_status", "get_latest_news",
+                "get_current_time", "get_battery_status", "get_latest_news", "get_daily_briefing",
                 "get_media_storage_stats", "get_storage_space", "check_device_health",
                 "check_internet_speed", "get_clipboard_text", "recall_memory",
                 "get_screen_context", "find_elements_on_screen", "list_installed_apps",
@@ -129,7 +129,7 @@ object ExecutionVerifier {
                 "instagram_send_dm", "instagram_post_story", "instagram_navigate", "autonomous_ui_action",
                 "telegram_action", "youtube_interact", "food_delivery_control", "ride_booking_control",
                 "shopping_control", "upi_payment_control", "twitter_control", "snapchat_control",
-                "browser_control", "spotify_control" -> {
+                "browser_control", "spotify_control", "dismiss_screen_popups", "cross_app_workflow" -> {
                     val isSuccess = status == null || status == "success" || status == "settings_opened"
                     VerificationEvidence(
                         verified = isSuccess,

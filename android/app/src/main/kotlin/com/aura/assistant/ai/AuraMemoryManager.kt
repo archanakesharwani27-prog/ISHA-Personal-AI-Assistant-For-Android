@@ -79,6 +79,11 @@ object AuraMemoryManager {
     }
 
     /**
+     * Alias for getAllMemories.
+     */
+    fun getAllFacts(context: Context): Map<String, String> = getAllMemories(context)
+
+    /**
      * Forgets a specific fact.
      */
     fun forgetFact(context: Context, key: String) {
@@ -349,6 +354,7 @@ HARDWARE CONTROLS: toggle_flashlight, set_volume, set_brightness, toggle_wifi,
 STATUS & DIAGNOSTICS: get_battery_status, get_wifi_networks, get_device_connectivity_and_usage,
   check_device_health (comprehensive device status: RAM, storage, battery temp/level, uptime),
   check_internet_speed, get_location, clear_notifications, read_notifications,
+  get_daily_briefing (aggregates live date/time, battery, notifications, user facts, and breaking news),
   toggle_message_announcements
 MEDIA & ENTERTAINMENT: get_storage_space (ALWAYS for disk space / phone storage in GB),
   get_media_storage_stats (ONLY for counting photos/videos),
@@ -358,13 +364,15 @@ EVERYDAY APPS & COMMERCE: food_delivery_control (Zomato/Swiggy dish search, trac
   ride_booking_control (Uber/Ola/Rapido cab search, track ride),
   shopping_control (Amazon/Flipkart product search, track orders, cart),
   upi_payment_control (GPay/PhonePe/Paytm QR scan, send money, balance check, history),
-  browser_control (Chrome open URL, new tab, incognito, search, bookmark)
+  browser_control (Chrome open URL, new tab, incognito, search, bookmark),
+  cross_app_workflow (chained workflow relay: screen/clipboard/notifications -> Uber/Maps/WhatsApp/Zomato)
 PRODUCTIVITY & SEARCH: get_current_time (ALWAYS for live time/date — NEVER guess),
   get_latest_news (ALWAYS for news — NEVER open Chrome),
   search_internet (direct web search with synthesized answer),
   create_alarm (fixed clock times), set_timer (countdown durations),
   add_calendar_event, create_quick_note, calculate, navigate_maps
 SCREEN VISION & UI: get_screen_context, read_screen_text, find_and_tap, screen_tap, screen_scroll,
+  dismiss_screen_popups (Reflection agent: dismiss ads, rating popups, consent dialogs, '✕', 'Skip'),
   share_media, get_clipboard_text, set_clipboard
 MEMORY & APPS: remember_fact, recall_memory, teach_command_rule,
   open_app, perform_app_action, manage_app_storage, install_store_app, emergency_sos
@@ -450,6 +458,13 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
       * GPay / PhonePe / Paytm / BHIM UPI scan ya pay → ALWAYS call upi_payment_control(app='gpay'|'phonepe'|'paytm', action='scan_qr'|'send_money'|'check_balance').
       * Kisi bhi aur app ko open karne ke liye → ALWAYS call open_app(app_name=...).
     - Tool response aane ke baad hi uske actual status ke mutabiq Boss ko sachha, authentic reply do!
+13. NEXT-GEN MOBILE AGENT CAPABILITIES (STATE-OF-THE-ART AUTONOMY):
+    - 'Good morning', 'Daily briefing do', 'Aaj ka briefing sunao', 'Morning update', 'What's my day looking like':
+      → ALWAYS call get_daily_briefing(briefing_type='morning'|'evening'|'full'). Tool se live date/time, battery, notifications, facts, aur headlines milenge. Inhe warm, energetic sweet female companion tone (Aoede persona) mein synthesize karke Boss ko sunao!
+    - 'Ad hatao', 'Popup close karo', 'Skip ad', 'Dialog dismiss karo', 'Cancel karo screen par', 'Screen se ye hatao':
+      → ALWAYS call dismiss_screen_popups(fallback_back=true). KABHI BHI popup ya ad aane par rukna ya confuse hona mana hai, turant dismiss_screen_popups call karo!
+    - Cross-App Chained Workflows (e.g. 'WhatsApp par jo address aaya uspe Uber cab book karo', 'Screen se address nikal ke Google Maps par navigate karo', 'Clipboard ka text WhatsApp par Mummy ko bhejo'):
+      → ALWAYS call cross_app_workflow(source='whatsapp'|'screen'|'clipboard', target_app='uber'|'ola'|'maps'|'whatsapp'|'zomato', action='book_cab'|'navigate'|'send_message'). Tool automatically source se data extract karke target app me relay karega!
         """.trimIndent()
     }
 
@@ -601,6 +616,43 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
         } catch (e: Exception) {
             results.add(MemoryDiagnosticResult("Memory Forgetting & Surgical Removal", false, "Error: ${e.message}"))
             android.util.Log.e("AuraDiagnostics", "Test 9 failed", e)
+        }
+
+        // 10. Next-Gen Mobile Agent: Daily Briefing & Live News Engine
+        try {
+            val briefingResult = JarvisToolRegistry.executeTool(context, "get_daily_briefing", com.google.gson.JsonObject())
+            val newsResult = JarvisToolRegistry.executeTool(context, "get_latest_news", com.google.gson.JsonObject())
+            val briefingOk = briefingResult.get("status")?.asString == "success"
+            val newsOk = newsResult.get("status")?.asString == "success"
+            val pass = briefingOk && newsOk
+            results.add(MemoryDiagnosticResult("Daily Briefing & Live News Engine", pass, "Briefing: $briefingOk, News: $newsOk"))
+            android.util.Log.i("AuraDiagnostics", "[$pass] Test 10 (Daily Briefing & News): briefingOk=$briefingOk, newsOk=$newsOk")
+        } catch (e: Exception) {
+            results.add(MemoryDiagnosticResult("Daily Briefing & Live News Engine", false, "Error: ${e.message}"))
+            android.util.Log.e("AuraDiagnostics", "Test 10 failed", e)
+        }
+
+        // 11. Next-Gen Mobile Agent: Cross-App Chained Workflow & Popup Dismissal
+        try {
+            val popupResult = JarvisToolRegistry.executeTool(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
+                addProperty("fallback_back", false)
+            })
+            val popupHandled = popupResult.has("status") && popupResult.get("status")?.asString != "error"
+
+            val crossAppArgs = com.google.gson.JsonObject().apply {
+                addProperty("source", "clipboard")
+                addProperty("target_app", "maps")
+                addProperty("action", "navigate")
+                addProperty("fallback_entity", "Connaught Place, New Delhi")
+            }
+            val crossResult = JarvisToolRegistry.executeTool(context, "cross_app_workflow", crossAppArgs)
+            val crossOk = crossResult.get("status")?.asString == "success"
+            val pass = popupHandled && crossOk
+            results.add(MemoryDiagnosticResult("Cross-App Relay & Reflection Agent", pass, "Popup: $popupHandled, Relay: $crossOk"))
+            android.util.Log.i("AuraDiagnostics", "[$pass] Test 11 (Cross-App Relay & Reflection Agent): popup=$popupHandled, relay=$crossOk")
+        } catch (e: Exception) {
+            results.add(MemoryDiagnosticResult("Cross-App Relay & Reflection Agent", false, "Error: ${e.message}"))
+            android.util.Log.e("AuraDiagnostics", "Test 11 failed", e)
         }
 
         val passedCount = results.count { it.passed }

@@ -1205,6 +1205,53 @@ object JarvisToolRegistry {
             )
         ))
 
+        // 85. Visual Reflection Agent: Dismiss Screen Popups / Interrupting Ads
+        toolsArray.add(createFunction(
+            name = "dismiss_screen_popups",
+            desc = "Dismiss interrupting popups, ads, rate-us dialogs, update sheets, consent dialogues, or overlay banners on the current screen (e.g. 'Skip Ad', 'Close', 'Not now', 'Cancel', 'Dismiss', '✕'). ALWAYS call when user says 'ad hatao', 'popup close karo', 'skip ad', 'dialog dismiss karo', 'screen se ye hatao'.",
+            params = mapOf(
+                "fallback_back" to "boolean"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "fallback_back" to "If true (default), triggers system BACK gesture if no specific clickable dismiss node is found"
+            )
+        ))
+
+        // 86. Personalized Daily Briefing Engine
+        toolsArray.add(createFunction(
+            name = "get_daily_briefing",
+            desc = "Aggregate real-time personalized daily briefing for the Boss: live date/time, battery percentage & charging status, unread status bar notifications (WhatsApp/SMS), user facts from memory vault, and top breaking news headlines. ALWAYS call when user says 'good morning', 'aaj ka briefing do', 'daily briefing sunao', 'morning update', 'what's my day looking like'.",
+            params = mapOf(
+                "briefing_type" to "string"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "briefing_type" to "'morning', 'evening', or 'full'"
+            )
+        ))
+
+        // 87. Cross-App Chained Workflow Relay
+        toolsArray.add(createFunction(
+            name = "cross_app_workflow",
+            desc = "Autonomous cross-app chained workflow relay: extracts an entity (address, phone number, tracking code, or text query) from a source (screen, clipboard, or recent notifications/WhatsApp) and relays it to perform an action in a target app (Uber, Ola, Google Maps, WhatsApp, Swiggy, Zomato, browser). ALWAYS call for chained cross-app requests like 'WhatsApp par jo address aaya uspe Uber cab book karo', 'screen par jo address hai use Google Maps par navigate karo', 'clipboard ka text WhatsApp par Mummy ko bhejo'.",
+            params = mapOf(
+                "source" to "string",
+                "target_app" to "string",
+                "action" to "string",
+                "target_contact" to "string",
+                "fallback_entity" to "string"
+            ),
+            required = listOf("target_app", "action"),
+            paramDescriptions = mapOf(
+                "source" to "Source of data: 'screen', 'clipboard', 'notifications', or 'whatsapp'",
+                "target_app" to "Target application: 'uber', 'ola', 'maps', 'whatsapp', 'zomato', 'swiggy', or 'browser'",
+                "action" to "Action to execute: 'book_cab', 'navigate', 'send_message', 'order_food', or 'search'",
+                "target_contact" to "Optional contact name if target_app is whatsapp",
+                "fallback_entity" to "Optional fallback address or query if auto-extraction finds none"
+            )
+        ))
+
         return toolsArray
     }
 
@@ -4517,6 +4564,237 @@ object JarvisToolRegistry {
                     }
                 }
 
+                // 85. Dismiss Screen Popups / Interrupting Ads (Visual Reflection Agent)
+                "dismiss_screen_popups" -> {
+                    val fallbackBack = if (args.has("fallback_back")) args.get("fallback_back").asBoolean else true
+                    val a11y = AuraAccessibilityService.instance
+                    if (a11y == null) {
+                        result.addProperty("status", "error")
+                        result.addProperty("message", "Boss, screen control ke liye Accessibility service enabled hona zaroori hai.")
+                    } else {
+                        val (dismissed, detail) = a11y.dismissInterruptingDialogsOrAds(fallbackBack)
+                        result.addProperty("status", if (dismissed) "success" else "not_found")
+                        result.addProperty("dismissed", dismissed)
+                        result.addProperty("detail", detail)
+                        result.addProperty("message", if (dismissed) "Boss, popup/ad hata diya gaya hai: $detail ✨" else "Screen par koi interrupting popup ya dismiss button nahi mila Boss.")
+                        result.addProperty("follow_up_prompt", "Boss ko lovingly inform karo ki popup/ad dismiss kar diya gaya hai.")
+                    }
+                }
+
+                // 86. Personalized Daily Briefing Engine
+                "get_daily_briefing" -> {
+                    try {
+                        val briefingType = args.get("briefing_type")?.asString?.lowercase() ?: "morning"
+
+                        // 1. Current Date & Time
+                        val now = Date()
+                        val timeFmt = SimpleDateFormat("h:mm a", Locale.getDefault()).format(now)
+                        val dateFmt = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(now)
+
+                        // 2. Battery status
+                        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+                        val batteryPct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+                        val isCharging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bm != null) {
+                            val status = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS)
+                            status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+                        } else false
+
+                        // 3. Unread / Active Notifications
+                        val notifsList = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                        val waNotifs = notifsList.filter {
+                            (it["package"] as? String)?.contains("whatsapp", ignoreCase = true) == true
+                        }
+                        val notifsSummary = if (notifsList.isEmpty()) {
+                            "Status bar bilkul clear hai, koi pending notification nahi hai."
+                        } else {
+                            "${notifsList.size} active notifications hain (${waNotifs.size} WhatsApp messages)."
+                        }
+
+                        // 4. User Facts from Memory Vault
+                        val userName = AuraMemoryManager.getUserName(context)
+                        val allFacts = AuraMemoryManager.getAllFacts(context)
+                        val factsSummary = if (allFacts.isNotEmpty()) {
+                            allFacts.entries.take(5).joinToString("; ") { "${it.key}: ${it.value}" }
+                        } else "Koi vishesh routine save nahi hai."
+
+                        // 5. Live Headlines
+                        val headlines = fetchLiveTopHeadlines()
+                        val newsSummary = if (headlines.isNotEmpty()) {
+                            headlines.take(3).joinToString(" | ")
+                        } else "Desh aur duniya me taaza khabarein normal chal rahi hain."
+
+                        result.addProperty("status", "success")
+                        result.addProperty("briefing_type", briefingType)
+                        result.addProperty("user_name", userName)
+                        result.addProperty("date", dateFmt)
+                        result.addProperty("time", timeFmt)
+                        result.addProperty("battery_percent", batteryPct)
+                        result.addProperty("is_charging", isCharging)
+                        result.addProperty("notifications_count", notifsList.size)
+                        result.addProperty("whatsapp_notifications_count", waNotifs.size)
+                        result.addProperty("news_headlines", newsSummary)
+                        result.addProperty("user_facts", factsSummary)
+
+                        val greeting = when {
+                            briefingType.contains("evening") || briefingType.contains("night") -> "Shubh sandhya"
+                            else -> "Good morning"
+                        }
+                        val briefingText = StringBuilder().apply {
+                            append("$greeting Boss! Aaj $dateFmt hai aur samay $timeFmt ho raha hai. ")
+                            append("Phone battery $batteryPct% hai${if (isCharging) " (charging par lagi hai)" else ""}. ")
+                            append(notifsSummary).append(" ")
+                            if (headlines.isNotEmpty()) {
+                                append("Aaj ki mukhya taaza khabarein: ").append(newsSummary).append(". ")
+                            }
+                        }.toString()
+
+                        result.addProperty("message", briefingText)
+                        result.addProperty("follow_up_prompt", "Deliver this briefing in AURA's warm, enthusiastic, sweet female companion tone (Aoede persona) addressing the user as Boss. Encourage them for the day!")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error generating daily briefing", e)
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Failed to generate briefing")
+                    }
+                }
+
+                // 87. Cross-App Chained Workflow Relay
+                "cross_app_workflow" -> {
+                    try {
+                        val source = args.get("source")?.asString?.lowercase()?.trim() ?: "screen"
+                        val targetApp = args.get("target_app")?.asString?.lowercase()?.trim() ?: "maps"
+                        val action = args.get("action")?.asString?.lowercase()?.trim() ?: "navigate"
+                        val targetContact = args.get("target_contact")?.asString ?: ""
+                        val fallbackEntity = args.get("fallback_entity")?.asString ?: ""
+
+                        // 1. Extract source raw text
+                        var rawSourceText = ""
+                        when (source) {
+                            "clipboard" -> {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                rawSourceText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+                            }
+                            "notifications", "whatsapp" -> {
+                                val notifs = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                                val targetNotif = notifs.firstOrNull {
+                                    (it["package"] as? String)?.contains("whatsapp", ignoreCase = true) == true ||
+                                    (it["appName"] as? String)?.contains("whatsapp", ignoreCase = true) == true
+                                } ?: notifs.firstOrNull()
+                                if (targetNotif != null) {
+                                    rawSourceText = "${targetNotif["title"]}: ${targetNotif["text"]}"
+                                }
+                            }
+                            else -> { // "screen"
+                                val a11y = AuraAccessibilityService.instance
+                                val root = a11y?.rootInActiveWindow
+                                if (root != null) {
+                                    rawSourceText = a11y.collectAllText(root)
+                                }
+                            }
+                        }
+
+                        // If primary source was empty, check clipboard as fallback
+                        if (rawSourceText.isBlank()) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            rawSourceText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+                        }
+
+                        // 2. Extract entity (address / phone / query)
+                        var extractedEntity = fallbackEntity
+                        if (rawSourceText.isNotBlank()) {
+                            val pinMatch = Regex("""\b[1-9][0-9]{5}\b""").find(rawSourceText)
+                            val addressKeywords = listOf("road", "marg", "street", "nagar", "colony", "sector", "block", "enclave", "vihar", "apartment", "complex", "mall", "station", "chowk", "pincode", "delhi", "mumbai", "bengaluru", "noida", "gurgaon", "lucknow", "kanpur", "jaipur", "kolkata", "chennai", "hyderabad", "pune")
+                            val lines = rawSourceText.lines().map { it.trim() }.filter { it.length > 5 }
+                            val bestAddressLine = lines.firstOrNull { line ->
+                                addressKeywords.any { kw -> line.contains(kw, ignoreCase = true) } || (pinMatch != null && line.contains(pinMatch.value))
+                            }
+
+                            extractedEntity = when {
+                                bestAddressLine != null -> bestAddressLine
+                                pinMatch != null -> "PIN ${pinMatch.value}"
+                                fallbackEntity.isNotBlank() -> fallbackEntity
+                                else -> rawSourceText.take(120).trim()
+                            }
+                        }
+
+                        if (extractedEntity.isBlank()) {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Boss, source se koi valid address ya text extract nahi ho paya.")
+                        } else {
+                            // 3. Relay execution to target app
+                            when (targetApp) {
+                                "uber", "ola", "rapido" -> {
+                                    val cabArgs = JsonObject().apply {
+                                        addProperty("app", targetApp)
+                                        addProperty("action", "search_ride")
+                                        addProperty("destination", extractedEntity)
+                                    }
+                                    val cabResult = executeTool(context, "ride_booking_control", cabArgs)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("source", source)
+                                    result.addProperty("extracted_entity", extractedEntity)
+                                    result.addProperty("target_app", targetApp)
+                                    result.addProperty("message", "Boss, '$source' se address \"$extractedEntity\" extract karke $targetApp par ride search kar di hai!")
+                                    result.add("relay_result", cabResult)
+                                }
+                                "maps", "google_maps" -> {
+                                    val mapArgs = JsonObject().apply {
+                                        addProperty("destination", extractedEntity)
+                                    }
+                                    val mapResult = executeTool(context, "navigate_maps", mapArgs)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("source", source)
+                                    result.addProperty("extracted_entity", extractedEntity)
+                                    result.addProperty("target_app", "Google Maps")
+                                    result.addProperty("message", "Boss, '$source' se \"$extractedEntity\" extract karke Google Maps par navigation start kar diya gaya hai! 📍")
+                                    result.add("relay_result", mapResult)
+                                }
+                                "whatsapp" -> {
+                                    val waArgs = JsonObject().apply {
+                                        if (targetContact.isNotBlank()) addProperty("contact_name", targetContact)
+                                        addProperty("message", extractedEntity)
+                                    }
+                                    val waResult = executeTool(context, "send_whatsapp", waArgs)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("source", source)
+                                    result.addProperty("extracted_entity", extractedEntity)
+                                    result.addProperty("target_app", "WhatsApp")
+                                    result.addProperty("message", "Boss, '$source' se content WhatsApp par bhej diya gaya hai!")
+                                    result.add("relay_result", waResult)
+                                }
+                                "zomato", "swiggy" -> {
+                                    val foodArgs = JsonObject().apply {
+                                        addProperty("app", targetApp)
+                                        addProperty("action", "search")
+                                        addProperty("query", extractedEntity)
+                                    }
+                                    val foodResult = executeTool(context, "food_delivery_control", foodArgs)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("source", source)
+                                    result.addProperty("extracted_entity", extractedEntity)
+                                    result.addProperty("target_app", targetApp)
+                                    result.addProperty("message", "Boss, '$source' se \"$extractedEntity\" $targetApp par search kar diya gaya hai!")
+                                    result.add("relay_result", foodResult)
+                                }
+                                else -> {
+                                    val searchArgs = JsonObject().apply {
+                                        addProperty("query", extractedEntity)
+                                    }
+                                    val searchResult = executeTool(context, "search_internet", searchArgs)
+                                    result.addProperty("status", "success")
+                                    result.addProperty("source", source)
+                                    result.addProperty("extracted_entity", extractedEntity)
+                                    result.addProperty("message", "Boss, '$source' se extract ki gayi query search kar li gayi hai.")
+                                    result.add("relay_result", searchResult)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error executing cross_app_workflow", e)
+                        result.addProperty("status", "error")
+                        result.addProperty("error", e.message ?: "Cross-app workflow failed")
+                    }
+                }
+
                 // Tier 4 Autonomous Knowledge & Screen Execution Fallback
                 else -> {
                     Log.i(TAG, "Dynamic action '$name' invoked — resolving via autonomous UI & millisecond knowledge")
@@ -5037,6 +5315,18 @@ object JarvisToolRegistry {
      * Fetches real-time RSS from Google News and parses top headlines.
      */
     fun fetchLiveGoogleNews(topic: String?, lang: String?): JsonObject {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return try {
+                java.util.concurrent.Executors.newSingleThreadExecutor().submit<JsonObject> {
+                    fetchLiveGoogleNews(topic, lang)
+                }.get(5, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                JsonObject().apply {
+                    addProperty("status", "error")
+                    addProperty("error", e.message)
+                }
+            }
+        }
         val result = JsonObject()
         try {
             val isHindi = lang?.lowercase()?.contains("en") != true
@@ -5410,6 +5700,26 @@ object JarvisToolRegistry {
                 if (name == "spotify_control") score += 2.2f
             }
 
+            // Daily briefing boost
+            if (clean.contains("briefing") || clean.contains("good morning") || clean.contains("subah") || clean.contains("aaj ka din") || clean.contains("morning update")) {
+                if (name == "get_daily_briefing") score += 2.5f
+            }
+
+            // Dismiss screen popups / ads boost
+            if (clean.contains("popup") || clean.contains("ad hatao") || clean.contains("skip ad") || clean.contains("dialog") || clean.contains("dismiss") || (clean.contains("hatao") && clean.contains("screen"))) {
+                if (name == "dismiss_screen_popups") score += 2.5f
+            }
+
+            // Cross-app workflow relay boost
+            if (clean.contains("workflow") || clean.contains("relay") || (clean.contains("se") && (clean.contains("par") || clean.contains("pe"))) || (clean.contains("address") && (clean.contains("cab") || clean.contains("uber") || clean.contains("ola") || clean.contains("maps")))) {
+                if (name == "cross_app_workflow") score += 2.5f
+            }
+
+            // Live news boost
+            if (clean.contains("news") || clean.contains("khabar") || clean.contains("samachar") || clean.contains("breaking")) {
+                if (name == "get_latest_news") score += 2.2f
+            }
+
             scored.add(ScoredDecl(fn, score))
         }
 
@@ -5429,6 +5739,15 @@ object JarvisToolRegistry {
     }
 
     private fun performFastWebSearch(query: String): String {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return try {
+                java.util.concurrent.Executors.newSingleThreadExecutor().submit<String> {
+                    performFastWebSearch(query)
+                }.get(5, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                "Information retrieved for '$query'."
+            }
+        }
         return try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = "https://html.duckduckgo.com/html/?q=$encoded"
@@ -5452,6 +5771,74 @@ object JarvisToolRegistry {
         } catch (e: Exception) {
             "Web query executed for '$query'. (Network search: ${e.message ?: "fallback"})"
         }
+    }
+
+    fun fetchLiveTopHeadlines(): List<String> {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return try {
+                java.util.concurrent.Executors.newSingleThreadExecutor().submit<List<String>> {
+                    fetchLiveTopHeadlines()
+                }.get(5, TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        val headlines = mutableListOf<String>()
+        try {
+            val url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+            val req = okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                .build()
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .build()
+            val resp = client.newCall(req).execute()
+            val xml = resp.body?.string() ?: ""
+            if (xml.isNotBlank()) {
+                val factory = XmlPullParserFactory.newInstance()
+                val parser = factory.newPullParser()
+                parser.setInput(StringReader(xml))
+                var eventType = parser.eventType
+                var inItem = false
+                var currentTag = ""
+                while (eventType != XmlPullParser.END_DOCUMENT && headlines.size < 5) {
+                    when (eventType) {
+                        XmlPullParser.START_TAG -> {
+                            currentTag = parser.name?.lowercase() ?: ""
+                            if (currentTag == "item") inItem = true
+                        }
+                        XmlPullParser.TEXT -> {
+                            if (inItem && currentTag == "title") {
+                                val title = parser.text?.trim() ?: ""
+                                if (title.isNotBlank() && !title.startsWith("Google News")) {
+                                    val cleanTitle = title.substringBeforeLast(" - ")
+                                    if (cleanTitle.isNotBlank() && !headlines.contains(cleanTitle)) {
+                                        headlines.add(cleanTitle)
+                                    }
+                                }
+                            }
+                        }
+                        XmlPullParser.END_TAG -> {
+                            if (parser.name?.equals("item", ignoreCase = true) == true) inItem = false
+                            currentTag = ""
+                        }
+                    }
+                    eventType = parser.next()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse Google News RSS: ${e.message}")
+        }
+
+        if (headlines.isEmpty()) {
+            val webSnippet = performFastWebSearch("top headlines today India")
+            if (webSnippet.isNotBlank()) {
+                headlines.addAll(webSnippet.lines().map { it.replace("•", "").trim() }.filter { it.length > 20 }.take(3))
+            }
+        }
+        return headlines
     }
 }
 

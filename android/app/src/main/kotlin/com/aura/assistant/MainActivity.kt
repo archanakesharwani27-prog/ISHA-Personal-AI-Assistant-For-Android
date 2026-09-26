@@ -251,13 +251,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             return
         }
         if (intent.getBooleanExtra("run_diagnostics", false) || action == "com.aura.assistant.RUN_DIAGNOSTICS") {
-            mainHandler.postDelayed({
+            Thread {
                 val diagResults = com.aura.assistant.ai.AuraMemoryManager.runMemoryAndContextDiagnostics(this)
                 val summary = diagResults.joinToString("\n") { r ->
                     "${if (r.passed) "✅" else "❌"} ${r.testName}: ${r.details}"
                 }
-                injectUserMessage("System Diagnostics: Memory & Context Test Suite Results:\n$summary")
-            }, 300)
+                mainHandler.post {
+                    injectUserMessage("System Diagnostics: Memory & Context Test Suite Results:\n$summary")
+                }
+            }.start()
             return
         }
         val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON)
