@@ -255,7 +255,7 @@ object AuraMemoryManager {
      * - Battery level & charging state
      * - Last executed tool and parameters (for resolving "off krdo", "wapas karo", "phir se karo")
      */
-    fun buildLiveContextSection(context: Context): String {
+    fun buildLiveContextSection(context: Context? = null): String {
         val sb = StringBuilder()
         sb.appendLine("\n📱 ACTIVE RUNTIME & DEVICE CONTEXT (LIVE GROUNDING):")
 
@@ -265,18 +265,20 @@ object AuraMemoryManager {
         sb.appendLine("• Foreground Screen/App: $fgPkg")
 
         // 2. Battery & Power State
-        try {
-            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
-            val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
-            if (level >= 0) {
-                val ifilter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
-                val bStatus = context.registerReceiver(null, ifilter)
-                val status = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
-                val isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-                                 status == android.os.BatteryManager.BATTERY_STATUS_FULL
-                sb.appendLine("• Battery: $level% (Charging: $isCharging)")
-            }
-        } catch (_: Exception) {}
+        if (context != null) {
+            try {
+                val bm = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+                val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+                if (level >= 0) {
+                    val ifilter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+                    val bStatus = context.registerReceiver(null, ifilter)
+                    val status = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                    val isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                                     status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                    sb.appendLine("• Battery: $level% (Charging: $isCharging)")
+                }
+            } catch (_: Exception) {}
+        }
 
         // 3. Last Action & Context Tracking
         val action = lastAction

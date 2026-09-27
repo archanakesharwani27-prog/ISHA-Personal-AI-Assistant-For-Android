@@ -54,6 +54,10 @@ android {
         checkReleaseBuilds = false
         disable += listOf("PropertyEscape")
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -93,4 +97,6 @@ dependencies {
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("com.google.firebase:firebase-analytics-ktx")
+
+    testImplementation("junit:junit:4.13.2")
 }
