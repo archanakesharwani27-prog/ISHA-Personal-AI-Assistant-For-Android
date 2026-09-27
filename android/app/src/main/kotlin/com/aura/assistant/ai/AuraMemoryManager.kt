@@ -244,8 +244,22 @@ object AuraMemoryManager {
     @Volatile
     var lastAction: ActionSnapshot? = null
 
+    @Volatile
+    var lastToggleAction: ActionSnapshot? = null
+
     fun recordLastAction(toolName: String, args: String, status: String) {
-        lastAction = ActionSnapshot(toolName, args, status, System.currentTimeMillis())
+        val snapshot = ActionSnapshot(toolName, args, status, System.currentTimeMillis())
+        lastAction = snapshot
+        val isToggle = toolName.startsWith("toggle_") ||
+                       toolName == "set_dnd" ||
+                       toolName == "set_volume" ||
+                       toolName == "play_youtube" ||
+                       toolName == "play_media" ||
+                       toolName == "media_control"
+        if (isToggle) {
+            lastToggleAction = snapshot
+            Log.i(TAG, "⚡ [CONTEXT] Recorded last toggle action: $toolName (args: $args)")
+        }
         Log.i(TAG, "⚡ [CONTEXT] Recorded last action: $toolName (status: $status)")
     }
 
@@ -280,12 +294,18 @@ object AuraMemoryManager {
             } catch (_: Exception) {}
         }
 
-        // 3. Last Action & Context Tracking
+        // 3. Last Action & Hardware Toggle Tracking
+        val toggleAction = lastToggleAction
+        if (toggleAction != null) {
+            val secondsAgo = (System.currentTimeMillis() - toggleAction.timestamp) / 1000
+            sb.appendLine("• Last Hardware/Toggle Action: Tool '${toggleAction.toolName}' (args: ${toggleAction.args}) $secondsAgo seconds ago.")
+            sb.appendLine("  -> TOGGLE/SHORTHAND RULE: If Boss says 'off krdo', 'ise band karo', 'on karo', this refers directly to '${toggleAction.toolName}' (e.g. if flashlight was on, 'off krdo' means toggle_flashlight enable=false)!")
+        }
+
         val action = lastAction
-        if (action != null) {
+        if (action != null && action.toolName != toggleAction?.toolName) {
             val secondsAgo = (System.currentTimeMillis() - action.timestamp) / 1000
-            sb.appendLine("• Last Action Executed: Tool '${action.toolName}' (args: ${action.args}, status: ${action.status}) $secondsAgo seconds ago.")
-            sb.appendLine("  -> PRONOUN & SHORTHAND RULE: If Boss says 'off krdo', 'ise band karo', 'wapas karo', 'repeat karo', 'isko...', this refers directly to '${action.toolName}'!")
+            sb.appendLine("• Last Executed Tool: '${action.toolName}' $secondsAgo seconds ago.")
         }
 
         return sb.toString()

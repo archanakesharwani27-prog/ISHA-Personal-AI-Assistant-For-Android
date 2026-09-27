@@ -3680,8 +3680,20 @@ object JarvisToolRegistry {
                         val searchData = performDirectWebSearch(query)
                         result.addProperty("status", searchData.get("status")?.asString ?: "success")
                         result.addProperty("query", query)
-                        result.add("search_results", searchData.get("results") ?: JsonArray())
-                        result.addProperty("message", "Internet search results mil gaye hain Boss.")
+                        val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
+                        result.add("search_results", searchResults)
+
+                        val topSnippet = if (searchResults.size() > 0) {
+                            val first = searchResults.get(0).asJsonObject
+                            first.get("summary")?.asString ?: first.get("title")?.asString ?: ""
+                        } else ""
+
+                        val searchMsg = if (topSnippet.isNotBlank()) {
+                            "Search result: $topSnippet"
+                        } else {
+                            "Internet search results mil gaye hain Boss."
+                        }
+                        result.addProperty("message", searchMsg)
                     }
                 }
 

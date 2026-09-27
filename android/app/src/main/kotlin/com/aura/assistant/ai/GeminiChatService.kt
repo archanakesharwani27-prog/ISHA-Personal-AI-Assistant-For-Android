@@ -277,7 +277,6 @@ class GeminiChatService(private val context: Context) {
         priorContents: JsonArray? = null
     ) {
         val apiKey = Secrets.getActiveGeminiKey(context)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
 
         val root = JsonObject().apply {
             // System instruction with rich persona and permanent memory
@@ -363,32 +362,39 @@ class GeminiChatService(private val context: Context) {
         }
 
         val body = root.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder().url(url).post(body).build()
 
-        val call = client.newCall(request)
-        activeCall = call
+        val startIndex = CANDIDATE_MODELS.indexOf(model).coerceAtLeast(0)
+        val modelsToTry = CANDIDATE_MODELS.subList(startIndex, CANDIDATE_MODELS.size) + CANDIDATE_MODELS.subList(0, startIndex)
 
-        val response = try {
-            withContext(Dispatchers.IO) { call.execute() }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "Tool response stream failed: ${e.message}, falling back to tool output")
-            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
-                res.get("message")?.asString ?: "$name complete kar diya gaya hai Boss."
+        for (candidateModel in modelsToTry) {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$candidateModel:streamGenerateContent?alt=sse&key=$apiKey"
+            val request = Request.Builder().url(url).post(body).build()
+
+            val call = client.newCall(request)
+            activeCall = call
+
+            val response = try {
+                withContext(Dispatchers.IO) { call.execute() }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Tool response model $candidateModel connection failed: ${e.message}, trying fallback...")
+                continue
             }
-            callback.onComplete(fallback)
-            return
-        }
 
-        if (!response.isSuccessful) {
-            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
-                res.get("message")?.asString ?: "$name complete kar diya gaya hai Boss."
+            if (!response.isSuccessful) {
+                val errBody = response.body?.string() ?: ""
+                Log.w(TAG, "Tool response model $candidateModel failed with HTTP ${response.code}: $errBody")
+                if (response.code == 503 || response.code == 429) {
+                    delay(if (response.code == 503) 1500L else 2000L)
+                    continue
+                }
+                if (response.code == 404 || response.code > 500) {
+                    continue
+                }
+                break
             }
-            callback.onComplete(fallback)
-            return
-        }
 
-        val stream = response.body?.byteStream() ?: return
+            val stream = response.body?.byteStream() ?: continue
         val reader = BufferedReader(InputStreamReader(stream))
         val postToolAccumulator = StringBuilder()
         val nextPendingFunctionCalls = mutableListOf<JsonObject>()
@@ -457,15 +463,18 @@ class GeminiChatService(private val context: Context) {
             return
         }
 
-        val fullSpokenText = postToolAccumulator.toString().trim()
-        if (fullSpokenText.isNotBlank()) {
-            callback.onComplete(fullSpokenText)
-        } else {
-            val fallback = executedTools.joinToString("\n") { (name, _, res) ->
-                res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
+            val fullSpokenText = postToolAccumulator.toString().trim()
+            if (fullSpokenText.isNotBlank()) {
+                callback.onComplete(fullSpokenText)
+                return
             }
-            callback.onComplete(fallback)
         }
+
+        // If all candidate models failed or returned empty, use clean fallback
+        val fallback = executedTools.joinToString("\n") { (name, _, res) ->
+            res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
+        }
+        callback.onComplete(fallback)
     }
 
     private fun buildRequestBody(

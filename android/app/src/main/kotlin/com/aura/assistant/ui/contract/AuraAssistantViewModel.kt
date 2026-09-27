@@ -215,6 +215,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
     // ── Chat Session Management ────────────────────────────────────────────────
 
     fun createNewChat() {
+        synchronized(pendingCommandQueue) { pendingCommandQueue.clear() }
         viewModelScope.launch(Dispatchers.IO) {
             stopGeneration()
             // Fresh screen for new chat: lazy creation, do not insert into SQLite until first prompt sent
@@ -344,11 +345,34 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     // ── Text Chat & Gemini Streaming Pipeline ──────────────────────────────────
 
+    private val pendingCommandQueue = mutableListOf<Pair<String, AttachedMedia?>>()
+
+    private fun processNextPendingCommand() {
+        if (_isGenerating.value) return
+        val next = synchronized(pendingCommandQueue) {
+            if (pendingCommandQueue.isNotEmpty()) pendingCommandQueue.removeAt(0) else null
+        }
+        if (next != null) {
+            viewModelScope.launch(Dispatchers.Main) {
+                delay(350)
+                _selectedAttachment.value = next.second
+                onSendTextMessage(next.first)
+            }
+        }
+    }
+
     fun onSendTextMessage(prompt: String) {
         val trimmed = prompt.trim()
         val attached = _selectedAttachment.value
         if (trimmed.isBlank() && attached == null) return
-        if (_isGenerating.value) return
+        if (_isGenerating.value) {
+            Log.i(TAG, "⚡ [QUEUE] Assistant busy generating, queuing command: \"$trimmed\"")
+            _selectedAttachment.value = null
+            synchronized(pendingCommandQueue) {
+                pendingCommandQueue.add(Pair(trimmed, attached))
+            }
+            return
+        }
 
         _selectedAttachment.value = null // consume attachment
 
@@ -472,6 +496,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
                         }
                         _isGenerating.value = false
                         saveCurrentMessages()
+                        processNextPendingCommand()
                     }
                 }
 
@@ -487,6 +512,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
                         }
                         _isGenerating.value = false
                         saveCurrentMessages()
+                        processNextPendingCommand()
                     }
                 }
             }
@@ -504,6 +530,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
                 _chatMessages.value = current
             }
             saveCurrentMessages()
+            processNextPendingCommand()
         }
     }
 
