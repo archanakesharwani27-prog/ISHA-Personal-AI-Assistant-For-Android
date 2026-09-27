@@ -33,11 +33,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import com.aura.assistant.auth.AuraAuthManager
-import com.aura.assistant.ui.contract.AuraAssistantViewModel
-import com.aura.assistant.ui.screens.AuraLoginScreen
-import com.aura.assistant.ui.screens.AuraMainScreen
-import com.aura.assistant.ui.theme.AuraTheme
+import com.aura.assistant.auth.IshaAuthManager
+import com.aura.assistant.ui.contract.IshaAssistantViewModel
+import com.aura.assistant.ui.screens.IshaLoginScreen
+import com.aura.assistant.ui.screens.IshaMainScreen
+import com.aura.assistant.ui.theme.IshaTheme
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         @Volatile var instance: MainActivity? = null
     }
 
-    private val viewModel: AuraAssistantViewModel by viewModels()
+    private val viewModel: IshaAssistantViewModel by viewModels()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ── Shake Sensor State ─────────────────────────────────────────────────────
@@ -147,6 +147,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     @SuppressLint("NewApi")
     private val callReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            val ctx = context ?: this@MainActivity
             if (intent?.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
                 val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
                 val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER) ?: ""
@@ -154,18 +155,28 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
                 when (stateStr) {
                     TelephonyManager.EXTRA_STATE_RINGING -> {
-                        announceCaller(callerName, incomingNumber)
+                        IshaCallAnnouncerManager.onCallRinging(ctx, callerName, incomingNumber)
                     }
                     TelephonyManager.EXTRA_STATE_OFFHOOK,
                     TelephonyManager.EXTRA_STATE_IDLE -> {
-                        stopCallerAnnouncement()
+                        IshaCallAnnouncerManager.onCallEnded(ctx)
                         hasAnnouncedCurrentCall = false
                     }
                 }
-            } else if (intent?.action == AuraCallScreeningService.ACTION_PRE_CALL_SCREENED) {
-                val callerName = intent.getStringExtra(AuraCallScreeningService.EXTRA_CALLER_NAME) ?: "Unknown Caller"
-                val number = intent.getStringExtra(AuraCallScreeningService.EXTRA_NUMBER) ?: ""
-                announceCaller(callerName, number)
+            } else if (intent?.action == IshaCallScreeningService.ACTION_PRE_CALL_SCREENED) {
+                val callerName = intent.getStringExtra(IshaCallScreeningService.EXTRA_CALLER_NAME) ?: "Unknown Caller"
+                val number = intent.getStringExtra(IshaCallScreeningService.EXTRA_NUMBER) ?: ""
+                IshaCallAnnouncerManager.onCallRinging(ctx, callerName, number)
+            } else if (intent?.action == IshaNotificationListenerService.ACTION_CALL_EVENT) {
+                val state = intent.getStringExtra("state")
+                val callerName = intent.getStringExtra("callerName") ?: "Unknown Caller"
+                val number = intent.getStringExtra("number") ?: ""
+                if (state == "ringing") {
+                    IshaCallAnnouncerManager.onCallRinging(ctx, callerName, number)
+                } else {
+                    IshaCallAnnouncerManager.onCallEnded(ctx)
+                    hasAnnouncedCurrentCall = false
+                }
             }
         }
     }
@@ -198,28 +209,29 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         registerReceivers()
         initShakeSensor()
         initNativeTts()
+        IshaCallAnnouncerManager.init(this)
 
 
-        AuraAuthManager.init(this)
+        IshaAuthManager.init(this)
         startWakeWordService()
         handleWakeIntent(intent)
 
         setContent {
-            AuraTheme {
-                val session by AuraAuthManager.sessionState.collectAsState()
+            IshaTheme {
+                val session by IshaAuthManager.sessionState.collectAsState()
                 AnimatedContent(
                     targetState = session.isLoggedIn,
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
                     label = "AuthTransition"
                 ) { loggedIn ->
                     if (loggedIn) {
-                        AuraMainScreen(
+                        IshaMainScreen(
                             viewModel = viewModel,
                             userProfile = session,
-                            onLogout = { AuraAuthManager.logout(this@MainActivity) }
+                            onLogout = { IshaAuthManager.logout(this@MainActivity) }
                         )
                     } else {
-                        AuraLoginScreen(
+                        IshaLoginScreen(
                             onLoginSuccess = {
                                 // Session flow triggers automatic crossfade
                             }
@@ -240,7 +252,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (intent == null) return
         val action = intent.action
         if (action == "com.aura.assistant.LOGOUT") {
-            AuraAuthManager.logout(this)
+            IshaAuthManager.logout(this)
             return
         }
         val injectText = intent.getStringExtra("inject_text")
@@ -330,6 +342,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             android.Manifest.permission.ACCESS_FINE_LOCATION,
             android.Manifest.permission.ACCESS_COARSE_LOCATION
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            perms.add(android.Manifest.permission.ANSWER_PHONE_CALLS)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
             perms.add(android.Manifest.permission.READ_MEDIA_IMAGES)
@@ -373,7 +388,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         try {
             val callFilter = IntentFilter().apply {
                 addAction(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
-                addAction(AuraCallScreeningService.ACTION_PRE_CALL_SCREENED)
+                addAction(IshaCallScreeningService.ACTION_PRE_CALL_SCREENED)
+                addAction(IshaNotificationListenerService.ACTION_CALL_EVENT)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(callReceiver, callFilter, RECEIVER_EXPORTED)
@@ -523,7 +539,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     lastShakeTriggerTimestamp = now
                     vibrateQuickShake()
                     mainHandler.post {
-                        AuraDynamicIsland.show(this@MainActivity, "shake")
+                        IshaDynamicIsland.show(this@MainActivity, "shake")
                     }
                 } else if (elapsedSinceFirst > SHAKE_MAX_INTERVAL_MS) {
                     shakePeakCount = 1
@@ -580,11 +596,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         lastAnnouncedCallerNumber = number
 
         val announcement = if (callerName.isNotBlank() && callerName != "Unknown Caller") {
-            "Incoming call from $callerName identified by AURA"
+            "Incoming call from $callerName identified by ISHA"
         } else if (number.isNotBlank()) {
-            "Incoming call from $number identified by AURA"
+            "Incoming call from $number identified by ISHA"
         } else {
-            "Incoming call identified by AURA"
+            "Incoming call identified by ISHA"
         }
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -595,7 +611,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
         }
         if (isTtsReady && nativeTts != null) {
-            nativeTts?.speak(announcement, TextToSpeech.QUEUE_FLUSH, params, "AURA_CALL_ANNOUNCE")
+            nativeTts?.speak(announcement, TextToSpeech.QUEUE_FLUSH, params, "ISHA_CALL_ANNOUNCE")
         }
     }
 

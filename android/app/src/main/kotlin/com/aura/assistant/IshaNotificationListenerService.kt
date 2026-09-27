@@ -13,7 +13,7 @@ import android.util.Log
 import java.util.Locale
 
 /**
- * AURA Smart Notification Listener
+ * ISHA Smart Notification Listener
  *
  * Features:
  *  1. Captures ALL notifications (WhatsApp, SMS, Gmail, Delivery, Payment/OTP)
@@ -22,10 +22,10 @@ import java.util.Locale
  *  4. Forwards to Flutter for persistent history (survives notification bar clear)
  *  5. Media session access for transport controls
  */
-class AuraNotificationListenerService : NotificationListenerService() {
+open class IshaNotificationListenerService : NotificationListenerService() {
 
     companion object {
-        private const val TAG = "AuraNotifService"
+        private const val TAG = "IshaNotifService"
         const val ACTION_NOTIF = "com.aura.NOTIFICATION"
 
         const val ACTION_CALL_EVENT = "com.aura.CALL_EVENT"
@@ -39,7 +39,7 @@ class AuraNotificationListenerService : NotificationListenerService() {
         const val PRIORITY_SYSTEM    = "system"
 
         // Active instance pointer for query
-        @Volatile var instance: AuraNotificationListenerService? = null
+        @Volatile var instance: IshaNotificationListenerService? = null
 
         // In-memory cache of active posted notifications — resilient against OS unbinds
         val postedNotificationCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, Any>>()
@@ -536,7 +536,7 @@ class AuraNotificationListenerService : NotificationListenerService() {
             appName.contains("Telegram", ignoreCase = true) -> "Telegram"
             else -> appName
         }
-        val text = "Incoming call from $callerLabel via $appLabel identified by AURA"
+        val text = "Incoming call from $callerLabel via $appLabel identified by ISHA"
         val params = Bundle().apply {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
         }
@@ -548,3 +548,21 @@ class AuraNotificationListenerService : NotificationListenerService() {
         return match?.value?.let { it.chunked(1).joinToString(" ") } ?: "check your notification"
     }
 }
+
+/** Backward compatibility subclass for AuraNotificationListenerService */
+class AuraNotificationListenerService : IshaNotificationListenerService() {
+    companion object {
+        var instance: IshaNotificationListenerService?
+            get() = IshaNotificationListenerService.instance
+            set(value) { IshaNotificationListenerService.instance = value }
+        const val ACTION_NOTIF = IshaNotificationListenerService.ACTION_NOTIF
+        const val ACTION_CALL_EVENT = IshaNotificationListenerService.ACTION_CALL_EVENT
+        fun answerActiveCall(context: android.content.Context) = IshaNotificationListenerService.answerActiveCall(context)
+        fun declineActiveCall(context: android.content.Context) = IshaNotificationListenerService.declineActiveCall(context)
+        fun clearAllNotifications() = IshaNotificationListenerService.clearAllNotifications()
+        fun dismissNotification(key: String) = IshaNotificationListenerService.dismissNotification(key)
+        fun getActiveNotificationsList() = IshaNotificationListenerService.getActiveNotificationsList()
+    }
+}
+
+

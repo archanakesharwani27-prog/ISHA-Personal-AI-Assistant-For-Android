@@ -12,10 +12,10 @@ import java.nio.charset.StandardCharsets
  * Allows testing and feeding commands directly into AURA via:
  * adb shell am broadcast -a com.aura.assistant.ADB_INJECT --es text "your command"
  */
-class AuraAdbReceiver : BroadcastReceiver() {
+open class IshaAdbReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG = "AuraAdbReceiver"
+        private const val TAG = "IshaAdbReceiver"
         const val ACTION_ADB_INJECT = "com.aura.assistant.ADB_INJECT"
     }
 
@@ -62,3 +62,7 @@ class AuraAdbReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/** Backward compatibility subclass for AuraAdbReceiver */
+class AuraAdbReceiver : IshaAdbReceiver()
+

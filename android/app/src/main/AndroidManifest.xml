@@ -152,7 +152,7 @@
     </queries>
 
     <application
-        android:label="Aura"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
         android:allowBackup="false"
@@ -211,7 +211,7 @@
 
         <!-- ── Boot receiver (restart wake service after phone restart) ─── -->
         <receiver
-            android:name=".AuraBootReceiver"
+            android:name=".IshaBootReceiver"
             android:exported="true">
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -221,7 +221,7 @@
 
         <!-- ── Headless ADB Command Injection Receiver for Testing ── -->
         <receiver
-            android:name=".AuraAdbReceiver"
+            android:name=".IshaAdbReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.aura.assistant.ADB_INJECT" />
@@ -232,8 +232,19 @@
           Accessibility service: Powers WhatsApp auto-send, Gmail compose,
           Instagram DM, Facebook post — full UI injection without the user
           having to touch the screen.
-          The user must turn this on manually under Settings > Accessibility > Aura.
+          The user must turn this on manually under Settings > Accessibility > ISHA.
         -->
+        <service
+            android:name=".IshaAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
         <service
             android:name=".AuraAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -249,8 +260,16 @@
         <!--
           Notification listener: Required for media session control (play/pause/next)
           AND for reading notifications for AI summarization.
-          Enable manually: Settings > Apps > Special access > Notification access > Aura.
+          Enable manually: Settings > Apps > Special access > Notification access > ISHA.
         -->
+        <service
+            android:name=".IshaNotificationListenerService"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <service
             android:name=".AuraNotificationListenerService"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
@@ -261,6 +280,15 @@
         </service>
 
         <!-- Pre-Ringing Call Screening Service (Android 10+) -->
+        <service
+            android:name=".IshaCallScreeningService"
+            android:permission="android.permission.BIND_SCREENING_SERVICE"
+            android:exported="true"
+            tools:ignore="NewApi">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
         <service
             android:name=".AuraCallScreeningService"
             android:permission="android.permission.BIND_SCREENING_SERVICE"

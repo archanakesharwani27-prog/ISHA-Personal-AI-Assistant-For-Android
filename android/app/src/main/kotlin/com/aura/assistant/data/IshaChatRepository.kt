@@ -34,15 +34,15 @@ data class ChatMessage(
 )
 
 /**
- * Local persistent storage repository for ChatGPT-style conversations.
+ * Local persistent storage repository for conversations.
  * Stores sessions and chat message history in internal JSON files.
  */
-class AuraChatRepository(context: Context) {
+class IshaChatRepository(context: Context) {
 
     companion object {
-        private const val TAG = "AuraChatRepo"
+        private const val TAG = "IshaChatRepo"
         private const val SESSIONS_FILE = "chat_sessions.json"
-        private const val CHATS_DIR = "aura_chats"
+        private const val CHATS_DIR = "isha_chats"
     }
 
     private val gson = Gson()
@@ -190,7 +190,7 @@ class AuraChatRepository(context: Context) {
             for (msg in msgs) {
                 val lower = msg.text.lowercase()
                 if (terms.any { lower.contains(it) }) {
-                    val prefix = if (msg.role == MessageRole.USER) "Boss" else "Aura"
+                    val prefix = if (msg.role == MessageRole.USER) "Boss" else "Isha"
                     results.add("[Session: ${session.title}] $prefix: \"${msg.text.take(120)}\"")
                     if (results.size >= maxResults) return results
                 }
@@ -199,3 +199,7 @@ class AuraChatRepository(context: Context) {
         return results
     }
 }
+
+/** Backward compatibility alias for AuraChatRepository */
+typealias AuraChatRepository = IshaChatRepository
+

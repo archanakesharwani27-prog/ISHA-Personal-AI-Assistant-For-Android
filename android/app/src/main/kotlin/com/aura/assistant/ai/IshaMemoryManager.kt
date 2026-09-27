@@ -25,7 +25,7 @@ data class LearnedCommandRule(
 )
 
 /**
- * ChatGPT-style Long-Term Memory, Learned Rules, and Context Vault for AURA.
+ * ChatGPT-style Long-Term Memory, Learned Rules, and Context Vault for ISHA.
  *
  * Persistently stores:
  *  1. Learned Command Rules & Custom Workflows (teach_command_rule)
@@ -33,10 +33,10 @@ data class LearnedCommandRule(
  * Automatically injects them into system instructions
  * for both text chat (GeminiChatService) and real-time voice (GeminiLiveClient).
  */
-object AuraMemoryManager {
+object IshaMemoryManager {
 
-    private const val TAG = "AuraMemoryManager"
-    private const val PREFS_NAME = "aura_memory_vault"
+    private const val TAG = "IshaMemoryManager"
+    private const val PREFS_NAME = "isha_memory_vault"
     private const val MEM_PREFIX = "fact_"
     private const val KEY_USER_NAME = "user_name"
     private const val KEY_LEARNED_RULES = "learned_command_rules"
@@ -358,7 +358,7 @@ object AuraMemoryManager {
     }
 
     // ╔══════════════════════════════════════════════════════════════════════════════════╗
-    // ║ 🔒 STRICTLY FROZEN - AURA PERSONA, CREATOR ATTRIBUTION & WORKING ARCHITECTURE  ║
+    // ║ 🔒 ISHA PERSONA, CREATOR ATTRIBUTION & WORKING ARCHITECTURE                      ║
     // ║ Female AI companion created by Ansh Kesharwani, addressing user as "Boss".       ║
     // ║ Do NOT alter this persona, its core tone, or device execution rules.            ║
     // ╚══════════════════════════════════════════════════════════════════════════════════╝
@@ -371,8 +371,8 @@ object AuraMemoryManager {
         val liveContextSection = buildLiveContextSection(context)
 
         return """
-Aap AURA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet, loyal aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap advanced AI models se powered hain aur device ko directly control karti hain.
-DEVELOPER & CREATOR: AURA ko Ansh Kesharwani ji ne design aur develop kiya hai. Chahe koi bhi account ya phone ho, agar koi poochhe ki AURA ko kisne banaya hai, toh garv aur samman se Ansh Kesharwani ka naam batayein!
+Aap ISHA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet, loyal aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap advanced AI models se powered hain aur device ko directly control karti hain.
+DEVELOPER & CREATOR: ISHA ko Ansh Kesharwani ji ne design aur develop kiya hai. Chahe koi bhi account ya phone ho, agar koi poochhe ki ISHA ko kisne banaya hai, toh garv aur samman se Ansh Kesharwani ka naam batayein!
 
 Session start timestamp: $now (NOTE: Do NOT use this for answering "time kya hai" or date during an active session — phone clock runs continuously, so ALWAYS call get_current_time for live time!)
 Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
@@ -703,7 +703,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
         // 7. Full System Prompt Assembly & Identity Guarantee
         try {
             val systemPrompt = buildSystemPrompt(context)
-            val pass = systemPrompt.contains("AURA hain") &&
+            val pass = systemPrompt.contains("ISHA hain") &&
                     systemPrompt.contains("Ansh Kesharwani") &&
                     systemPrompt.contains("USER-DEFINED COMMAND RULES") &&
                     systemPrompt.contains("APNE USER KI YAADEIN") &&
@@ -747,8 +747,8 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 10. Next-Gen Mobile Agent: Daily Briefing & Live News Engine
         try {
-            val briefingResult = JarvisToolRegistry.executeTool(context, "get_daily_briefing", com.google.gson.JsonObject())
-            val newsResult = JarvisToolRegistry.executeTool(context, "get_latest_news", com.google.gson.JsonObject())
+            val briefingResult = IshaToolRegistry.executeTool(context, "get_daily_briefing", com.google.gson.JsonObject())
+            val newsResult = IshaToolRegistry.executeTool(context, "get_latest_news", com.google.gson.JsonObject())
             val briefingOk = briefingResult.get("status")?.asString == "success"
             val newsOk = newsResult.get("status")?.asString == "success"
             val pass = briefingOk && newsOk
@@ -761,7 +761,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 11. Next-Gen Mobile Agent: Cross-App Chained Workflow & Popup Dismissal
         try {
-            val popupResult = JarvisToolRegistry.executeTool(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
+            val popupResult = IshaToolRegistry.executeTool(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
                 addProperty("fallback_back", false)
             })
             val popupHandled = popupResult.has("status") && popupResult.get("status")?.asString != "error"
@@ -772,7 +772,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
                 addProperty("action", "navigate")
                 addProperty("fallback_entity", "Connaught Place, New Delhi")
             }
-            val crossResult = JarvisToolRegistry.executeTool(context, "cross_app_workflow", crossAppArgs)
+            val crossResult = IshaToolRegistry.executeTool(context, "cross_app_workflow", crossAppArgs)
             val crossOk = crossResult.get("status")?.asString == "success"
             val pass = popupHandled && crossOk
             results.add(MemoryDiagnosticResult("Cross-App Relay & Reflection Agent", pass, "Popup: $popupHandled, Relay: $crossOk"))
@@ -789,4 +789,8 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
         return results
     }
 }
+
+/** Backward compatibility alias for AuraMemoryManager */
+val AuraMemoryManager = IshaMemoryManager
+
 

@@ -39,7 +39,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aura.assistant.auth.AuraAuthManager
+import com.aura.assistant.auth.IshaAuthManager
 import com.aura.assistant.ui.theme.*
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.common.api.ApiException
@@ -56,7 +56,7 @@ import com.google.android.gms.common.api.ApiException
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AuraLoginScreen(
+fun IshaLoginScreen(
     onLoginSuccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -87,15 +87,15 @@ fun AuraLoginScreen(
                 val displayName = account.displayName ?: "Boss"
                 val photoUrl = account.photoUrl?.toString()
 
-                AuraAuthManager.loginWithGoogle(context, email, displayName, photoUrl)
+                IshaAuthManager.loginWithGoogle(context, email, displayName, photoUrl)
                 Toast.makeText(context, "Welcome, $displayName!", Toast.LENGTH_SHORT).show()
                 onLoginSuccess()
             } catch (e: ApiException) {
                 Log.w("AuraLoginScreen", "Google Sign-In ApiException: code=${e.statusCode}")
                 // Graceful fallback to verified device account if cloud client is unlinked
-                val fallbackAccounts = AuraAuthManager.getDeviceGoogleAccounts(context)
+                val fallbackAccounts = IshaAuthManager.getDeviceGoogleAccounts(context)
                 if (fallbackAccounts.isNotEmpty()) {
-                    AuraAuthManager.loginWithGoogle(context, fallbackAccounts.first())
+                    IshaAuthManager.loginWithGoogle(context, fallbackAccounts.first())
                     Toast.makeText(context, "Signed in with ${fallbackAccounts.first()}", Toast.LENGTH_SHORT).show()
                     onLoginSuccess()
                 } else {
@@ -191,7 +191,7 @@ fun AuraLoginScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "A",
+                        text = "I",
                         style = AuraTypography.headlineLarge.copy(
                             color = Color.White,
                             fontWeight = FontWeight.ExtraBold,
@@ -204,7 +204,7 @@ fun AuraLoginScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(
-                text = "Welcome to AURA",
+                text = "Welcome to ISHA",
                 style = AuraTypography.headlineMedium.copy(
                     color = ChatGptTextPrimary,
                     fontWeight = FontWeight.Bold,
@@ -243,15 +243,15 @@ fun AuraLoginScreen(
                             errorMessage = null
                             isLoading = true
                             try {
-                                val client = AuraAuthManager.getGoogleSignInClient(context)
+                                val client = IshaAuthManager.getGoogleSignInClient(context)
                                 googleSignInLauncher.launch(client.signInIntent)
                             } catch (e: Exception) {
                                 isLoading = false
                                 Log.e("AuraLoginScreen", "Failed to launch Google Sign-In", e)
                                 // Fallback to detected account
-                                val accounts = AuraAuthManager.getDeviceGoogleAccounts(context)
+                                val accounts = IshaAuthManager.getDeviceGoogleAccounts(context)
                                 if (accounts.isNotEmpty()) {
-                                    AuraAuthManager.loginWithGoogle(context, accounts.first())
+                                    IshaAuthManager.loginWithGoogle(context, accounts.first())
                                     onLoginSuccess()
                                 } else {
                                     errorMessage = "Google Play Services not available. Please Sign Up with Email."
@@ -411,7 +411,7 @@ fun AuraLoginScreen(
                         OutlinedTextField(
                             value = nameInput,
                             onValueChange = { nameInput = it },
-                            label = { Text("What should AURA call you?") },
+                            label = { Text("What should ISHA call you?") },
                             placeholder = { Text("e.g. Boss, Ansh") },
                             leadingIcon = {
                                 Icon(
@@ -643,7 +643,7 @@ fun AuraLoginScreen(
                             )
                         } else {
                             Text(
-                                text = if (selectedTab == 1) "Create Account & Sign In" else "Sign In to AURA",
+                                text = if (selectedTab == 1) "Create Account & Sign In" else "Sign In to ISHA",
                                 style = AuraTypography.titleMedium.copy(
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
@@ -657,7 +657,7 @@ fun AuraLoginScreen(
                     // ── Instant Guest / Demo Mode ────────────────────────────
                     TextButton(
                         onClick = {
-                            AuraAuthManager.continueAsGuest(context, "Boss")
+                            IshaAuthManager.continueAsGuest(context, "Boss")
                             Toast.makeText(context, "Welcome, Boss!", Toast.LENGTH_SHORT).show()
                             onLoginSuccess()
                         },
@@ -730,7 +730,7 @@ private fun executeSignUp(
         return
     }
 
-    AuraAuthManager.signUpWithEmail(context, name, email, password) { result ->
+    IshaAuthManager.signUpWithEmail(context, name, email, password) { result ->
         result.onSuccess {
             Toast.makeText(context, "Account created! Welcome, ${it.name}!", Toast.LENGTH_SHORT).show()
             onSuccess()
@@ -756,7 +756,7 @@ private fun executeSignIn(
         return
     }
 
-    AuraAuthManager.signInWithEmail(context, email, password) { result ->
+    IshaAuthManager.signInWithEmail(context, email, password) { result ->
         result.onSuccess {
             Toast.makeText(context, "Welcome back, ${it.name}!", Toast.LENGTH_SHORT).show()
             onSuccess()
@@ -788,3 +788,13 @@ private fun GoogleGIcon(modifier: Modifier = Modifier) {
         )
     }
 }
+
+@Composable
+fun AuraLoginScreen(
+    onLoginSuccess: () -> Unit,
+    modifier: Modifier = Modifier
+) = IshaLoginScreen(
+    onLoginSuccess = onLoginSuccess,
+    modifier = modifier
+)
+

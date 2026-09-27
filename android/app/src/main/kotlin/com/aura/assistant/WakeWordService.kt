@@ -25,7 +25,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import com.aura.assistant.audio.IshaDiagnostics
 import com.aura.assistant.audio.AuraDiagnostics
+import com.aura.assistant.IshaDynamicIsland
 import com.aura.assistant.audio.MicOwnershipManager
 import com.aura.assistant.audio.MicOwner
 
@@ -302,15 +304,18 @@ class WakeWordService : Service(), SensorEventListener {
 
         // Safe status bar icon: use dedicated vector icon or standard Android system icon
         val smallIconRes = try {
-            val resId = resources.getIdentifier("ic_aura_notification", "drawable", packageName)
-            if (resId != 0) resId else android.R.drawable.ic_popup_reminder
+            val resId = resources.getIdentifier("ic_isha_notification", "drawable", packageName)
+            if (resId != 0) resId else {
+                val auraId = resources.getIdentifier("ic_aura_notification", "drawable", packageName)
+                if (auraId != 0) auraId else android.R.drawable.ic_popup_reminder
+            }
         } catch (_: Exception) {
             android.R.drawable.ic_popup_reminder
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AURA")
-            .setContentText("AURA Assistant active — say \"Hey Aura\" or shake")
+            .setContentTitle("ISHA")
+            .setContentText("ISHA Assistant active — say \"Hey Isha\" or shake")
             .setSmallIcon(smallIconRes)
             .apply { if (openIntent != null) setContentIntent(openIntent) }
             .setOngoing(true)
@@ -547,10 +552,10 @@ class WakeWordService : Service(), SensorEventListener {
         if (!wakeEnabled || isPaused || isTtsSpeaking) return
         if (!MicOwnershipManager.requestOwnership(MicOwner.WAKE_WORD)) {
             Log.w(TAG, "Mic currently owned by ${MicOwnershipManager.currentOwner.value} — deferring wake engine")
-            AuraDiagnostics.updateWake { it.copy(micOwned = false) }
+            IshaDiagnostics.updateWake { it.copy(micOwned = false) }
             return
         }
-        AuraDiagnostics.updateWake { it.copy(micOwned = true, serviceRunning = true) }
+        IshaDiagnostics.updateWake { it.copy(micOwned = true, serviceRunning = true) }
         if (wakeWordEngine == null) {
             initWakeWordEngine()
             return
@@ -570,7 +575,7 @@ class WakeWordService : Service(), SensorEventListener {
     private fun pauseWakeEngine() {
         try {
             MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
-            AuraDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
+            IshaDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
             detectionJob?.cancel()
             detectionJob = null
             wakeWordEngine?.stop()
@@ -585,7 +590,7 @@ class WakeWordService : Service(), SensorEventListener {
     private fun stopListening() {
         isRunning = false
         MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
-        AuraDiagnostics.updateWake { it.copy(serviceRunning = false, micOwned = false, inferenceRunning = false) }
+        IshaDiagnostics.updateWake { it.copy(serviceRunning = false, micOwned = false, inferenceRunning = false) }
         pauseWakeEngine()
         stopShakeSensor()
         detectionJob?.cancel()
@@ -606,7 +611,7 @@ class WakeWordService : Service(), SensorEventListener {
 
         // Immediately release mic ownership so Gemini Live can acquire it without contention
         MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
-        AuraDiagnostics.updateWake {
+        IshaDiagnostics.updateWake {
             it.copy(
                 micOwned = false,
                 detectionCount = it.detectionCount + 1,
@@ -630,7 +635,7 @@ class WakeWordService : Service(), SensorEventListener {
 
         // 1. Show the sleek Gemini Floating Overlay Card directly over the active app!
         // (YouTube, WhatsApp, Browser remain completely visible underneath)
-        AuraDynamicIsland.show(applicationContext, reason)
+        IshaDynamicIsland.show(applicationContext, reason)
 
         // 2. Broadcast to MainActivity in case it is already active
         sendBroadcast(Intent(ACTION_WAKE).apply {
@@ -666,7 +671,7 @@ class WakeWordService : Service(), SensorEventListener {
 
             // 2. Also trigger Dynamic Island overlay if overlay permission is active
             if (Settings.canDrawOverlays(ctx)) {
-                AuraDynamicIsland.show(ctx, "morning_reminder")
+                IshaDynamicIsland.show(ctx, "morning_reminder")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error checking morning reminder", e)

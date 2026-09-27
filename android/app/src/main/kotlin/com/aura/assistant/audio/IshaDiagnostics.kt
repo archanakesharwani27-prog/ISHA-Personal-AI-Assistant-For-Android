@@ -37,9 +37,9 @@ data class LiveSessionDiagnostics(
 )
 
 /**
- * Observable diagnostics singleton for AURA 2.0 system monitoring.
+ * Observable diagnostics singleton for ISHA system monitoring.
  */
-object AuraDiagnostics {
+object IshaDiagnostics {
     private val _wakeWord = MutableStateFlow(WakeWordDiagnostics())
     val wakeWord: StateFlow<WakeWordDiagnostics> = _wakeWord.asStateFlow()
 
@@ -54,3 +54,7 @@ object AuraDiagnostics {
         _liveSession.value = update(_liveSession.value)
     }
 }
+
+/** Backward compatibility alias for AuraDiagnostics */
+val AuraDiagnostics = IshaDiagnostics
+

@@ -33,7 +33,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AuraDiagnosticsScreen(
+fun IshaDiagnosticsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -49,7 +49,7 @@ fun AuraDiagnosticsScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "AURA 2.0 Diagnostics",
+                            text = "ISHA 2.0 Diagnostics",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = ChatGptTextPrimary
@@ -173,8 +173,8 @@ fun AuraDiagnosticsScreen(
                 }
             }
 
-            // ── 3. Gemini Live Diagnostics ────────────────────────────────────
-            DiagnosticsCard(title = "🌐 GEMINI LIVE SESSION") {
+            // ── 3. ISHA Live Diagnostics ────────────────────────────────────
+            DiagnosticsCard(title = "🌐 ISHA LIVE SESSION") {
                 MetricRow(
                     label = "WebSocket State",
                     value = if (liveDiag.wsConnected) "CONNECTED" else "DISCONNECTED",
@@ -206,7 +206,7 @@ fun AuraDiagnosticsScreen(
                     value = "${liveDiag.serverEventsReceived}"
                 )
                 MetricRow(
-                    label = "ChatGPT Barge-In Interruptions",
+                    label = "ISHA Barge-In Interruptions",
                     value = "${liveDiag.interruptionCount}",
                     color = if (liveDiag.interruptionCount > 0) ChatGptAccentCyan else ChatGptTextPrimary
                 )
@@ -300,7 +300,7 @@ private fun OwnerBadge(owner: MicOwner) {
     val (bgColor, textColor, label) = when (owner) {
         MicOwner.NONE -> Triple(ChatGptCard, ChatGptTextMuted, "NONE (FREE)")
         MicOwner.WAKE_WORD -> Triple(ChatGptAccentCyan.copy(alpha = 0.2f), ChatGptAccentCyan, "WAKE_WORD")
-        MicOwner.GEMINI_LIVE -> Triple(ChatGptAccentGreen.copy(alpha = 0.2f), ChatGptAccentGreen, "GEMINI_LIVE")
+        MicOwner.GEMINI_LIVE -> Triple(ChatGptAccentGreen.copy(alpha = 0.2f), ChatGptAccentGreen, "ISHA_LIVE")
     }
 
     Box(
@@ -319,3 +319,13 @@ private fun OwnerBadge(owner: MicOwner) {
         )
     }
 }
+
+@Composable
+fun AuraDiagnosticsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) = IshaDiagnosticsScreen(
+    onBack = onBack,
+    modifier = modifier
+)
+

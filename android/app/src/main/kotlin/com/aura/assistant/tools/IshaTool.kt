@@ -55,10 +55,10 @@ data class VerificationResult(
 )
 
 /**
- * Universal contract for all AURA 2.0 autonomous tools.
+ * Universal contract for all ISHA autonomous tools.
  * Every tool implements discovery, authorization, execution, and verification.
  */
-interface AuraTool {
+interface IshaTool {
     val id: String
     val name: String
     val description: String
@@ -103,3 +103,7 @@ interface AuraTool {
         observedState = "Default unverified state"
     )
 }
+
+/** Backward compatibility alias for AuraTool */
+typealias AuraTool = IshaTool
+

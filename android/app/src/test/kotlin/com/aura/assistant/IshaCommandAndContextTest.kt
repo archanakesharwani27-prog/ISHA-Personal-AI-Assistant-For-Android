@@ -1,17 +1,17 @@
 package com.aura.assistant
 
-import com.aura.assistant.ai.AuraMemoryManager
-import com.aura.assistant.ai.JarvisToolRegistry
+import com.aura.assistant.ai.IshaMemoryManager
+import com.aura.assistant.ai.IshaToolRegistry
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.MessageRole
 import org.junit.Assert.*
 import org.junit.Test
 
-class AuraCommandAndContextTest {
+class IshaCommandAndContextTest {
 
     @Test
     fun testAllPdfCommandsRegisteredInGeminiTools() {
-        val toolsArray = JarvisToolRegistry.getGeminiToolDeclarations()
+        val toolsArray = IshaToolRegistry.getGeminiToolDeclarations()
         assertNotNull("Tool declarations array must not be null", toolsArray)
         assertTrue("Tool declarations must contain tools", toolsArray.size() > 0)
 
@@ -90,7 +90,7 @@ class AuraCommandAndContextTest {
             }
         }
 
-        assertTrue("All PDF commands must be registered in JarvisToolRegistry. Missing: $missingTools", missingTools.isEmpty())
+        assertTrue("All PDF commands must be registered in IshaToolRegistry. Missing: $missingTools", missingTools.isEmpty())
         println("✅ All ${expectedPdfCommands.size} PDF command categories are fully registered in Gemini Tool Declarations!")
     }
 
@@ -220,7 +220,7 @@ class AuraCommandAndContextTest {
 
         val dummyContext = android.content.ContextWrapper(null)
 
-        val result = JarvisToolRegistry.executeTool(dummyContext, "calculate", args)
+        val result = IshaToolRegistry.executeTool(dummyContext, "calculate", args)
 
         assertNotNull("Result must not be null", result)
         assertEquals("success", result.get("status")?.asString)

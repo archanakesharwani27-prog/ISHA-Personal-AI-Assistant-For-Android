@@ -23,8 +23,8 @@ import android.provider.Telephony
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.FileProvider
-import com.aura.assistant.AuraAccessibilityService
-import com.aura.assistant.JarvisFileManager
+import com.aura.assistant.IshaAccessibilityService
+import com.aura.assistant.IshaFileManager
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -44,12 +44,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Registry of all 20+ Jarvis OS automation tools in official Google Gemini Live schema.
+ * Registry of all 40+ ISHA OS automation tools in official Google Gemini Live schema.
  * Dispatches LLM tool calls directly to native Android system APIs.
  */
-object JarvisToolRegistry {
+object IshaToolRegistry {
 
-    private const val TAG = "JarvisToolRegistry"
+    private const val TAG = "IshaToolRegistry"
     private val gson = Gson()
 
     /**
@@ -353,7 +353,7 @@ object JarvisToolRegistry {
         // 18b. Permanent Memory Vault: Teach Custom Command Rule / Workflow
         toolsArray.add(createFunction(
             name = "teach_command_rule",
-            desc = "Save, teach, or update a custom user rule, command workflow, action mapping, or correction into AURA's permanent memory. Whenever the user guides AURA on what tool(s) or steps to execute, or says 'memory mein save kar lo' / 'yaad rakhna', AURA MUST execute this tool to permanently persist the rule.",
+            desc = "Save, teach, or update a custom user rule, command workflow, action mapping, or correction into ISHA's permanent memory. Whenever the user guides ISHA on what tool(s) or steps to execute, or says 'memory mein save kar lo' / 'yaad rakhna', ISHA MUST execute this tool to permanently persist the rule.",
             params = mapOf(
                 "trigger_pattern" to "string",
                 "action_instruction" to "string",
@@ -579,7 +579,7 @@ object JarvisToolRegistry {
         // 36. Web Search / Search Internet
         toolsArray.add(createFunction(
             name = "search_internet",
-            desc = "Search the internet in real-time to answer questions, look up facts, scores, people, definitions, live weather, or current information. ALWAYS call for real-time web knowledge. Returns informative snippets directly so Aura can synthesize the answer without opening a browser.",
+            desc = "Search the internet in real-time to answer questions, look up facts, scores, people, definitions, live weather, or current information. ALWAYS call for real-time web knowledge. Returns informative snippets directly so ISHA can synthesize the answer without opening a browser.",
             params = mapOf("query" to "string"),
             required = listOf("query"),
             paramDescriptions = mapOf(
@@ -742,7 +742,7 @@ object JarvisToolRegistry {
         // 46. Create Quick Note
         toolsArray.add(createFunction(
             name = "create_quick_note",
-            desc = "Save a quick personal note, reminder, or thought to the AURA permanent memory vault (e.g. 'note likho...', 'yaad rakhna ki ye note save kar lo').",
+            desc = "Save a quick personal note, reminder, or thought to the ISHA permanent memory vault (e.g. 'note likho...', 'yaad rakhna ki ye note save kar lo').",
             params = mapOf(
                 "note_text" to "string",
                 "title" to "string"
@@ -1029,7 +1029,7 @@ object JarvisToolRegistry {
         // 74. Universal Autonomous Millisecond UI & Knowledge Engine
         toolsArray.add(createFunction(
             name = "autonomous_ui_action",
-            desc = "Universal autonomous millisecond UI execution engine for ANY task without a hardcoded tool. If user asks to perform an action in an app that has no specific tool, AURA inspects screen hierarchy (<20ms), applies semantic matching or instant internet knowledge, and clicks/types directly on the UI without human intervention.",
+            desc = "Universal autonomous millisecond UI execution engine for ANY task without a hardcoded tool. If user asks to perform an action in an app that has no specific tool, ISHA inspects screen hierarchy (<20ms), applies semantic matching or instant internet knowledge, and clicks/types directly on the UI without human intervention.",
             params = mapOf(
                 "app_name" to "string",
                 "goal_description" to "string",
@@ -1480,7 +1480,7 @@ object JarvisToolRegistry {
 
                     val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
                     val resolvedPhone = resolveContactNumber(context, if (cleanContact.isNotBlank()) cleanContact else contact)
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val waPkg = try {
                         context.packageManager.getPackageInfo("com.whatsapp", 0)
                         "com.whatsapp"
@@ -1535,7 +1535,7 @@ object JarvisToolRegistry {
                         ?: args.get("contact")?.asString
                         ?: ""
                     val app = args.get("app_name")?.asString?.lowercase() ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (text.isBlank()) {
                         result.addProperty("status", "error")
@@ -1606,7 +1606,7 @@ object JarvisToolRegistry {
                         "com.whatsapp.w4b"
                     }
                     val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (!resolvedPhone.isNullOrBlank()) {
                         val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
@@ -1655,7 +1655,7 @@ object JarvisToolRegistry {
                     val mediaType = (args.get("media_type")?.asString ?: "screenshot").lowercase()
                     val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
 
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     var imageUri: Uri? = null
 
                     if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
@@ -1722,7 +1722,7 @@ object JarvisToolRegistry {
                 "clear_whatsapp_chat" -> {
                     val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
                     val target = args.get("target")?.asString ?: "chat"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (contact.isNotBlank()) {
                         executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "whatsapp") })
                         a11y?.armClearWhatsappChat(contact)
@@ -1735,7 +1735,7 @@ object JarvisToolRegistry {
                 }
 
                 "clear_chrome_history" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "chrome") })
                     if (a11y != null) {
                         a11y.armClearChromeHistory()
@@ -1743,12 +1743,12 @@ object JarvisToolRegistry {
                         result.addProperty("message", "Chrome browsing history clear karne ka action start kar diya hai Boss! 🌐🧹")
                     } else {
                         result.addProperty("status", "warning")
-                        result.addProperty("message", "Chrome open ho gaya hai, lekin auto-clear ke liye Accessibility settings me AURA ko turn ON karein.")
+                        result.addProperty("message", "Chrome open ho gaya hai, lekin auto-clear ke liye Accessibility settings me ISHA ko turn ON karein.")
                     }
                 }
 
                 "clear_youtube_history" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     executeTool(context, "open_app", JsonObject().apply { addProperty("app_name", "youtube") })
                     if (a11y != null) {
                         a11y.armClearYouTubeHistory()
@@ -1756,12 +1756,12 @@ object JarvisToolRegistry {
                         result.addProperty("message", "YouTube search/watch history clear karne ka action start kar diya hai Boss! ▶️🧹")
                     } else {
                         result.addProperty("status", "warning")
-                        result.addProperty("message", "YouTube open ho gaya hai, lekin auto-clear ke liye Accessibility settings me AURA ko turn ON karein.")
+                        result.addProperty("message", "YouTube open ho gaya hai, lekin auto-clear ke liye Accessibility settings me ISHA ko turn ON karein.")
                     }
                 }
 
                 "take_screenshot" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         var savedUri: Uri? = null
                         val latch = CountDownLatch(1)
@@ -1784,7 +1784,7 @@ object JarvisToolRegistry {
                         }
                     } else {
                         result.addProperty("status", "error")
-                        result.addProperty("message", "Aura Accessibility Service is not active. Please enable it in Android Settings to capture screenshots.")
+                        result.addProperty("message", "ISHA Accessibility Service is not active. Please enable it in Android Settings to capture screenshots.")
                     }
                 }
 
@@ -1793,7 +1793,7 @@ object JarvisToolRegistry {
                     val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
                     val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
 
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     var imageUri = getLatestScreenshotOrImageUri(context)
                     if (imageUri == null && a11y != null) {
                         val latch = CountDownLatch(1)
@@ -1847,7 +1847,7 @@ object JarvisToolRegistry {
                         result.addProperty("status", "success")
                         result.addProperty("message", "Shared media to $targetApp successfully! 📤")
                     } catch (_: Exception) {
-                        val chooser = Intent.createChooser(intent, "Share media via AURA").apply {
+                        val chooser = Intent.createChooser(intent, "Share media via ISHA").apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         context.startActivity(chooser)
@@ -1872,7 +1872,7 @@ object JarvisToolRegistry {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             context.startActivity(intent)
-                            AuraAccessibilityService.instance?.armWhatsappAutoSendPreFilled()
+                            IshaAccessibilityService.instance?.armWhatsappAutoSendPreFilled()
                             sentCount++
                             try { Thread.sleep(1500) } catch (_: Exception) {}
                         }
@@ -1886,7 +1886,7 @@ object JarvisToolRegistry {
                         ?: args.get("contact")?.asString
                         ?: ""
                     val resolvedPhone = resolveContactNumber(context, contact)
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (!resolvedPhone.isNullOrBlank()) {
                         val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
@@ -1916,10 +1916,10 @@ object JarvisToolRegistry {
                     // Also search and vault any recent WhatsApp Image files from device storage
                     var localDeleted = 0
                     try {
-                        val files = JarvisFileManager.searchFiles(context, "WhatsApp", 10)
+                        val files = IshaFileManager.searchFiles(context, "WhatsApp", 10)
                         val imgFiles = files.filter { it.path.contains("WhatsApp Images", ignoreCase = true) || it.name.startsWith("IMG-", ignoreCase = true) }
                         imgFiles.take(2).forEach { f ->
-                            val vaulted = JarvisFileManager.deleteToVault(context, f.path)
+                            val vaulted = IshaFileManager.deleteToVault(context, f.path)
                             if (vaulted != null) localDeleted++
                         }
                     } catch (_: Exception) {}
@@ -1932,7 +1932,7 @@ object JarvisToolRegistry {
                 "whatsapp_post_status" -> {
                     val statusText = args.get("status_text")?.asString ?: args.get("text")?.asString ?: ""
                     val mediaType = args.get("media_type")?.asString?.lowercase() ?: "text"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val waPkg = try {
                         context.packageManager.getPackageInfo("com.whatsapp", 0)
                         "com.whatsapp"
@@ -1953,7 +1953,7 @@ object JarvisToolRegistry {
                 }
 
                 "whatsapp_trigger_backup" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val waPkg = try {
                         context.packageManager.getPackageInfo("com.whatsapp", 0)
                         "com.whatsapp"
@@ -1974,7 +1974,7 @@ object JarvisToolRegistry {
 
                 "whatsapp_open_settings" -> {
                     val section = args.get("section")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val waPkg = try {
                         context.packageManager.getPackageInfo("com.whatsapp", 0)
                         "com.whatsapp"
@@ -1994,7 +1994,7 @@ object JarvisToolRegistry {
                 }
 
                 "instagram_like_post" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val success = a11y?.armInstagramLike() ?: false
                     result.addProperty("status", if (success) "success" else "error")
                     result.addProperty("message", "Instagram post / reel like kar diya hai Boss! ❤️")
@@ -2006,7 +2006,7 @@ object JarvisToolRegistry {
                         result.addProperty("status", "error")
                         result.addProperty("message", "Comment text missing hai Boss.")
                     } else {
-                        val a11y = AuraAccessibilityService.instance
+                        val a11y = IshaAccessibilityService.instance
                         a11y?.armInstagramComment(comment)
                         result.addProperty("status", "success")
                         result.addProperty("message", "Instagram post par comment: \"$comment\" post kar diya hai Boss! 💬")
@@ -2016,7 +2016,7 @@ object JarvisToolRegistry {
                 "instagram_send_dm" -> {
                     val username = args.get("username")?.asString ?: args.get("contact")?.asString ?: ""
                     val message = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (username.isBlank() || message.isBlank()) {
                         result.addProperty("status", "error")
@@ -2046,7 +2046,7 @@ object JarvisToolRegistry {
                 "instagram_post_story" -> {
                     val caption = args.get("caption")?.asString ?: args.get("text")?.asString
                     val mediaType = args.get("media_type")?.asString?.lowercase() ?: "text"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (mediaType.contains("screenshot") || mediaType.contains("photo")) {
                         val uri = getLatestScreenshotOrImageUri(context)
@@ -2086,7 +2086,7 @@ object JarvisToolRegistry {
 
                 "instagram_navigate" -> {
                     val destination = args.get("destination")?.asString?.lowercase()?.trim() ?: "reels"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val targetUri = when {
                         destination.contains("reel") -> Uri.parse("instagram://reels")
                         destination.contains("dm") || destination.contains("msg") -> Uri.parse("instagram://direct-inbox")
@@ -2126,7 +2126,7 @@ object JarvisToolRegistry {
                     val goal = args.get("goal_description")?.asString ?: "perform task"
                     val keywordsStr = args.get("target_keywords")?.asString ?: ""
                     val inputText = args.get("input_text")?.asString
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (appName.isNotBlank()) {
                         val intent = resolveAppIntent(context, appName)
@@ -2171,7 +2171,7 @@ object JarvisToolRegistry {
                     val action = args.get("action")?.asString?.lowercase() ?: "open_chat"
                     val recipient = args.get("recipient")?.asString ?: args.get("contact")?.asString ?: ""
                     val message = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     val cleanUser = recipient.replace("@", "").trim()
                     var launched = false
@@ -2208,7 +2208,7 @@ object JarvisToolRegistry {
                     val action = args.get("action")?.asString?.lowercase() ?: "open"
                     val query = args.get("query")?.asString ?: args.get("search")?.asString ?: ""
                     val comment = args.get("comment")?.asString ?: args.get("text")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val ytPkg = resolveAppPackage(context, "youtube") ?: "com.google.android.youtube"
 
                     when (action) {
@@ -2321,7 +2321,7 @@ object JarvisToolRegistry {
                     val app = args.get("app")?.asString?.lowercase() ?: "zomato"
                     val action = args.get("action")?.asString?.lowercase() ?: "search"
                     val query = args.get("query")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     val isZomato = app.contains("zomato")
                     val installedPkg = if (isZomato) resolveAppPackage(context, "zomato") else resolveAppPackage(context, "swiggy")
@@ -2423,7 +2423,7 @@ object JarvisToolRegistry {
                     val app = args.get("app")?.asString?.lowercase() ?: "uber"
                     val action = args.get("action")?.asString?.lowercase() ?: "search_ride"
                     val destination = args.get("destination")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     val targetApp = when {
                         app.contains("ola") -> "ola"
@@ -2507,7 +2507,7 @@ object JarvisToolRegistry {
                     val app = args.get("app")?.asString?.lowercase() ?: "amazon"
                     val action = args.get("action")?.asString?.lowercase() ?: "search"
                     val query = args.get("query")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     val isAmazon = app.contains("amazon")
                     val installedPkg = if (isAmazon) resolveAppPackage(context, "amazon") else resolveAppPackage(context, "flipkart")
@@ -2672,7 +2672,7 @@ object JarvisToolRegistry {
                     val action = args.get("action")?.asString?.lowercase() ?: "scan_qr"
                     val recipient = args.get("recipient")?.asString ?: ""
                     val amount = args.get("amount")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     val targetAlias = when {
                         app.contains("phonepe") -> "phonepe"
@@ -2744,7 +2744,7 @@ object JarvisToolRegistry {
                 "twitter_control" -> {
                     val action = args.get("action")?.asString?.lowercase() ?: "post_tweet"
                     val text = args.get("text")?.asString ?: args.get("query")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val installedPkg = resolveAppPackage(context, "twitter") ?: resolveAppPackage(context, "x")
 
                     when (action) {
@@ -2808,7 +2808,7 @@ object JarvisToolRegistry {
 
                 "snapchat_control" -> {
                     val action = args.get("action")?.asString?.lowercase() ?: "camera"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val snapPkg = resolveAppPackage(context, "snapchat") ?: "com.snapchat.android"
 
                     val launchIntent = context.packageManager.getLaunchIntentForPackage(snapPkg)?.apply {
@@ -2825,7 +2825,7 @@ object JarvisToolRegistry {
                 "browser_control" -> {
                     val action = args.get("action")?.asString?.lowercase() ?: "search"
                     val queryOrUrl = args.get("query_or_url")?.asString ?: args.get("query")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     if (action == "open_url" && queryOrUrl.isNotBlank()) {
                         val fixedUrl = if (!queryOrUrl.startsWith("http://") && !queryOrUrl.startsWith("https://")) {
@@ -2860,7 +2860,7 @@ object JarvisToolRegistry {
                 "spotify_control" -> {
                     val action = args.get("action")?.asString?.lowercase() ?: "search"
                     val query = args.get("query")?.asString ?: ""
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val installedPkg = resolveAppPackage(context, "spotify")
 
                     if (action == "search" && query.isNotBlank()) {
@@ -2932,7 +2932,7 @@ object JarvisToolRegistry {
                 }
 
                 "empty_recycle_bin" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     // Launch Samsung Gallery Recycle Bin directly so Accessibility can see the Trash screen!
                     var launched = false
                     try {
@@ -3079,7 +3079,7 @@ object JarvisToolRegistry {
                 "create_alarm" -> {
                     val hour = args.get("hour")?.asInt ?: 7
                     val min = args.get("minute")?.asInt ?: 0
-                    val label = args.get("label")?.asString ?: "AURA Alarm"
+                    val label = args.get("label")?.asString ?: "ISHA Alarm"
                     val minStr = min.toString().padStart(2, '0')
                     try {
                         val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
@@ -3118,7 +3118,7 @@ object JarvisToolRegistry {
                     val targetText = args.get("target_text")?.asString ?: args.get("target")?.asString ?: ""
                     val x = args.get("x")?.asFloat
                     val y = args.get("y")?.asFloat
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         if (x != null && y != null) {
                             val tapped = a11y.performClickCoordinate(x, y)
@@ -3152,7 +3152,7 @@ object JarvisToolRegistry {
 
                 "screen_scroll" -> {
                     val direction = args.get("direction")?.asString ?: "down"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val scrolled = a11y.scrollWindow(direction.equals("down", ignoreCase = true))
                         result.addProperty("status", if (scrolled) "success" else "failed")
@@ -3164,7 +3164,7 @@ object JarvisToolRegistry {
 
                 "search_files" -> {
                     val query = args.get("query")?.asString ?: ""
-                    val files = JarvisFileManager.searchFiles(context, query, 20)
+                    val files = IshaFileManager.searchFiles(context, query, 20)
                     val array = JsonArray()
                     for (f in files.take(10)) {
                         val item = JsonObject()
@@ -3180,73 +3180,21 @@ object JarvisToolRegistry {
 
                 "delete_file" -> {
                     val path = args.get("file_path")?.asString ?: ""
-                    val vaultPath = JarvisFileManager.deleteToVault(context, path)
+                    val vaultPath = IshaFileManager.deleteToVault(context, path)
                     result.addProperty("status", if (vaultPath != null) "success" else "failed")
                     result.addProperty("message", if (vaultPath != null) "File backed up to vault and deleted: $vaultPath" else "Could not delete file")
                 }
 
                 "accept_call" -> {
-                    // Accept via Accessibility Service (taps the green answer button)
-                    val a11y = AuraAccessibilityService.instance
-                    if (a11y != null) {
-                        // Try tapping the answer button by content description or label
-                        val accepted = a11y.performClickByText("Answer") ||
-                                       a11y.performClickByText("Accept") ||
-                                       a11y.performClickByText("Call answer")
-                        if (accepted) {
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Call accepted")
-                        } else {
-                            // Fallback: simulate headset hook button press to accept call
-                            try {
-                                val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                                val acceptIntent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                                    addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-                                    putExtra(
-                                        Intent.EXTRA_KEY_EVENT,
-                                        android.view.KeyEvent(
-                                            android.view.KeyEvent.ACTION_DOWN,
-                                            android.view.KeyEvent.KEYCODE_HEADSETHOOK
-                                        )
-                                    )
-                                }
-                                context.sendBroadcast(acceptIntent)
-                            } catch (_: Exception) {}
-                            result.addProperty("status", "attempted")
-                            result.addProperty("message", "Attempted to accept call — enable Accessibility for best results")
-                        }
-                    } else {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "Accessibility Service not enabled — go to Settings > Accessibility > AURA")
-                    }
+                    val answered = com.aura.assistant.IshaCallAnnouncerManager.answerCall(context)
+                    result.addProperty("status", if (answered) "success" else "attempted")
+                    result.addProperty("message", if (answered) "Call accepted successfully" else "Attempted to accept call via system telecom and gestures")
                 }
 
                 "decline_call" -> {
-                    val a11y = AuraAccessibilityService.instance
-                    if (a11y != null) {
-                        val declined = a11y.performClickByText("Decline") ||
-                                       a11y.performClickByText("Reject") ||
-                                       a11y.performClickByText("Ignore") ||
-                                       a11y.performClickByText("End call")
-                        result.addProperty("status", if (declined) "success" else "attempted")
-                        result.addProperty("message", if (declined) "Call declined" else "Tried to decline — enable Accessibility for best results")
-                    } else {
-                        // Android 9+ (API 28) allows ending via TelecomManager with ANSWER_PHONE_CALLS permission
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            try {
-                                val telecom = context.getSystemService(android.telecom.TelecomManager::class.java)
-                                telecom?.endCall()
-                                result.addProperty("status", "success")
-                                result.addProperty("message", "Call ended")
-                            } catch (e: SecurityException) {
-                                result.addProperty("status", "error")
-                                result.addProperty("message", "Permission denied — enable Accessibility Service for call control")
-                            }
-                        } else {
-                            result.addProperty("status", "error")
-                            result.addProperty("message", "Ending calls requires Android 9 (API 28)+ or Accessibility Service")
-                        }
-                    }
+                    val declined = com.aura.assistant.IshaCallAnnouncerManager.declineCall(context)
+                    result.addProperty("status", if (declined) "success" else "attempted")
+                    result.addProperty("message", if (declined) "Call declined successfully" else "Attempted to decline call via system telecom and gestures")
                 }
 
                 "identify_caller" -> {
@@ -3377,7 +3325,7 @@ object JarvisToolRegistry {
 
                 "toggle_hotspot" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armHotspotToggle(enable)
                         result.addProperty("status", "success")
@@ -3404,7 +3352,7 @@ object JarvisToolRegistry {
                 "set_navigation_mode" -> {
                     val rawMode = args.get("mode")?.asString ?: "buttons"
                     val mode = if (rawMode.contains("gesture", ignoreCase = true)) "gestures" else "buttons"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armNavigationMode(mode)
                         result.addProperty("status", "success")
@@ -3428,7 +3376,7 @@ object JarvisToolRegistry {
 
                 "toggle_wifi" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armWifiToggle(enable)
                         result.addProperty("status", "success")
@@ -3445,7 +3393,7 @@ object JarvisToolRegistry {
 
                 "toggle_bluetooth" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armBluetoothToggle(enable)
                         result.addProperty("status", "success")
@@ -3467,7 +3415,7 @@ object JarvisToolRegistry {
                     val targetText = args.get("target_text")?.asString
 
                     // Intelligent interceptor: Redirect settings or navigation commands to Panda hands-free engine
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val descLower = desc.lowercase()
                     if (app.contains("setting", ignoreCase = true) || descLower.contains("navigation") ||
                         descLower.contains("hotspot") || descLower.contains("wifi") || descLower.contains("bluetooth")) {
@@ -3531,7 +3479,7 @@ object JarvisToolRegistry {
 
                 "press_system_key" -> {
                     val key = args.get("key")?.asString ?: "back"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     val success = a11y?.performGlobalActionByKey(key) ?: false
                     result.addProperty("status", if (success) "success" else "fallback")
                     result.addProperty("key", key)
@@ -3542,7 +3490,7 @@ object JarvisToolRegistry {
                     val appName = args.get("app_name")?.asString ?: ""
                     val action = args.get("action")?.asString ?: "clear_cache"
                     val pkg = resolveAppPackage(context, appName) ?: appName
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
 
                     when (action.lowercase()) {
                         "clear_cache", "cache" -> {
@@ -3570,7 +3518,7 @@ object JarvisToolRegistry {
                 "install_store_app" -> {
                     val query = args.get("query")?.asString ?: ""
                     val criteria = args.get("criteria")?.asString ?: "top"
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     a11y?.armPlayStoreInstall(query, criteria)
                     result.addProperty("status", "success")
                     result.addProperty("query", query)
@@ -3580,7 +3528,7 @@ object JarvisToolRegistry {
 
                 "toggle_dark_mode" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     a11y?.armToggleDarkMode(enable)
                     result.addProperty("status", "success")
                     result.addProperty("message", "Dark Mode ${if (enable) "ON" else "OFF"} kiya ja raha hai Boss! 🌙")
@@ -3618,7 +3566,7 @@ object JarvisToolRegistry {
                     val minutes = args.get("minutes")?.asInt ?: 0
                     val seconds = args.get("seconds")?.asInt ?: 0
                     val totalSeconds = (minutes * 60) + seconds
-                    val label = args.get("label")?.asString ?: "AURA Timer"
+                    val label = args.get("label")?.asString ?: "ISHA Timer"
 
                     val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
                         putExtra(AlarmClock.EXTRA_LENGTH, totalSeconds)
@@ -3958,7 +3906,7 @@ object JarvisToolRegistry {
                 // 45. Emergency SOS
                 "emergency_sos" -> {
                     val target = args.get("target")?.asString?.trim() ?: "112"
-                    val msg = args.get("message")?.asString ?: "EMERGENCY: I need immediate help! This is an automated SOS alert from AURA."
+                    val msg = args.get("message")?.asString ?: "EMERGENCY: I need immediate help! This is an automated SOS alert from ISHA."
 
                     val emergencyNumber = if (target.matches(Regex("[0-9+]+"))) target else {
                         resolveContactNumber(context, target) ?: "112"
@@ -3998,7 +3946,7 @@ object JarvisToolRegistry {
                 // 47. Read Status Bar Notifications
                 "read_notifications" -> {
                     val isListenerEnabled = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
-                    if (!isListenerEnabled && com.aura.assistant.AuraNotificationListenerService.instance == null) {
+                    if (!isListenerEnabled && com.aura.assistant.IshaNotificationListenerService.instance == null) {
                         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
@@ -4006,7 +3954,7 @@ object JarvisToolRegistry {
                         result.addProperty("status", "permission_needed")
                         result.addProperty("message", "Boss, notifications padhne ke liye 'Notification Access' permission allow karni hogi. Maine settings open kar di hai, please allow kar dijiye!")
                     } else {
-                        val notifs = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                        val notifs = com.aura.assistant.IshaNotificationListenerService.getActiveNotificationsList()
                         if (notifs.isEmpty()) {
                             result.addProperty("status", "empty")
                             result.addProperty("message", "Filhaal status bar mein koi nayi notifications nahi hain Boss, sab clear hai! ✨")
@@ -4040,7 +3988,7 @@ object JarvisToolRegistry {
 
                 // ── Screen Vision & Semantic Node Tools ─────────────────────
                 "get_screen_context" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val text = a11y.getScreenTextHierarchy()
                         result.addProperty("status", "success")
@@ -4048,7 +3996,7 @@ object JarvisToolRegistry {
                         result.addProperty("message", "Screen hierarchy capture ho gayi Boss.")
                     } else {
                         result.addProperty("status", "error")
-                        result.addProperty("error", "Accessibility Service is not enabled. Please enable AURA in Accessibility settings.")
+                        result.addProperty("error", "Accessibility Service is not enabled. Please enable ISHA in Accessibility settings.")
                     }
                 }
 
@@ -4056,7 +4004,7 @@ object JarvisToolRegistry {
                     val target = args.get("target")?.asString ?: args.get("target_text")?.asString ?: ""
                     val x = args.get("x")?.asFloat
                     val y = args.get("y")?.asFloat
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         if (x != null && y != null) {
                             val tapped = a11y.performClickCoordinate(x, y)
@@ -4089,7 +4037,7 @@ object JarvisToolRegistry {
                 }
 
                 "read_screen_text" -> {
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val text = a11y.getScreenTextHierarchy()
                         result.addProperty("status", "success")
@@ -4105,7 +4053,7 @@ object JarvisToolRegistry {
                 "set_clipboard" -> {
                     val textToCopy = args.get("text")?.asString ?: ""
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                    val clip = android.content.ClipData.newPlainText("AURA", textToCopy)
+                    val clip = android.content.ClipData.newPlainText("ISHA", textToCopy)
                     clipboard?.setPrimaryClip(clip)
                     result.addProperty("status", "success")
                     result.addProperty("message", "Text clipboard me copy kar diya hai Boss!")
@@ -4414,7 +4362,7 @@ object JarvisToolRegistry {
                 "clear_notifications" -> {
                     val target = (args.get("target")?.asString ?: "all").lowercase().trim()
                     val isListenerEnabled = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
-                    if (!isListenerEnabled && com.aura.assistant.AuraNotificationListenerService.instance == null) {
+                    if (!isListenerEnabled && com.aura.assistant.IshaNotificationListenerService.instance == null) {
                         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
@@ -4423,11 +4371,11 @@ object JarvisToolRegistry {
                         result.addProperty("message", "Boss, notifications clear karne ke liye 'Notification Access' allow karni hogi. Settings open kardi hai.")
                     } else {
                         if (target == "all" || target.contains("sab") || target.contains("all") || target.isBlank()) {
-                            val cleared = com.aura.assistant.AuraNotificationListenerService.clearAllNotifications()
+                            val cleared = com.aura.assistant.IshaNotificationListenerService.clearAllNotifications()
                             result.addProperty("status", if (cleared) "success" else "failed")
                             result.addProperty("message", if (cleared) "Status bar ki sabhi clearable notifications saaf kardi hain Boss! 🧹✨" else "Notifications clear nahi ho payin.")
                         } else {
-                            val cleared = com.aura.assistant.AuraNotificationListenerService.dismissNotification(target)
+                            val cleared = com.aura.assistant.IshaNotificationListenerService.dismissNotification(target)
                             result.addProperty("status", if (cleared) "success" else "not_found")
                             result.addProperty("message", if (cleared) "\"$target\" notification dismiss kardi hai Boss! 🧹" else "\"$target\" se judi koi active notification nahi mili.")
                         }
@@ -4591,7 +4539,7 @@ object JarvisToolRegistry {
                 // 85. Dismiss Screen Popups / Interrupting Ads (Visual Reflection Agent)
                 "dismiss_screen_popups" -> {
                     val fallbackBack = if (args.has("fallback_back")) args.get("fallback_back").asBoolean else true
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     if (a11y == null) {
                         result.addProperty("status", "error")
                         result.addProperty("message", "Boss, screen control ke liye Accessibility service enabled hona zaroori hai.")
@@ -4624,7 +4572,7 @@ object JarvisToolRegistry {
                         } else false
 
                         // 3. Unread / Active Notifications
-                        val notifsList = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                        val notifsList = com.aura.assistant.IshaNotificationListenerService.getActiveNotificationsList()
                         val waNotifs = notifsList.filter {
                             (it["package"] as? String)?.contains("whatsapp", ignoreCase = true) == true
                         }
@@ -4673,7 +4621,7 @@ object JarvisToolRegistry {
                         }.toString()
 
                         result.addProperty("message", briefingText)
-                        result.addProperty("follow_up_prompt", "Deliver this briefing in AURA's warm, enthusiastic, sweet female companion tone (Aoede persona) addressing the user as Boss. Encourage them for the day!")
+                        result.addProperty("follow_up_prompt", "Deliver this briefing in ISHA's warm, enthusiastic, sweet female companion tone (Aoede persona) addressing the user as Boss. Encourage them for the day!")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error generating daily briefing", e)
                         result.addProperty("status", "error")
@@ -4698,7 +4646,7 @@ object JarvisToolRegistry {
                                 rawSourceText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
                             }
                             "notifications", "whatsapp" -> {
-                                val notifs = com.aura.assistant.AuraNotificationListenerService.getActiveNotificationsList()
+                                val notifs = com.aura.assistant.IshaNotificationListenerService.getActiveNotificationsList()
                                 val targetNotif = notifs.firstOrNull {
                                     (it["package"] as? String)?.contains("whatsapp", ignoreCase = true) == true ||
                                     (it["appName"] as? String)?.contains("whatsapp", ignoreCase = true) == true
@@ -4708,7 +4656,7 @@ object JarvisToolRegistry {
                                 }
                             }
                             else -> { // "screen"
-                                val a11y = AuraAccessibilityService.instance
+                                val a11y = IshaAccessibilityService.instance
                                 val root = a11y?.rootInActiveWindow
                                 if (root != null) {
                                     rawSourceText = a11y.collectAllText(root)
@@ -4823,7 +4771,7 @@ object JarvisToolRegistry {
                 else -> {
                     Log.i(TAG, "Dynamic action '$name' invoked — resolving via autonomous UI & millisecond knowledge")
                     val startMs = System.currentTimeMillis()
-                    val a11y = AuraAccessibilityService.instance
+                    val a11y = IshaAccessibilityService.instance
                     
                     // 1. Millisecond UI Hierarchy scan (<25ms)
                     val queryWords = name.replace("_", " ").split(" ").filter { it.length > 2 }
@@ -5179,7 +5127,7 @@ object JarvisToolRegistry {
     /**
      * Universal Media Player helper:
      * Resolves app package, sends MediaStore search intent, launches deep links,
-     * and arms AuraAccessibilityService to auto-tap the first result.
+     * and arms IshaAccessibilityService to auto-tap the first result.
      */
     private fun playMediaInApp(context: Context, query: String, targetApp: String): Boolean {
         val trimmedQuery = query.trim()
@@ -5209,7 +5157,7 @@ object JarvisToolRegistry {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 context.startActivity(intent)
-                AuraAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
+                IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
                 return true
             }
 
@@ -5222,7 +5170,7 @@ object JarvisToolRegistry {
             }
             if (mediaIntent.resolveActivity(context.packageManager) != null) {
                 context.startActivity(mediaIntent)
-                AuraAccessibilityService.instance?.armAutoSearchAndPlayInApp(targetApp, trimmedQuery)
+                IshaAccessibilityService.instance?.armAutoSearchAndPlayInApp(targetApp, trimmedQuery)
                 return true
             }
 
@@ -5231,7 +5179,7 @@ object JarvisToolRegistry {
             if (launchIntent != null) {
                 launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 context.startActivity(launchIntent)
-                AuraAccessibilityService.instance?.armAutoSearchAndPlayInApp(targetApp, trimmedQuery)
+                IshaAccessibilityService.instance?.armAutoSearchAndPlayInApp(targetApp, trimmedQuery)
                 return true
             }
         } catch (e: Exception) {
@@ -5251,7 +5199,7 @@ object JarvisToolRegistry {
         targetText: String?
     ): Boolean {
         val pkg = resolveAppPackage(context, appName) ?: run {
-            AuraAccessibilityService.instance?.armAppSearchAndLaunch(appName)
+            IshaAccessibilityService.instance?.armAppSearchAndLaunch(appName)
             return true
         }
 
@@ -5259,7 +5207,7 @@ object JarvisToolRegistry {
         launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(launchIntent)
 
-        val a11y = AuraAccessibilityService.instance
+        val a11y = IshaAccessibilityService.instance
         if (a11y != null) {
             if (!searchQuery.isNullOrBlank()) {
                 a11y.armSearchAndClick(searchQuery, targetText)
@@ -5870,4 +5818,7 @@ object JarvisToolRegistry {
         return headlines
     }
 }
+
+/** Backward compatibility alias for JarvisToolRegistry */
+val JarvisToolRegistry = IshaToolRegistry
 

@@ -8,7 +8,7 @@ import android.os.Build
 /**
  * Restarts the WakeWordService after device reboot if permissions are granted.
  */
-class AuraBootReceiver : BroadcastReceiver() {
+open class IshaBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         // Do NOT start foreground service on MY_PACKAGE_REPLACED — Android 14 strictly forbids
@@ -39,3 +39,7 @@ class AuraBootReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/** Backward compatibility subclass for AuraBootReceiver */
+class AuraBootReceiver : IshaBootReceiver()
+

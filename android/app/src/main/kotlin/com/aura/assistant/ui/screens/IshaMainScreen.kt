@@ -21,18 +21,19 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.aura.assistant.ui.components.*
+import com.aura.assistant.ui.contract.IshaAssistantViewModel
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
 import com.aura.assistant.ui.theme.ChatGptBackground
 import com.aura.assistant.auth.UserProfile
 import kotlinx.coroutines.launch
 
 /**
- * Main Screen for ChatGPT-style AURA Assistant.
+ * Main Screen for ISHA Assistant.
  * Pure black clean aesthetic.
  */
 @Composable
-fun AuraMainScreen(
-    viewModel: AuraAssistantViewModel,
+fun IshaMainScreen(
+    viewModel: IshaAssistantViewModel,
     userProfile: UserProfile = UserProfile(),
     onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -105,7 +106,7 @@ fun AuraMainScreen(
                 drawerContainerColor = androidx.compose.ui.graphics.Color.Transparent,
                 drawerContentColor = androidx.compose.ui.graphics.Color.White
             ) {
-                ChatGPTDrawer(
+                IshaDrawer(
                     sessions = sessions,
                     activeSessionId = activeSessionId,
                     onSelectSession = { id ->
@@ -146,7 +147,7 @@ fun AuraMainScreen(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = ChatGptBackground,
                 topBar = {
-                    ChatGPTTopBar(
+                    IshaTopBar(
                         onOpenDrawer = {
                             coroutineScope.launch { drawerState.open() }
                         },
@@ -156,7 +157,7 @@ fun AuraMainScreen(
                     )
                 },
                 bottomBar = {
-                    ChatGPTBottomBar(
+                    IshaBottomBar(
                         onSendMessage = { query -> viewModel.onSendTextMessage(query) },
                         onVoiceClick = { viewModel.startVoiceMode() },
                         onStopGenerating = { viewModel.stopGeneration() },
@@ -176,7 +177,7 @@ fun AuraMainScreen(
                         .background(ChatGptBackground)
                 ) {
                     if (chatMessages.isEmpty()) {
-                        ChatGPTEmptyState(
+                        IshaEmptyState(
                             onPromptClick = { prompt -> viewModel.onSendTextMessage(prompt) }
                         )
                     } else {
@@ -206,7 +207,7 @@ fun AuraMainScreen(
                 enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
             ) {
-                ChatGPTVoiceScreen(
+                IshaVoiceScreen(
                     liveState = liveState,
                     amplitude = amplitude,
                     liveTranscript = liveTranscript,
@@ -229,7 +230,7 @@ fun AuraMainScreen(
 
             // ── Modern Attachment & Quick Tools Bottom Sheet ──────────────────
             if (isToolsSheetVisible) {
-                AuraAttachmentBottomSheet(
+                IshaAttachmentBottomSheet(
                     onTakePhoto = {
                         try { cameraLauncher.launch(null) } catch (_: Exception) {}
                     },
@@ -246,7 +247,7 @@ fun AuraMainScreen(
 
             // ── Settings Sheet ────────────────────────────────────────────────
             if (isSettingsVisible) {
-                AuraSettingsSheet(
+                IshaSettingsSheet(
                     isWakeWordEnabled = isWakeWordEnabled,
                     isShakeEnabled = isShakeEnabled,
                     isMessageSpeakEnabled = isMessageSpeakEnabled,
@@ -264,17 +265,31 @@ fun AuraMainScreen(
 
             // ── Diagnostics Screen ───────────────────────────────────────────
             if (isDiagnosticsVisible) {
-                AuraDiagnosticsScreen(
+                IshaDiagnosticsScreen(
                     onBack = { isDiagnosticsVisible = false }
                 )
             }
 
             // ── API Key Entry Screen ─────────────────────────────────────────
             if (isApiKeyScreenVisible) {
-                AuraApiKeyScreen(
+                IshaApiKeyScreen(
                     onBack = { viewModel.hideApiKeyScreen() }
                 )
             }
         }
     }
 }
+
+@Composable
+fun AuraMainScreen(
+    viewModel: AuraAssistantViewModel,
+    userProfile: UserProfile = UserProfile(),
+    onLogout: () -> Unit = {},
+    modifier: Modifier = Modifier
+) = IshaMainScreen(
+    viewModel = viewModel,
+    userProfile = userProfile,
+    onLogout = onLogout,
+    modifier = modifier
+)
+

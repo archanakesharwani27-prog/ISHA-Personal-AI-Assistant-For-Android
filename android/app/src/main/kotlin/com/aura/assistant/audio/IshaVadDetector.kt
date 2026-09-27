@@ -4,7 +4,7 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
- * High-performance, zero-allocation Voice Activity Detector (VAD) for AURA.
+ * High-performance, zero-allocation Voice Activity Detector (VAD) for ISHA.
  *
  * Implements a dynamic noise-floor tracking energy detector with
  * zero-crossing rate (ZCR) feature gating.
@@ -14,7 +14,7 @@ import kotlin.math.sqrt
  *   - Prevents openWakeWord neural network from running inference on empty air.
  *   - Provides real-time normalized audio amplitudes (0.0 to 1.0) for the UI visualizer orb.
  */
-class AuraVadDetector(
+class IshaVadDetector(
     private val sampleRate: Int = 16000,
     private val minSpeechEnergyDb: Float = -62.0f,   // Far-field sensitivity (picks up natural speech at 30-70 cm)
     private val speechMarginDb: Float = 2.5f,        // 2.5 dB above ambient room noise
@@ -99,3 +99,7 @@ class AuraVadDetector(
         hangoverCounter = 0
     }
 }
+
+/** Backward compatibility alias for AuraVadDetector */
+typealias AuraVadDetector = IshaVadDetector
+

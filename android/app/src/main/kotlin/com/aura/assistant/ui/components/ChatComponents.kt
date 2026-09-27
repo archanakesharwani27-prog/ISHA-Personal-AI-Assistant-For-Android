@@ -94,7 +94,7 @@ fun ChatMessageBubble(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "A",
+                    text = "I",
                     color = Color.Black,
                     fontWeight = FontWeight.Black,
                     fontSize = 13.sp
@@ -120,7 +120,7 @@ fun ChatMessageBubble(
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 if (!isUser) {
                     Text(
-                        text = "AURA",
+                        text = "ISHA",
                         style = AuraTypography.labelSmall.copy(
                             color = AuraNeonCyan,
                             fontSize = 10.sp
@@ -223,7 +223,7 @@ fun AuraInputBar(
             onValueChange = { text = it },
             placeholder = {
                 Text(
-                    text = "Ask AURA anything...",
+                    text = "Ask ISHA anything...",
                     color = AuraTextMuted,
                     fontSize = 14.sp
                 )

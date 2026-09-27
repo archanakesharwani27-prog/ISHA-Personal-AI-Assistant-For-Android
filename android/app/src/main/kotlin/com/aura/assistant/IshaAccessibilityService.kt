@@ -21,7 +21,7 @@ import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 
 /**
- * Full autonomous UI control service for AURA.
+ * Full autonomous UI control service for ISHA.
  *
  * Capabilities:
  *  - WhatsApp auto-send (existing)
@@ -34,12 +34,12 @@ import java.net.URLEncoder
  *  - Swipe gestures via GestureDescription (NEW)
  *  - Type into focused text fields (NEW)
  */
-class AuraAccessibilityService : AccessibilityService() {
+open class IshaAccessibilityService : AccessibilityService() {
 
     companion object {
-        var instance: AuraAccessibilityService? = null
+        var instance: IshaAccessibilityService? = null
 
-        private const val TAG = "AuraA11y"
+        private const val TAG = "IshaA11y"
 
         const val ACTION_PLAN_DONE = "com.aura.A11Y_PLAN_DONE"
         const val EXTRA_PLAN_TAG   = "planTag"
@@ -1534,6 +1534,70 @@ class AuraAccessibilityService : AccessibilityService() {
         return root.performAction(action)
     }
 
+    fun answerIncomingCall(): Boolean {
+        val answerLabels = listOf("answer", "accept", "उत्तर", "उठाओ", "call answer", "swipe up to answer", "swipe right to answer")
+        for (label in answerLabels) {
+            if (performClickByText(label)) return true
+        }
+        val root = rootInActiveWindow
+        if (root != null) {
+            val answerIds = listOf(
+                "com.google.android.dialer:id/incall_first_button",
+                "com.google.android.dialer:id/answer",
+                "com.samsung.android.incallui:id/answer_button",
+                "com.samsung.android.incallui:id/answer",
+                "com.android.incallui:id/answer",
+                "com.android.dialer:id/answer"
+            )
+            for (id in answerIds) {
+                try {
+                    val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                    for (node in nodes) {
+                        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            return true
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels
+        val height = dm.heightPixels
+        return performSwipe(width / 2, (height * 0.82f).toInt(), width / 2, (height * 0.35f).toInt(), 280)
+    }
+
+    fun declineIncomingCall(): Boolean {
+        val declineLabels = listOf("decline", "reject", "dismiss", "end call", "अस्वीकार", "काटो", "swipe down to decline")
+        for (label in declineLabels) {
+            if (performClickByText(label)) return true
+        }
+        val root = rootInActiveWindow
+        if (root != null) {
+            val declineIds = listOf(
+                "com.google.android.dialer:id/incall_second_button",
+                "com.google.android.dialer:id/decline",
+                "com.samsung.android.incallui:id/decline_button",
+                "com.samsung.android.incallui:id/decline",
+                "com.android.incallui:id/decline",
+                "com.android.dialer:id/decline"
+            )
+            for (id in declineIds) {
+                try {
+                    val nodes = root.findAccessibilityNodeInfosByViewId(id)
+                    for (node in nodes) {
+                        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            return true
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels
+        val height = dm.heightPixels
+        return performSwipe(width / 2, (height * 0.65f).toInt(), width / 2, (height * 0.95f).toInt(), 280)
+    }
+
     // ── New: Gmail Compose + Send ─────────────────────────────────────────────
 
     /**
@@ -2127,7 +2191,7 @@ class AuraAccessibilityService : AccessibilityService() {
      * from the active window hierarchy into a clean structured string.
      */
     fun getScreenTextHierarchy(): String {
-        val root = rootInActiveWindow ?: return "Screen is empty or inaccessible (enable AURA Accessibility)."
+        val root = rootInActiveWindow ?: return "Screen is empty or inaccessible (enable ISHA Accessibility)."
         val sb = StringBuilder()
         val seen = mutableSetOf<String>()
         collectTextNodes(root, sb, seen, 0)
@@ -2700,3 +2764,17 @@ class AuraAccessibilityService : AccessibilityService() {
         return null
     }
 }
+
+/** Backward compatibility subclass for AuraAccessibilityService */
+class AuraAccessibilityService : IshaAccessibilityService() {
+    companion object {
+        var instance: IshaAccessibilityService?
+            get() = IshaAccessibilityService.instance
+            set(value) { IshaAccessibilityService.instance = value }
+        const val ACTION_PLAN_DONE = IshaAccessibilityService.ACTION_PLAN_DONE
+        const val EXTRA_PLAN_TAG = IshaAccessibilityService.EXTRA_PLAN_TAG
+        const val EXTRA_SUCCESS = IshaAccessibilityService.EXTRA_SUCCESS
+    }
+}
+
+

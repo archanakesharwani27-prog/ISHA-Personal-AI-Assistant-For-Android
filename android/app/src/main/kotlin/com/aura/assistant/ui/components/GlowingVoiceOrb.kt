@@ -203,12 +203,12 @@ fun GlowingVoiceOrb(
 
         // State Badge
         val statusText = when (liveState) {
-            AuraLiveState.IDLE           -> "TAP TO TALK  •  SAY \"HEY AURA\""
-            AuraLiveState.CONNECTING     -> "CONNECTING TO GEMINI LIVE..."
-            AuraLiveState.CONNECTED      -> "AURA READY  •  LISTENING"
-            AuraLiveState.LISTENING      -> "AURA IS LISTENING..."
-            AuraLiveState.THINKING       -> "AURA IS THINKING..."
-            AuraLiveState.SPEAKING       -> "AURA IS SPEAKING..."
+            AuraLiveState.IDLE           -> "TAP TO TALK  •  SAY \"HEY ISHA\""
+            AuraLiveState.CONNECTING     -> "CONNECTING TO ISHA LIVE..."
+            AuraLiveState.CONNECTED      -> "ISHA READY  •  LISTENING"
+            AuraLiveState.LISTENING      -> "ISHA IS LISTENING..."
+            AuraLiveState.THINKING       -> "ISHA IS THINKING..."
+            AuraLiveState.SPEAKING       -> "ISHA IS SPEAKING..."
             AuraLiveState.ERROR          -> "CONNECTION ERROR • RETRY"
             AuraLiveState.WAKE_LISTENING -> "WAKE WORD LISTENING..."
             AuraLiveState.WAKE_DETECTED  -> "WAKE WORD DETECTED!"

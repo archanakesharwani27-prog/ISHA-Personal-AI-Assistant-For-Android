@@ -36,7 +36,7 @@ import androidx.core.content.ContextCompat
 import com.aura.assistant.ui.theme.*
 
 // ── Settings Data ─────────────────────────────────────────────────────────────
-data class AuraSettingsState(
+data class IshaSettingsState(
     val isWakeWordEnabled: Boolean = true,
     val isShakeEnabled: Boolean = true,
     val selectedVoice: String = "Aoede",
@@ -46,9 +46,11 @@ data class AuraSettingsState(
     val isMessageSpeakEnabled: Boolean = true
 )
 
+typealias AuraSettingsState = IshaSettingsState
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AuraSettingsSheet(
+fun IshaSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
     isMessageSpeakEnabled: Boolean = true,
@@ -123,7 +125,7 @@ fun AuraSettingsSheet(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = "AURA Settings",
+                        text = "ISHA Settings",
                         style = AuraTypography.headlineMedium.copy(fontSize = 18.sp)
                     )
                     Text(
@@ -204,7 +206,7 @@ fun AuraSettingsSheet(
             SettingsToggleRow(
                 icon = Icons.Default.Mic,
                 iconTint = ChatGptAccentGreen,
-                title = "Wake Word — \"Hey AURA\"",
+                title = "Wake Word — \"Hey ISHA\"",
                 subtitle = if (isWakeWordEnabled) "Mic active in background (OS green dot shown)" else "Disabled (Mic closed, no green dot)",
                 checked = isWakeWordEnabled,
                 onCheckedChange = onWakeWordToggle
@@ -229,7 +231,7 @@ fun AuraSettingsSheet(
                 icon = Icons.Default.VolumeUp,
                 iconTint = AuraAmberGold,
                 title = "Activation Sound",
-                subtitle = "Play a chime when AURA wakes up",
+                subtitle = "Play a chime when ISHA wakes up",
                 checked = soundEnabled,
                 onCheckedChange = { soundEnabled = it }
             )
@@ -249,7 +251,7 @@ fun AuraSettingsSheet(
             Spacer(modifier = Modifier.height(20.dp))
 
             // ── Section 2: Voice Persona ─────────────────────────────────────
-            SettingsSectionHeader(icon = Icons.Default.Face, title = "AURA Voice Persona")
+            SettingsSectionHeader(icon = Icons.Default.Face, title = "ISHA Voice Persona")
 
             Surface(
                 color = ChatGptCard,
@@ -396,8 +398,8 @@ fun AuraSettingsSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── Section: Gemini API Key ───────────────────────────────────────
-            SettingsSectionHeader(icon = Icons.Default.VpnKey, title = "Gemini API Key")
+            // ── Section: ISHA API Key ────────────────────────────────────────
+            SettingsSectionHeader(icon = Icons.Default.VpnKey, title = "ISHA Intelligence Key")
 
             val userCustomKey = remember { ApiKeyManager.getApiKey(context) }
             val hasCustomKeySet = userCustomKey.isNotBlank()
@@ -434,7 +436,7 @@ fun AuraSettingsSheet(
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Gemini API Key",
+                            text = "ISHA API Key",
                             style = AuraTypography.bodyLarge.copy(
                                 color = ChatGptTextPrimary,
                                 fontSize = 14.sp,
@@ -471,7 +473,7 @@ fun AuraSettingsSheet(
             SettingsSectionHeader(icon = Icons.Default.Accessibility, title = "Permissions & Accessibility")
 
             // Dynamic live permission evaluation
-            val isAccessibilityActive = com.aura.assistant.AuraAccessibilityService.instance != null
+            val isAccessibilityActive = com.aura.assistant.IshaAccessibilityService.instance != null
             val hasMicPermission = ContextCompat.checkSelfPermission(
                 context, Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED
@@ -587,7 +589,7 @@ fun AuraSettingsSheet(
             Spacer(modifier = Modifier.height(20.dp))
 
             // ── Section 6: About & Model Info ─────────────────────────────────
-            SettingsSectionHeader(icon = Icons.Default.Info, title = "About AURA")
+            SettingsSectionHeader(icon = Icons.Default.Info, title = "About ISHA")
 
             Surface(
                 color = ChatGptCard,
@@ -603,9 +605,9 @@ fun AuraSettingsSheet(
                     InfoRow(label = "Conversational Brain", value = "ConversationalReactionEngine")
                     InfoRow(label = "Adaptive Memory", value = "ExperienceMemory & LessonStore")
                     InfoRow(label = "Security Governance", value = "PolicyEngine & ConfirmationEngine")
-                    InfoRow(label = "Background Engine", value = "AuraTaskManager & RoutineEngine")
-                    InfoRow(label = "Live Voice Model", value = "Gemini 2.5 Flash Native Bidi")
-                    InfoRow(label = "Barge-In Engine", value = "ChatGPT-Style Context-Preserving")
+                    InfoRow(label = "Background Engine", value = "ISHA TaskManager & RoutineEngine")
+                    InfoRow(label = "Live Voice Model", value = "ISHA Neural Voice Native")
+                    InfoRow(label = "Barge-In Engine", value = "Natural Context-Preserving")
                     InfoRow(label = "Wake Engine", value = "OpenWakeWord ONNX (Calibrated 0.55)")
                     InfoRow(label = "Native Stack", value = "Pure Kotlin + Jetpack Compose")
                 }
@@ -713,11 +715,11 @@ fun AuraSettingsSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "AURA 2.0 Diagnostics",
+                            text = "ISHA 2.0 Diagnostics",
                             style = AuraTypography.titleMedium.copy(fontSize = 13.sp)
                         )
                         Text(
-                            text = "Inspect mic ownership, wake word & Gemini Live telemetry",
+                            text = "Inspect mic ownership, wake word & ISHA Live telemetry",
                             style = AuraTypography.bodyMedium.copy(fontSize = 11.sp, color = ChatGptTextMuted)
                         )
                     }
@@ -927,3 +929,33 @@ private fun InfoRow(label: String, value: String) {
         )
     }
 }
+
+@Composable
+fun AuraSettingsSheet(
+    isWakeWordEnabled: Boolean,
+    isShakeEnabled: Boolean,
+    isMessageSpeakEnabled: Boolean = true,
+    userProfile: UserProfile = UserProfile(),
+    onWakeWordToggle: (Boolean) -> Unit,
+    onShakeToggle: (Boolean) -> Unit,
+    onMessageSpeakToggle: (Boolean) -> Unit = {},
+    onClearAllChats: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
+    onOpenApiKeyEntry: () -> Unit = {},
+    onLogout: () -> Unit = {},
+    onDismiss: () -> Unit
+) = IshaSettingsSheet(
+    isWakeWordEnabled = isWakeWordEnabled,
+    isShakeEnabled = isShakeEnabled,
+    isMessageSpeakEnabled = isMessageSpeakEnabled,
+    userProfile = userProfile,
+    onWakeWordToggle = onWakeWordToggle,
+    onShakeToggle = onShakeToggle,
+    onMessageSpeakToggle = onMessageSpeakToggle,
+    onClearAllChats = onClearAllChats,
+    onOpenDiagnostics = onOpenDiagnostics,
+    onOpenApiKeyEntry = onOpenApiKeyEntry,
+    onLogout = onLogout,
+    onDismiss = onDismiss
+)
+

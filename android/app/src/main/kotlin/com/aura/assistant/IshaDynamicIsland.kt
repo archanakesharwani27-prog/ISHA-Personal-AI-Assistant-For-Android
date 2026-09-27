@@ -29,18 +29,18 @@ import com.aura.assistant.ai.GeminiChatService
 import com.aura.assistant.data.ChatMessage
 
 /**
- * Apple Dynamic Island style minimal top bubble for AURA.
+ * Apple Dynamic Island style minimal top bubble for ISHA.
  *
  * - Appears as a compact pill at the top center of screen.
  * - Shows ONLY state (Listening/Speaking/Thinking) + animated audio wave.
  * - No cards, no chips, no large text, no screen preview.
- * - Instant barge-in: if user speaks while AURA is talking, stop speech and listen immediately.
+ * - Instant barge-in: if user speaks while ISHA is talking, stop speech and listen immediately.
  * - Execute commands directly in background (no full app jump unless explicitly requested).
  * - Clean, minimal, professional assistant feel like Gemini.
  */
-object AuraDynamicIsland {
+object IshaDynamicIsland {
 
-    private const val TAG = "AuraDynamicIsland"
+    private const val TAG = "IshaDynamicIsland"
     private const val IDLE_DISMISS_MS = 12_000L // 12 seconds idle before auto-dismiss
     private const val LISTENING_ANIM_MS = 600L  // Wave animation duration
     private const val EXPAND_COLLAPSE_MS = 200L // Expand/collapse animation duration
@@ -152,13 +152,13 @@ object AuraDynamicIsland {
                 }
                 com.aura.assistant.ai.AuraLiveState.IDLE,
                 com.aura.assistant.ai.AuraLiveState.ERROR -> {
-                    stateText?.text = "AURA ✦"
+                    stateText?.text = "ISHA ✦"
                     updateBackgroundColor("Idle")
                     waveView?.setListening(false)
                     resetDismissTimer()
                 }
                 else -> {
-                    stateText?.text = "Aura Live ✦"
+                    stateText?.text = "ISHA Live ✦"
                     updateBackgroundColor("Idle")
                     waveView?.setListening(false)
                 }
@@ -376,7 +376,7 @@ object AuraDynamicIsland {
 
         // State indicator text (small)
         stateText = TextView(ctx).apply {
-            text = "AURA"
+            text = "ISHA"
             textSize = 12f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#E2E8F0"))
@@ -483,11 +483,11 @@ object AuraDynamicIsland {
 
     private fun updateStateFromReason(reason: String) {
         val stateText = when (reason) {
-            "screen_share" -> "Aura Viewing 👁️"
+            "screen_share" -> "ISHA Viewing 👁️"
             "shake" -> "Listening..."
             "morning_reminder" -> "Good morning"
-            "voice_mode" -> "Aura Live 🎙️"
-            "auto_overlay" -> "AURA ✦"
+            "voice_mode" -> "ISHA Live 🎙️"
+            "auto_overlay" -> "ISHA ✦"
             else -> "Listening..."
         }
         this.stateText?.text = stateText
@@ -507,7 +507,7 @@ object AuraDynamicIsland {
         isSpeaking = false
         isThinking = false
         isExpanded = false
-        stateText?.text = "AURA"
+        stateText?.text = "ISHA"
         updateBackgroundColor("Idle")
         waveView?.reset()
     }
@@ -577,7 +577,7 @@ object AuraDynamicIsland {
                         handler.postDelayed({
                             if (!isSpeaking) {
                                 // If not currently speaking, go back to idle after thinking
-                                handler.postDelayed({ updateStateUI("AURA") }, 800L)
+                                handler.postDelayed({ updateStateUI("ISHA") }, 800L)
                             }
                         }, 600L)
                     }
@@ -700,7 +700,7 @@ object AuraDynamicIsland {
                 "Thinking" -> "Thinking..."
                 "Speaking" -> "Speaking..."
                 "Error" -> "Mic error"
-                else -> "AURA"
+                else -> "ISHA"
             }
             updateBackgroundColor(state)
             waveView?.apply {
@@ -924,7 +924,7 @@ object AuraDynamicIsland {
 
     private fun launchApp(ctx: Context, appName: String) {
         try {
-            val intent = com.aura.assistant.ai.JarvisToolRegistry.resolveAppIntent(ctx, appName)
+            val intent = com.aura.assistant.ai.IshaToolRegistry.resolveAppIntent(ctx, appName)
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 ctx.startActivity(intent)
@@ -1132,3 +1132,6 @@ object AuraDynamicIsland {
         return (this * context.resources.displayMetrics.density).toInt()
     }
 }
+
+/** Backward compatibility alias for AuraDynamicIsland */
+val AuraDynamicIsland = IshaDynamicIsland

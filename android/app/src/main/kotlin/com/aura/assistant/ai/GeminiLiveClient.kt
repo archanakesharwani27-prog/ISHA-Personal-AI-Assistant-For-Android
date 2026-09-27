@@ -406,7 +406,7 @@ class GeminiLiveClient(private val context: Context) {
                 // Tools in official Bidi camelCase format
                 val toolsArray = JsonArray().apply {
                     val toolHolder = JsonObject()
-                    toolHolder.add("functionDeclarations", JarvisToolRegistry.getGeminiToolDeclarations())
+                    toolHolder.add("functionDeclarations", IshaToolRegistry.getGeminiToolDeclarations())
                     add(toolHolder)
                 }
                 add("tools", toolsArray)
@@ -954,7 +954,7 @@ class GeminiLiveClient(private val context: Context) {
                         val name = call.get("name").asString
                         val id = call.get("id").asString
                         val args = call.getAsJsonObject("args") ?: JsonObject()
-                        val result = JarvisToolRegistry.executeTool(context, name, args)
+                        val result = IshaToolRegistry.executeTool(context, name, args)
                         val fnResp = JsonObject().apply {
                             addProperty("id", id)
                             addProperty("name", name)

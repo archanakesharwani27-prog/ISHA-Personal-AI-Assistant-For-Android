@@ -62,7 +62,7 @@ import kotlin.math.*
  * - Floating bottom pill bar with 100% working controls (Camera, Screen Share, Equalizer, Mute, Close)
  */
 @Composable
-fun ChatGPTVoiceScreen(
+fun IshaVoiceScreen(
     liveState: AuraLiveState,
     amplitude: Float,
     liveTranscript: String,
@@ -101,7 +101,7 @@ fun ChatGPTVoiceScreen(
                 val bytes = stream.toByteArray()
                 bitmap.recycle()
                 if (bytes.isNotEmpty()) {
-                    feedbackMessage = "Photo sent to Aura"
+                    feedbackMessage = "Photo sent to ISHA"
                     onSendCameraImage(bytes)
                 }
             }
@@ -194,7 +194,7 @@ fun ChatGPTVoiceScreen(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Voice Mode  •  Gemini Live",
+                text = "Voice Mode  •  ISHA Live",
                 style = AuraTypography.bodySmall.copy(
                     color = Color.White.copy(alpha = 0.40f),
                     fontSize = 11.sp,
@@ -244,7 +244,7 @@ fun ChatGPTVoiceScreen(
 
                 val statusText = when {
                     isMuted -> "Microphone muted"
-                    liveState == AuraLiveState.CONNECTING -> "Connecting to Gemini Live..."
+                    liveState == AuraLiveState.CONNECTING -> "Connecting to ISHA Live..."
                     liveState == AuraLiveState.LISTENING -> "Listening..."
                     liveState == AuraLiveState.THINKING -> "Thinking..."
                     liveState == AuraLiveState.SPEAKING -> "Speaking..."
@@ -419,7 +419,7 @@ fun ChatGPTVoiceScreen(
                                 .background(Color(0xFFFF5252))
                         )
                         Text(
-                            text = "Live Screen Sharing • AURA is watching",
+                            text = "Live Screen Sharing • ISHA is watching",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
@@ -480,7 +480,7 @@ fun ChatGPTVoiceScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
-                            text = "Share screen with AURA?",
+                            text = "Share screen with ISHA?",
                             style = AuraTypography.titleMedium.copy(
                                 color = Color.White,
                                 fontSize = 19.sp,
@@ -492,7 +492,7 @@ fun ChatGPTVoiceScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         Text(
-                            text = "AURA will be able to see whatever is displayed on your screen in real time to assist you with apps, text, and tasks.",
+                            text = "ISHA will be able to see whatever is displayed on your screen in real time to assist you with apps, text, and tasks.",
                             style = AuraTypography.bodySmall.copy(
                                 color = Color.White.copy(alpha = 0.72f),
                                 fontSize = 13.sp,
@@ -522,7 +522,7 @@ fun ChatGPTVoiceScreen(
                             Button(
                                 onClick = {
                                     showScreenShareConfirmDialog = false
-                                    feedbackMessage = "Screen sharing active — show any screen to AURA"
+                                    feedbackMessage = "Screen sharing active — show any screen to ISHA"
                                     val activity = context as? Activity
                                     activity?.moveTaskToBack(true)
                                     try {
@@ -722,3 +722,33 @@ private fun GeminiLiveCircleButton(
         )
     }
 }
+
+@Composable
+fun ChatGPTVoiceScreen(
+    liveState: AuraLiveState,
+    amplitude: Float,
+    liveTranscript: String,
+    onCloseVoiceMode: () -> Unit,
+    onToggleMute: (Boolean) -> Unit = {},
+    onStartListening: () -> Unit = {},
+    onSendCameraImage: (ByteArray) -> Unit = {},
+    onSendScreenCapture: () -> Unit = {},
+    isScreenSharing: Boolean = false,
+    onStopScreenSharing: () -> Unit = {},
+    userName: String = "Ansh",
+    modifier: Modifier = Modifier
+) = IshaVoiceScreen(
+    liveState = liveState,
+    amplitude = amplitude,
+    liveTranscript = liveTranscript,
+    onCloseVoiceMode = onCloseVoiceMode,
+    onToggleMute = onToggleMute,
+    onStartListening = onStartListening,
+    onSendCameraImage = onSendCameraImage,
+    onSendScreenCapture = onSendScreenCapture,
+    isScreenSharing = isScreenSharing,
+    onStopScreenSharing = onStopScreenSharing,
+    userName = userName,
+    modifier = modifier
+)
+

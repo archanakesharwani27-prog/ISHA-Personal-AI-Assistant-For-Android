@@ -53,10 +53,10 @@ import com.aura.assistant.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ── 1. ChatGPT TopBar ────────────────────────────────────────────────────────
+// ── 1. ISHA TopBar ────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatGPTTopBar(
+fun IshaTopBar(
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
     modifier: Modifier = Modifier
@@ -93,7 +93,7 @@ fun ChatGPTTopBar(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "AURA 2.0",
+                            text = "ISHA 2.0",
                             style = AuraTypography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
@@ -123,9 +123,16 @@ fun ChatGPTTopBar(
     )
 }
 
-// ── 2. ChatGPT Navigation Drawer ─────────────────────────────────────────────
 @Composable
-fun ChatGPTDrawer(
+fun ChatGPTTopBar(
+    onOpenDrawer: () -> Unit,
+    onNewChat: () -> Unit,
+    modifier: Modifier = Modifier
+) = IshaTopBar(onOpenDrawer, onNewChat, modifier)
+
+// ── 2. ISHA Navigation Drawer ─────────────────────────────────────────────────
+@Composable
+fun IshaDrawer(
     sessions: List<ChatSession>,
     activeSessionId: String,
     onSelectSession: (String) -> Unit,
@@ -320,7 +327,7 @@ fun ChatGPTDrawer(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Gemini API Key",
+                        text = "ISHA API Key",
                         style = AuraTypography.titleMedium.copy(
                             color = ChatGptTextPrimary,
                             fontSize = 14.sp
@@ -359,19 +366,19 @@ fun ChatGPTDrawer(
                         .background(ChatGptAccentGreen),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("A", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("I", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "AURA Settings",
+                        text = "ISHA Settings",
                         style = AuraTypography.titleMedium.copy(
                             color = ChatGptTextPrimary,
                             fontSize = 14.sp
                         )
                     )
                     Text(
-                        text = "Gemini 2.5 Flash • Native",
+                        text = "ISHA Neural Engine • Native",
                         style = AuraTypography.bodyMedium.copy(
                             color = ChatGptTextMuted,
                             fontSize = 11.sp
@@ -484,6 +491,35 @@ fun ChatGPTDrawer(
         )
     }
 }
+
+@Composable
+fun ChatGPTDrawer(
+    sessions: List<ChatSession>,
+    activeSessionId: String,
+    onSelectSession: (String) -> Unit,
+    onNewChat: () -> Unit,
+    onRenameSession: (String, String) -> Unit,
+    onDeleteSession: (String) -> Unit,
+    onClearAllChats: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenApiKeyEntry: () -> Unit = {},
+    userProfile: UserProfile = UserProfile(),
+    onLogout: () -> Unit = {},
+    modifier: Modifier = Modifier
+) = IshaDrawer(
+    sessions = sessions,
+    activeSessionId = activeSessionId,
+    onSelectSession = onSelectSession,
+    onNewChat = onNewChat,
+    onRenameSession = onRenameSession,
+    onDeleteSession = onDeleteSession,
+    onClearAllChats = onClearAllChats,
+    onOpenSettings = onOpenSettings,
+    onOpenApiKeyEntry = onOpenApiKeyEntry,
+    userProfile = userProfile,
+    onLogout = onLogout,
+    modifier = modifier
+)
 
 @Composable
 private fun DrawerSectionHeader(title: String) {
@@ -624,7 +660,7 @@ private fun DrawerSessionRow(
 
 // ── Thinking Indicator & Streaming Cursor ─────────────────────────────────────
 @Composable
-fun ChatGPTThinkingIndicator(modifier: Modifier = Modifier) {
+fun IshaThinkingIndicator(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "ThinkingAnim")
 
     val dot1Alpha by infiniteTransition.animateFloat(
@@ -694,6 +730,9 @@ fun ChatGPTThinkingIndicator(modifier: Modifier = Modifier) {
         }
     }
 }
+
+@Composable
+fun ChatGPTThinkingIndicator(modifier: Modifier = Modifier) = IshaThinkingIndicator(modifier)
 
 @Composable
 fun StreamingCursor(modifier: Modifier = Modifier) {
@@ -813,7 +852,7 @@ fun ChatMessageItem(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "A",
+                        text = "I",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
@@ -847,7 +886,7 @@ fun ChatMessageItem(
                             IconButton(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Aura Message", message.text))
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("ISHA Message", message.text))
                                     Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(24.dp)
@@ -1033,9 +1072,9 @@ private fun CodeBlockCard(code: String, onCopy: () -> Unit) {
     }
 }
 
-// ── 4. ChatGPT Empty State (Welcome Greeting + 4 Prompt Cards) ───────────────
+// ── 4. ISHA Empty State (Welcome Greeting + 4 Prompt Cards) ──────────────────
 @Composable
-fun ChatGPTEmptyState(
+fun IshaEmptyState(
     onPromptClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1063,7 +1102,7 @@ fun ChatGPTEmptyState(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "A",
+                text = "I",
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 32.sp
@@ -1123,6 +1162,12 @@ fun ChatGPTEmptyState(
         }
     }
 }
+
+@Composable
+fun ChatGPTEmptyState(
+    onPromptClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) = IshaEmptyState(onPromptClick, modifier)
 
 @Composable
 private fun PromptCard(
@@ -1203,9 +1248,9 @@ fun AttachedImageThumbnail(
     }
 }
 
-// ── 5. ChatGPT Capsule Bottom Input Bar ───────────────────────────────────────
+// ── 5. ISHA Capsule Bottom Input Bar ──────────────────────────────────────────
 @Composable
-fun ChatGPTBottomBar(
+fun IshaBottomBar(
     onSendMessage: (String) -> Unit,
     onVoiceClick: () -> Unit,
     onStopGenerating: () -> Unit,
@@ -1323,7 +1368,7 @@ fun ChatGPTBottomBar(
                     onValueChange = { text = it },
                     placeholder = {
                         Text(
-                            text = if (attachedMedia != null) "Ask about this image..." else "Message AURA...",
+                            text = if (attachedMedia != null) "Ask about this image..." else "Message ISHA...",
                             color = ChatGptTextMuted,
                             fontSize = 15.sp
                         )
@@ -1409,7 +1454,42 @@ fun ChatGPTBottomBar(
     }
 }
 
+@Composable
+fun ChatGPTBottomBar(
+    onSendMessage: (String) -> Unit,
+    onVoiceClick: () -> Unit,
+    onStopGenerating: () -> Unit,
+    onPlusClick: () -> Unit,
+    isGenerating: Boolean,
+    attachedMedia: com.aura.assistant.ui.contract.AttachedMedia? = null,
+    onClearAttachment: () -> Unit = {},
+    initialText: String = "",
+    onTextConsumed: () -> Unit = {},
+    modifier: Modifier = Modifier
+) = IshaBottomBar(
+    onSendMessage = onSendMessage,
+    onVoiceClick = onVoiceClick,
+    onStopGenerating = onStopGenerating,
+    onPlusClick = onPlusClick,
+    isGenerating = isGenerating,
+    attachedMedia = attachedMedia,
+    onClearAttachment = onClearAttachment,
+    initialText = initialText,
+    onTextConsumed = onTextConsumed,
+    modifier = modifier
+)
+
 // ── 6. Attachment & Device Tools Bottom Sheet ─────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun IshaAttachmentBottomSheet(
+    onTakePhoto: () -> Unit,
+    onPickGallery: () -> Unit,
+    onPickDocument: () -> Unit,
+    onToolSelected: (prompt: String) -> Unit,
+    onDismiss: () -> Unit
+) = AuraAttachmentBottomSheet(onTakePhoto, onPickGallery, onPickDocument, onToolSelected, onDismiss)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuraAttachmentBottomSheet(

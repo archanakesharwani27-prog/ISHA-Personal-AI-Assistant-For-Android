@@ -46,28 +46,31 @@ data class AttachedMedia(
     val isImage: Boolean = true
 )
 
-data class AuraChatMessage(
+data class IshaChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
-    val sender: MessageSender = MessageSender.AURA,
+    val sender: MessageSender = MessageSender.ISHA,
     val text: String = "",
     val timestamp: Long = System.currentTimeMillis()
 )
 
+typealias AuraChatMessage = IshaChatMessage
+
 enum class MessageSender {
     USER,
+    ISHA,
     AURA,
     TOOL_SYSTEM
 }
 
 /**
- * Main ViewModel for ChatGPT-Style AURA.
+ * Main ViewModel for ISHA.
  * Orchestrates multi-session persistence, Gemini 2.0 Flash token streaming,
  * native tool execution, and Gemini Live Advanced Voice Mode.
  */
-class AuraAssistantViewModel(application: Application) : AndroidViewModel(application) {
+class IshaAssistantViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
-        private const val TAG = "AuraViewModel"
+        private const val TAG = "IshaViewModel"
     }
 
     private val prefs = application.getSharedPreferences("aura_settings", Context.MODE_PRIVATE)
@@ -408,7 +411,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         // If user asks about the screen and hasn't manually attached an image, inject active screen context if accessibility is available
         if (attached == null && (lowerPrompt.contains("screen") || lowerPrompt.contains("ye kya chal raha") || lowerPrompt.contains("dekh kar") || lowerPrompt.contains("dekh kr"))) {
-            val a11y = com.aura.assistant.AuraAccessibilityService.instance
+            val a11y = com.aura.assistant.IshaAccessibilityService.instance
             if (a11y != null) {
                 val screenSummary = a11y.getScreenTextHierarchy()
                 if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
@@ -630,10 +633,10 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             liveClient.sendTextMessage("Boss has started live screen sharing. You are now seeing their device screen in real-time. Greet Boss briefly, tell them what you see on screen, and let them know you are watching and ready to help.")
 
             while (isActive && _isLiveScreenSharing.value) {
-                val a11y = com.aura.assistant.AuraAccessibilityService.instance
+                val a11y = com.aura.assistant.IshaAccessibilityService.instance
                 if (a11y != null) {
                     val frameDeferred = CompletableDeferred<ByteArray?>()
-                    a11y.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes ->
+                    a11y.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes: ByteArray? ->
                         frameDeferred.complete(bytes)
                     }
                     val bytes = withTimeoutOrNull(2500L) { frameDeferred.await() }
@@ -758,3 +761,7 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
         tts?.shutdown()
     }
 }
+
+/** Backward compatibility alias for AuraAssistantViewModel */
+typealias AuraAssistantViewModel = IshaAssistantViewModel
+

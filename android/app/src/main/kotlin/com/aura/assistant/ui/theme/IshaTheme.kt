@@ -107,20 +107,31 @@ val AuraTypography = Typography(
     )
 )
 
-val AuraShapes = Shapes(
+val IshaShapes = Shapes(
     small = RoundedCornerShape(8.dp),
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(24.dp)
 )
 
+val AuraShapes = IshaShapes
+val IshaTypography = AuraTypography
+val IshaDarkColorScheme = AuraDarkColorScheme
+
 @Composable
-fun AuraTheme(
+fun IshaTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = AuraDarkColorScheme,
-        typography = AuraTypography,
-        shapes = AuraShapes,
+        colorScheme = IshaDarkColorScheme,
+        typography = IshaTypography,
+        shapes = IshaShapes,
         content = content
     )
 }
+
+/** Backward compatibility alias for AuraTheme */
+@Composable
+fun AuraTheme(
+    content: @Composable () -> Unit
+) = IshaTheme(content = content)
+

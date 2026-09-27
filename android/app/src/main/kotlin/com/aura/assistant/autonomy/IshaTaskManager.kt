@@ -14,7 +14,7 @@ enum class TaskState {
     CANCELLED
 }
 
-data class AuraTask(
+data class IshaTask(
     val id: String = UUID.randomUUID().toString(),
     val goal: String,
     val toolName: String,
@@ -24,18 +24,19 @@ data class AuraTask(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+typealias AuraTask = IshaTask
+
 /**
  * Manages background long-running tasks and reminders without maintaining persistent WebSocket connections.
- * Section 26 of 2.0.md.
  */
-object AuraTaskManager {
-    private const val TAG = "AuraTaskManager"
-    private const val PREFS_NAME = "aura_tasks_vault"
+object IshaTaskManager {
+    private const val TAG = "IshaTaskManager"
+    private const val PREFS_NAME = "isha_tasks_vault"
     private const val KEY_TASKS = "tasks_list"
     private val gson = Gson()
 
-    fun scheduleTask(context: Context, goal: String, toolName: String, argsJson: String, delayMs: Long): AuraTask {
-        val task = AuraTask(
+    fun scheduleTask(context: Context, goal: String, toolName: String, argsJson: String, delayMs: Long): IshaTask {
+        val task = IshaTask(
             goal = goal,
             toolName = toolName,
             argumentsJson = argsJson,
@@ -48,11 +49,11 @@ object AuraTaskManager {
         return task
     }
 
-    fun getTasks(context: Context): List<AuraTask> {
+    fun getTasks(context: Context): List<IshaTask> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_TASKS, null) ?: return emptyList()
         return try {
-            val type = object : TypeToken<List<AuraTask>>() {}.type
+            val type = object : TypeToken<List<IshaTask>>() {}.type
             gson.fromJson(json, type) ?: emptyList()
         } catch (_: Exception) {
             emptyList()
@@ -66,8 +67,12 @@ object AuraTaskManager {
         saveTasks(context, current)
     }
 
-    private fun saveTasks(context: Context, tasks: List<AuraTask>) {
+    private fun saveTasks(context: Context, tasks: List<IshaTask>) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_TASKS, gson.toJson(tasks)).apply()
     }
 }
+
+/** Backward compatibility alias for AuraTaskManager */
+val AuraTaskManager = IshaTaskManager
+

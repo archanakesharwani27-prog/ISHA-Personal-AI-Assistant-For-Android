@@ -28,7 +28,7 @@ interface ChatStreamCallback {
 /**
  * High-performance Gemini 2.0 Flash Streaming Chat Service.
  * Implements SSE (Server-Sent Events) streaming with full multi-turn conversation memory,
- * automatic tool calling (JarvisToolRegistry), and instant generation abort support.
+ * automatic tool calling (IshaToolRegistry), and instant generation abort support.
  */
 class GeminiChatService(private val context: Context) {
 
@@ -241,7 +241,7 @@ class GeminiChatService(private val context: Context) {
                 val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
 
                 Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
-                val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
+                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
                 val resultSummary = toolResult.get("message")?.asString
                     ?: toolResult.get("status")?.asString
                     ?: "Completed"
@@ -347,7 +347,7 @@ class GeminiChatService(private val context: Context) {
             // Include tool declarations so model has schema context
             val tools = JsonArray().apply {
                 val toolHolder = JsonObject()
-                toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
+                toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
                 add(toolHolder)
             }
             add("tools", tools)
@@ -444,7 +444,7 @@ class GeminiChatService(private val context: Context) {
             for (fnCall in nextPendingFunctionCalls) {
                 val fnName = fnCall.get("name")?.asString ?: continue
                 val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
-                val toolResult = JarvisToolRegistry.executeTool(context, fnName, fnArgs)
+                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
                 val summary = toolResult.get("message")?.asString ?: toolResult.get("status")?.asString ?: "OK"
                 callback.onToolExecution(fnName, fnArgs.toString(), summary)
                 nextExecutedTools.add(Triple(fnName, fnArgs, toolResult))
@@ -515,7 +515,7 @@ class GeminiChatService(private val context: Context) {
         // 3. Tools (Function Declarations) - Full comprehensive catalog
         val tools = JsonArray().apply {
             val toolHolder = JsonObject()
-            toolHolder.add("function_declarations", JarvisToolRegistry.getGeminiToolDeclarations())
+            toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
             add(toolHolder)
         }
         root.add("tools", tools)

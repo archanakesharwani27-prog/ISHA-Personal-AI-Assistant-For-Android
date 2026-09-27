@@ -344,7 +344,7 @@ class AuraExperienceDatabase private constructor(context: Context) {
             if (records.isEmpty()) return ""
 
             val sb = StringBuilder()
-            sb.appendLine("\n📚 AURA LEARNED EXPERIENCES & LESSONS (PERSISTENT DB — ADAPTIVE MEMORY):")
+            sb.appendLine("\n📚 ISHA LEARNED EXPERIENCES & LESSONS (PERSISTENT DB — ADAPTIVE MEMORY):")
             for (r in records) {
                 val icon = if (r.verificationStatus == "VERIFIED_SUCCESS") "✅" else "⚠️"
                 val feedbackNote = if (!r.userFeedback.isNullOrBlank()) " (User said: \"${r.userFeedback}\")" else ""

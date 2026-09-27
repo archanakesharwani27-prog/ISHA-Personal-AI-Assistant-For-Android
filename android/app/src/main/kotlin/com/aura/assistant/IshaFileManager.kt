@@ -19,7 +19,7 @@ import java.util.Locale
 import java.util.UUID
 
 /**
- * Jarvis-level file & storage operations for AURA.
+ * ISHA-level file & storage operations.
  *
  * Design principles:
  *  - Every destructive write goes through the Safety Vault → always reversible.
@@ -29,10 +29,10 @@ import java.util.UUID
  *  - StorageStatsManager is used on API 26+ for accurate per-app byte counts;
  *    a best-effort fallback is used on older builds.
  */
-object JarvisFileManager {
+object IshaFileManager {
 
-    private const val TAG = "JarvisFileManager"
-    private const val VAULT_DIR = "AuraRecycleBin"
+    private const val TAG = "IshaFileManager"
+    private const val VAULT_DIR = "IshaRecycleBin"
 
     // ── Data Models ──────────────────────────────────────────────────────────
 
@@ -440,4 +440,8 @@ private const val QA_SORT   = "android:query-arg-sql-sort-order"
 private const val QA_SEL    = "android:query-arg-sql-selection"
 private const val QA_ARGS   = "android:query-arg-sql-selection-args"
 private const val QA_LIMIT  = "android:query-arg-limit"
+
+/** Backward compatibility alias for JarvisFileManager */
+val JarvisFileManager = IshaFileManager
+
 

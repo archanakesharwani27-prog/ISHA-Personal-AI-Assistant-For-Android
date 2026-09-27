@@ -203,7 +203,7 @@ object ExperienceMemory {
         if (selected.isEmpty()) return ""
 
         val sb = StringBuilder()
-        sb.appendLine("\n📚 AURA'S LEARNED EXPERIENCES & LESSONS (IN_MEMORY — DO NOT REPEAT MISTAKES):")
+        sb.appendLine("\n📚 ISHA'S LEARNED EXPERIENCES & LESSONS (IN_MEMORY — DO NOT REPEAT MISTAKES):")
         for (l in selected) {
             val icon = if (l.success) "✅" else "⚠️"
             sb.appendLine("$icon [${l.toolName}]: ${l.lesson}")

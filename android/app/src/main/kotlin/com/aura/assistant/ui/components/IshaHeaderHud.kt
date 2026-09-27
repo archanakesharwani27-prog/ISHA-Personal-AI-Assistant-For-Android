@@ -23,7 +23,7 @@ import com.aura.assistant.ai.AuraLiveState
 import com.aura.assistant.ui.theme.*
 
 @Composable
-fun AuraHeaderHud(
+fun IshaHeaderHud(
     liveState: AuraLiveState,
     onClearChat: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -71,7 +71,7 @@ fun AuraHeaderHud(
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "AURA",
+                        text = "ISHA",
                         style = AuraTypography.headlineMedium.copy(
                             fontWeight = FontWeight.Black,
                             letterSpacing = 3.sp,
@@ -95,7 +95,7 @@ fun AuraHeaderHud(
                     }
                 }
                 Text(
-                    text = "Gemini Live  •  Low-Latency Engine",
+                    text = "ISHA Live  •  Low-Latency Engine",
                     style = AuraTypography.bodyMedium.copy(
                         fontSize = 10.sp,
                         color = AuraTextMuted
@@ -190,3 +190,19 @@ fun AuraHeaderHud(
         }
     }
 }
+
+@Composable
+fun AuraHeaderHud(
+    liveState: AuraLiveState,
+    onClearChat: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onRetryConnection: () -> Unit,
+    modifier: Modifier = Modifier
+) = IshaHeaderHud(
+    liveState = liveState,
+    onClearChat = onClearChat,
+    onOpenSettings = onOpenSettings,
+    onRetryConnection = onRetryConnection,
+    modifier = modifier
+)
+

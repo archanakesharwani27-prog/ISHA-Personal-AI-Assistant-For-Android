@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AuraApiKeyScreen(
+fun IshaApiKeyScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -71,7 +71,7 @@ fun AuraApiKeyScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Gemini API Key",
+                        text = "ISHA API Key",
                         style = AuraTypography.titleMedium.copy(
                             color = ChatGptTextPrimary,
                             fontWeight = FontWeight.Bold,
@@ -131,7 +131,7 @@ fun AuraApiKeyScreen(
             Spacer(modifier = Modifier.height(18.dp))
 
             Text(
-                text = "AURA Brain Activation",
+                text = "ISHA Brain Activation",
                 style = AuraTypography.titleLarge.copy(
                     color = ChatGptTextPrimary,
                     fontWeight = FontWeight.Bold,
@@ -142,7 +142,7 @@ fun AuraApiKeyScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Enter your Google Gemini API key to power AURA's intelligence, voice duplex mode, and device automation.",
+                text = "Enter your API key to power ISHA's intelligence, voice duplex mode, and device automation.",
                 style = AuraTypography.bodyMedium.copy(
                     color = ChatGptTextSecondary,
                     fontSize = 13.sp,
@@ -238,7 +238,7 @@ fun AuraApiKeyScreen(
                     validationError = null
                 },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Gemini API Key", color = ChatGptTextMuted) },
+                label = { Text("ISHA API Key", color = ChatGptTextMuted) },
                 placeholder = { Text("Paste your API key here...", color = ChatGptTextMuted) },
                 leadingIcon = {
                     Icon(
@@ -485,7 +485,7 @@ fun AuraApiKeyScreen(
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Get Free Gemini API Key",
+                            text = "Get Free API Key",
                             style = AuraTypography.bodyLarge.copy(
                                 color = ChatGptTextPrimary,
                                 fontWeight = FontWeight.SemiBold,
@@ -541,3 +541,13 @@ fun AuraApiKeyScreen(
         }
     }
 }
+
+@Composable
+fun AuraApiKeyScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) = IshaApiKeyScreen(
+    onBack = onBack,
+    modifier = modifier
+)
+

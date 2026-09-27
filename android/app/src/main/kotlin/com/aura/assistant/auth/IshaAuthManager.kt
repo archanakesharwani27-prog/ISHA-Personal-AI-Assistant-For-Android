@@ -39,7 +39,7 @@ data class UserProfile(
 )
 
 /**
- * Central Authentication & Real-Time Cloud User Telemetry Manager for AURA.
+ * Central Authentication & Real-Time Cloud User Telemetry Manager for ISHA.
  * Backed by Firebase Cloud Backend (Auth + Firestore + Analytics)
  * Supports:
  * 1. Official Cloud Email/Password Sign Up & Sign In with Firebase Authentication
@@ -48,11 +48,11 @@ data class UserProfile(
  * 4. Device metadata (model, OS version) and active session logging
  * 5. Instant offline cache fallback
  */
-object AuraAuthManager {
+object IshaAuthManager {
 
-    private const val TAG = "AuraAuthManager"
-    private const val PREFS_SESSION = "aura_auth_session"
-    private const val PREFS_ACCOUNTS = "aura_registered_accounts"
+    private const val TAG = "IshaAuthManager"
+    private const val PREFS_SESSION = "isha_auth_session"
+    private const val PREFS_ACCOUNTS = "isha_registered_accounts"
 
     private const val KEY_IS_LOGGED_IN = "is_logged_in"
     private const val KEY_USER_UID = "user_uid"
@@ -622,3 +622,7 @@ object AuraAuthManager {
         return colors[hash % colors.size]
     }
 }
+
+/** Backward compatibility alias for AuraAuthManager */
+val AuraAuthManager = IshaAuthManager
+

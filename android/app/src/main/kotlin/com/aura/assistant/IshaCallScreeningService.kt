@@ -21,10 +21,10 @@ import androidx.annotation.RequiresApi
  * the caller's name cleanly before loud ringtone interference!
  */
 @RequiresApi(Build.VERSION_CODES.Q)
-class AuraCallScreeningService : CallScreeningService() {
+open class IshaCallScreeningService : CallScreeningService() {
 
     companion object {
-        private const val TAG = "AuraCallScreening"
+        private const val TAG = "IshaCallScreening"
         const val ACTION_PRE_CALL_SCREENED = "com.aura.PRE_CALL_SCREENED"
         const val EXTRA_NUMBER = "number"
         const val EXTRA_CALLER_NAME = "callerName"
@@ -80,3 +80,8 @@ class AuraCallScreeningService : CallScreeningService() {
         }
     }
 }
+
+/** Backward compatibility subclass for AuraCallScreeningService */
+@RequiresApi(Build.VERSION_CODES.Q)
+class AuraCallScreeningService : IshaCallScreeningService()
+
