@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aura.assistant.WakeWordService
 import com.aura.assistant.ai.AuraLiveState
+import com.aura.assistant.ai.AuraMemoryManager
 import com.aura.assistant.ai.ChatStreamCallback
 import com.aura.assistant.ai.GeminiChatService
 import com.aura.assistant.ai.GeminiLiveClient
@@ -365,14 +366,29 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         var promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
 
-        // If user asks about the screen and hasn't manually attached an image, inject active screen context if accessibility is available
+        // Implicit memory auto-extraction: continuously learn user facts from chat
+        if (trimmed.isNotBlank()) {
+            AuraMemoryManager.extractAndSaveImplicitFacts(getApplication<Application>(), trimmed)
+        }
+
+        // Cross-session context search if user asks about past conversations or memory
         val lowerPrompt = trimmed.lowercase()
+        if (lowerPrompt.contains("pichhli") || lowerPrompt.contains("pehle") || lowerPrompt.contains("kal") || 
+            lowerPrompt.contains("bataya tha") || lowerPrompt.contains("past") || lowerPrompt.contains("yaad hai")) {
+            val pastSnippets = repository.searchPastConversations(trimmed)
+            if (pastSnippets.isNotEmpty()) {
+                val pastContext = pastSnippets.joinToString("\n")
+                promptToSend = "$promptToSend\n\n[Relevant Past Conversation Context]:\n$pastContext"
+            }
+        }
+
+        // If user asks about the screen and hasn't manually attached an image, inject active screen context if accessibility is available
         if (attached == null && (lowerPrompt.contains("screen") || lowerPrompt.contains("ye kya chal raha") || lowerPrompt.contains("dekh kar") || lowerPrompt.contains("dekh kr"))) {
             val a11y = com.aura.assistant.AuraAccessibilityService.instance
             if (a11y != null) {
                 val screenSummary = a11y.getScreenTextHierarchy()
                 if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
-                    promptToSend = "$trimmed\n\n[Active Screen Context]:\n$screenSummary"
+                    promptToSend = "$promptToSend\n\n[Active Screen Context]:\n$screenSummary"
                 }
             }
         }
@@ -395,7 +411,8 @@ class AuraAssistantViewModel(application: Application) : AndroidViewModel(applic
             isStreaming = true
         )
 
-        val previousHistory = _chatMessages.value.filter { it.role != MessageRole.TOOL }
+        // Preserve full conversation history including Tool execution outputs for maximum contextual continuity
+        val previousHistory = _chatMessages.value
 
         val updatedList = _chatMessages.value.toMutableList().apply {
             add(userMsg)

@@ -4870,6 +4870,7 @@ object JarvisToolRegistry {
         val elapsedMs = System.currentTimeMillis() - toolStartTime
         result.addProperty("execution_time_ms", elapsedMs)
         Log.i(TAG, "⚡ [LATENCY] Tool '$name' completed in ${elapsedMs}ms | status: ${result.get("status")?.asString}")
+        AuraMemoryManager.recordLastAction(name, args.toString(), result.get("status")?.asString ?: "unknown")
 
         return result
     }

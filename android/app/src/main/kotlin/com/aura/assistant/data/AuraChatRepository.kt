@@ -174,4 +174,28 @@ class AuraChatRepository(context: Context) {
             Log.e(TAG, "Error saving messages for session $sessionId", e)
         }
     }
+
+    /**
+     * Cross-Session Context Recall: Searches prior conversations for keywords or topics.
+     */
+    @Synchronized
+    fun searchPastConversations(query: String, maxResults: Int = 3): List<String> {
+        val results = mutableListOf<String>()
+        val terms = query.lowercase().split(Regex("[\\s,_?.!\\-]+")).filter { it.length > 2 }
+        if (terms.isEmpty()) return emptyList()
+
+        val allSessions = getAllSessions()
+        for (session in allSessions) {
+            val msgs = getMessages(session.id)
+            for (msg in msgs) {
+                val lower = msg.text.lowercase()
+                if (terms.any { lower.contains(it) }) {
+                    val prefix = if (msg.role == MessageRole.USER) "Boss" else "Aura"
+                    results.add("[Session: ${session.title}] $prefix: \"${msg.text.take(120)}\"")
+                    if (results.size >= maxResults) return results
+                }
+            }
+        }
+        return results
+    }
 }

@@ -2,6 +2,7 @@ package com.aura.assistant.ai
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
@@ -34,6 +35,7 @@ data class LearnedCommandRule(
  */
 object AuraMemoryManager {
 
+    private const val TAG = "AuraMemoryManager"
     private const val PREFS_NAME = "aura_memory_vault"
     private const val MEM_PREFIX = "fact_"
     private const val KEY_USER_NAME = "user_name"
@@ -232,6 +234,107 @@ object AuraMemoryManager {
         return sb.toString()
     }
 
+    data class ActionSnapshot(
+        val toolName: String,
+        val args: String,
+        val status: String,
+        val timestamp: Long = System.currentTimeMillis()
+    )
+
+    @Volatile
+    var lastAction: ActionSnapshot? = null
+
+    fun recordLastAction(toolName: String, args: String, status: String) {
+        lastAction = ActionSnapshot(toolName, args, status, System.currentTimeMillis())
+        Log.i(TAG, "⚡ [CONTEXT] Recorded last action: $toolName (status: $status)")
+    }
+
+    /**
+     * Builds real-time device context snapshot to make AURA contextually aware:
+     * - Current active foreground app/package on screen
+     * - Battery level & charging state
+     * - Last executed tool and parameters (for resolving "off krdo", "wapas karo", "phir se karo")
+     */
+    fun buildLiveContextSection(context: Context): String {
+        val sb = StringBuilder()
+        sb.appendLine("\n📱 ACTIVE RUNTIME & DEVICE CONTEXT (LIVE GROUNDING):")
+
+        // 1. Active Screen / Foreground App
+        val a11y = com.aura.assistant.AuraAccessibilityService.instance
+        val fgPkg = a11y?.rootInActiveWindow?.packageName?.toString() ?: "com.aura.assistant"
+        sb.appendLine("• Foreground Screen/App: $fgPkg")
+
+        // 2. Battery & Power State
+        try {
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+            val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            if (level >= 0) {
+                val ifilter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+                val bStatus = context.registerReceiver(null, ifilter)
+                val status = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                                 status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                sb.appendLine("• Battery: $level% (Charging: $isCharging)")
+            }
+        } catch (_: Exception) {}
+
+        // 3. Last Action & Context Tracking
+        val action = lastAction
+        if (action != null) {
+            val secondsAgo = (System.currentTimeMillis() - action.timestamp) / 1000
+            sb.appendLine("• Last Action Executed: Tool '${action.toolName}' (args: ${action.args}, status: ${action.status}) $secondsAgo seconds ago.")
+            sb.appendLine("  -> PRONOUN & SHORTHAND RULE: If Boss says 'off krdo', 'ise band karo', 'wapas karo', 'repeat karo', 'isko...', this refers directly to '${action.toolName}'!")
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Automatically extracts user facts and preferences from casual conversation
+     * without requiring explicit "remember this" commands.
+     */
+    fun extractAndSaveImplicitFacts(context: Context, text: String) {
+        val clean = text.trim()
+        val patterns = listOf(
+            Regex("(?:mera|meri)\\s+favourite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
+            Regex("(?:mera|meri)\\s+favorite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
+            Regex("(?:mera|meri)\\s+pasandida\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
+            Regex("(?:mera)\\s+naam\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "user_name",
+            Regex("(?:my\\s+name\\s+is)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+)", RegexOption.IGNORE_CASE) to "user_name",
+            Regex("(?:main|mein)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+(?:mein|me)\\s+rehta\\s+hoon", RegexOption.IGNORE_CASE) to "location",
+            Regex("(?:mera|meri)\\s+birthday\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "birthday",
+            Regex("(?:mera|meri)\\s+janmdin\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "birthday",
+            Regex("(?:mera)\\s+dost\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "friend",
+            Regex("(?:mera)\\s+phone\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "phone_model"
+        )
+
+        for ((regex, keyPrefix) in patterns) {
+            val match = regex.find(clean)
+            if (match != null) {
+                if (keyPrefix == "favorite_") {
+                    val category = match.groupValues[1].trim().lowercase()
+                    val value = match.groupValues[2].trim()
+                    if (category.isNotBlank() && value.isNotBlank()) {
+                        rememberFact(context, "favorite_$category", value)
+                        Log.i(TAG, "🧠 [AUTO-MEMORY] Extracted favorite: favorite_$category = $value")
+                    }
+                } else if (keyPrefix == "user_name") {
+                    val name = match.groupValues[1].trim()
+                    if (name.isNotBlank()) {
+                        rememberFact(context, "user_name", name)
+                        Log.i(TAG, "🧠 [AUTO-MEMORY] Extracted user name = $name")
+                    }
+                } else {
+                    val value = match.groupValues[1].trim()
+                    if (value.isNotBlank()) {
+                        rememberFact(context, keyPrefix, value)
+                        Log.i(TAG, "🧠 [AUTO-MEMORY] Extracted implicit memory: $keyPrefix = $value")
+                    }
+                }
+            }
+        }
+    }
+
     // ╔══════════════════════════════════════════════════════════════════════════════════╗
     // ║ 🔒 STRICTLY FROZEN - AURA PERSONA, CREATOR ATTRIBUTION & WORKING ARCHITECTURE  ║
     // ║ Female AI companion created by Ansh Kesharwani, addressing user as "Boss".       ║
@@ -243,6 +346,7 @@ object AuraMemoryManager {
         val learnedRulesSection = formatLearnedRulesSection(context)
         val memorySection = formatMemorySection(context)
         val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
+        val liveContextSection = buildLiveContextSection(context)
 
         return """
 Aap AURA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet, loyal aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap advanced AI models se powered hain aur device ko directly control karti hain.
@@ -253,6 +357,7 @@ Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userNa
 $learnedRulesSection
 $memorySection
 $lessonsSection
+$liveContextSection
 
 
 CORE INTELLIGENCE FRAMEWORK — CLAUDE SONNET + GPT-4o FUSION ENGINE
