@@ -22,6 +22,8 @@ The entire complete codebase prior to the ISHA rename is permanently preserved a
 2. **GitHub Git Tag**: `aura-pre-rename-v2.0`
 3. **Pre-Rename Commit**: `aa9b4f43e66b21e2bc3f14d6af7ac2634013eb3e` (Date: 27 September 2026, 15:16:17 IST)
 4. **Local Standalone Zip Archive**: `D:\Projects\aura_pre_rename_backup_20260928.zip` (37.5 MB, contains all 317 full source files including original `JarvisToolRegistry.kt`, `AuraNotificationListenerService.kt`, `AuraMainScreen.kt`, and `build_aura.bat`).
+5. **New Public GitHub Repo**: `https://github.com/archanakesharwani27-prog/ISHA-Personal-AI-Assistant-For-Android.git` (Remote: `isha`).
+   - *Rule*: Do NOT push old commits or hardcoded secrets. When generating the next build, initialize a fresh clean commit with sanitized/placeholder secrets and push to `main`.
 - To checkout or inspect pre-rename state at any time:
   ```bash
   git checkout backup/aura-pre-rename
