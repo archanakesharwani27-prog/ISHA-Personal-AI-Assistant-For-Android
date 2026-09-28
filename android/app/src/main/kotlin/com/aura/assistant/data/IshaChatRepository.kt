@@ -37,7 +37,7 @@ data class ChatMessage(
  * Local persistent storage repository for conversations.
  * Stores sessions and chat message history in internal JSON files.
  */
-class IshaChatRepository(context: Context) {
+class IshaChatRepository(private val context: Context, initialUserId: String = "guest") {
 
     companion object {
         private const val TAG = "IshaChatRepo"
@@ -46,11 +46,62 @@ class IshaChatRepository(context: Context) {
     }
 
     private val gson = Gson()
-    private val rootDir = File(context.filesDir, CHATS_DIR).apply { if (!exists()) mkdirs() }
-    private val sessionsFile = File(rootDir, SESSIONS_FILE)
+    @Volatile private var currentUserId: String = sanitizeUserId(initialUserId)
+
+    private fun sanitizeUserId(uid: String): String {
+        val clean = uid.trim().lowercase()
+        return if (clean.isBlank()) "guest" else clean.replace(Regex("[^a-zA-Z0-9_]"), "_")
+    }
+
+    private fun getUserDir(): File {
+        val dir = File(context.filesDir, "$CHATS_DIR/user_$currentUserId")
+        if (!dir.exists()) {
+            dir.mkdirs()
+            // Auto-migrate legacy root sessions if this is the first user directory
+            migrateLegacySessionsIfNeeded(dir)
+        }
+        return dir
+    }
+
+    private fun getSessionsFile(): File = File(getUserDir(), SESSIONS_FILE)
+
+    private fun migrateLegacySessionsIfNeeded(targetUserDir: File) {
+        try {
+            val legacyRootDir = File(context.filesDir, CHATS_DIR)
+            val legacySessionsFile = File(legacyRootDir, SESSIONS_FILE)
+            if (legacySessionsFile.exists()) {
+                val targetFile = File(targetUserDir, SESSIONS_FILE)
+                if (!targetFile.exists()) {
+                    legacySessionsFile.copyTo(targetFile, overwrite = true)
+                    legacyRootDir.listFiles()?.forEach { f ->
+                        if (f.name.startsWith("session_") && f.name.endsWith(".json")) {
+                            f.copyTo(File(targetUserDir, f.name), overwrite = true)
+                        }
+                    }
+                    Log.i(TAG, "Migrated legacy chats to user directory: ${targetUserDir.name}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy migration error", e)
+        }
+    }
+
+    @Synchronized
+    fun switchUser(userId: String) {
+        val clean = sanitizeUserId(userId)
+        if (clean != currentUserId) {
+            Log.i(TAG, "Switching chat partition: $currentUserId -> $clean")
+            currentUserId = clean
+            getUserDir() // ensure directory exists
+        }
+    }
+
+    @Synchronized
+    fun getCurrentUserId(): String = currentUserId
 
     @Synchronized
     fun getAllSessions(): MutableList<ChatSession> {
+        val sessionsFile = getSessionsFile()
         return try {
             if (!sessionsFile.exists()) {
                 val defaultSession = ChatSession(title = "New Chat")
@@ -106,7 +157,7 @@ class IshaChatRepository(context: Context) {
         }
         saveSessions(sessions)
 
-        val sessionMsgFile = File(rootDir, "session_$sessionId.json")
+        val sessionMsgFile = File(getUserDir(), "session_$sessionId.json")
         if (sessionMsgFile.exists()) {
             sessionMsgFile.delete()
         }
@@ -116,7 +167,7 @@ class IshaChatRepository(context: Context) {
     fun clearAllSessions(): ChatSession {
         val defaultSession = ChatSession(title = "New Chat")
         saveSessions(mutableListOf(defaultSession))
-        rootDir.listFiles()?.forEach { file ->
+        getUserDir().listFiles()?.forEach { file ->
             if (file.name.startsWith("session_")) {
                 file.delete()
             }
@@ -127,7 +178,7 @@ class IshaChatRepository(context: Context) {
     @Synchronized
     private fun saveSessions(sessions: List<ChatSession>) {
         try {
-            sessionsFile.writeText(gson.toJson(sessions))
+            getSessionsFile().writeText(gson.toJson(sessions))
         } catch (e: Exception) {
             Log.e(TAG, "Error saving sessions", e)
         }
@@ -135,7 +186,7 @@ class IshaChatRepository(context: Context) {
 
     @Synchronized
     fun getMessages(sessionId: String): MutableList<ChatMessage> {
-        val file = File(rootDir, "session_$sessionId.json")
+        val file = File(getUserDir(), "session_$sessionId.json")
         return try {
             if (!file.exists()) {
                 mutableListOf()
@@ -153,7 +204,7 @@ class IshaChatRepository(context: Context) {
     @Synchronized
     fun saveMessages(sessionId: String, messages: List<ChatMessage>) {
         try {
-            val file = File(rootDir, "session_$sessionId.json")
+            val file = File(getUserDir(), "session_$sessionId.json")
             file.writeText(gson.toJson(messages))
 
             // Update session timestamp

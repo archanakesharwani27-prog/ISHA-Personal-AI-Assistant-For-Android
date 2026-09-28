@@ -131,7 +131,16 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     private val _isApiKeyScreenVisible = MutableStateFlow(false)
     val isApiKeyScreenVisible: StateFlow<Boolean> = _isApiKeyScreenVisible.asStateFlow()
 
+    // ── Reactive Settings State ───────────────────────────────────────────────
+    val settingsState = com.aura.assistant.ui.components.IshaSettingsManager.settingsState
+    val textSize = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedTextSize(application))
+    val selectedVoice = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedVoice(application))
+    val selectedLanguage = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedLanguage(application))
+    val isSoundEnabled = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.settingsState.value.isSoundEnabled)
+
     init {
+        com.aura.assistant.ui.components.IshaSettingsManager.init(application)
+        com.aura.assistant.ai.IshaContactMemoryManager.init(application)
         initTts()
         loadInitialSessions()
 
@@ -744,7 +753,53 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun setMessageSpeakEnabled(enabled: Boolean) {
         _isMessageSpeakEnabled.value = enabled
-        prefs.edit().putBoolean("message_speak_enabled", enabled).apply()
+        com.aura.assistant.ui.components.IshaSettingsManager.setMessageSpeak(getApplication(), enabled)
+    }
+
+    fun setTextSize(size: String) {
+        com.aura.assistant.ui.components.IshaSettingsManager.setTextSize(getApplication(), size)
+        textSize.value = size
+    }
+
+    fun setSelectedVoice(voice: String) {
+        com.aura.assistant.ui.components.IshaSettingsManager.setVoice(getApplication(), voice)
+        selectedVoice.value = voice
+        liveClient.setActiveVoice(voice)
+    }
+
+    fun setSelectedLanguage(lang: String) {
+        com.aura.assistant.ui.components.IshaSettingsManager.setLanguage(getApplication(), lang)
+        selectedLanguage.value = lang
+        try {
+            val loc = when (lang) {
+                "Hindi" -> Locale("hi", "IN")
+                "English" -> Locale.US
+                else -> Locale("en", "IN")
+            }
+            tts?.language = loc
+        } catch (_: Exception) {}
+    }
+
+    fun setSoundEnabled(enabled: Boolean) {
+        com.aura.assistant.ui.components.IshaSettingsManager.setSoundEnabled(getApplication(), enabled)
+        isSoundEnabled.value = enabled
+    }
+
+    /**
+     * Switched active user partition: Clears previous user's chat memory and loads target user's private sessions!
+     */
+    fun switchUser(userProfile: com.aura.assistant.auth.UserProfile) {
+        val uid = if (userProfile.isLoggedIn) userProfile.uid.ifBlank { userProfile.email } else "guest"
+        val prevUid = repository.getCurrentUserId()
+        if (uid != prevUid) {
+            Log.i(TAG, "Switching user partition in ViewModel: $prevUid -> $uid")
+            repository.switchUser(uid)
+            val userSessions = repository.getAllSessions()
+            _sessions.value = userSessions
+            val target = userSessions.firstOrNull() ?: repository.createSession("New Chat")
+            _activeSessionId.value = target.id
+            _chatMessages.value = repository.getMessages(target.id)
+        }
     }
 
     override fun onCleared() {

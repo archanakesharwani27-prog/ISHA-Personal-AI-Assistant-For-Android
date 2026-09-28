@@ -761,11 +761,17 @@ fun ChatMessageItem(
     onSpeak: (String) -> Unit,
     onRegenerate: () -> Unit,
     onEditPrompt: ((String) -> Unit)? = null,
+    textSize: String = "Default",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
+    val textScale = when (textSize) {
+        "Small" -> 0.85f
+        "Large" -> 1.25f
+        else -> 1.0f
+    }
 
     if (isTool) {
         // Suppress tool execution pill for pristine chat aesthetic
@@ -824,8 +830,8 @@ fun ChatMessageItem(
                             text = message.text,
                             style = AuraTypography.bodyLarge.copy(
                                 color = ChatGptTextPrimary,
-                                fontSize = 15.sp,
-                                lineHeight = 22.sp
+                                fontSize = (15 * textScale).sp,
+                                lineHeight = (22 * textScale).sp
                             )
                         )
                     }
@@ -866,7 +872,7 @@ fun ChatMessageItem(
                         ChatGPTThinkingIndicator()
                     } else {
                         SelectionContainer {
-                            RenderMarkdownText(text = message.text)
+                            RenderMarkdownText(text = message.text, textScale = textScale)
                         }
 
                         if (message.isStreaming) {
@@ -934,7 +940,7 @@ fun ChatMessageItem(
 
 // ── Markdown Parser & Formatter ──────────────────────────────────────────────
 @Composable
-fun RenderMarkdownText(text: String) {
+fun RenderMarkdownText(text: String, textScale: Float = 1.0f) {
     val context = LocalContext.current
     val lines = text.split("\n")
     var inCodeBlock = false
@@ -971,7 +977,7 @@ fun RenderMarkdownText(text: String) {
                     text = trimmed.removePrefix("# ").trim(),
                     style = AuraTypography.headlineMedium.copy(
                         color = ChatGptTextPrimary,
-                        fontSize = 18.sp,
+                        fontSize = (18 * textScale).sp,
                         fontWeight = FontWeight.Bold
                     )
                 )
@@ -980,19 +986,19 @@ fun RenderMarkdownText(text: String) {
                     text = trimmed.removePrefix("## ").trim(),
                     style = AuraTypography.titleMedium.copy(
                         color = ChatGptTextPrimary,
-                        fontSize = 16.sp,
+                        fontSize = (16 * textScale).sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 )
             } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
                 Row(modifier = Modifier.padding(start = 4.dp)) {
-                    Text(text = "• ", color = ChatGptAccentGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "• ", color = ChatGptAccentGreen, fontSize = (14 * textScale).sp, fontWeight = FontWeight.Bold)
                     Text(
                         text = cleanInlineMarkdown(trimmed.substring(2)),
                         style = AuraTypography.bodyLarge.copy(
                             color = ChatGptTextPrimary,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp
+                            fontSize = (14 * textScale).sp,
+                            lineHeight = (20 * textScale).sp
                         )
                     )
                 }
@@ -1001,8 +1007,8 @@ fun RenderMarkdownText(text: String) {
                     text = cleanInlineMarkdown(trimmed),
                     style = AuraTypography.bodyLarge.copy(
                         color = ChatGptTextPrimary,
-                        fontSize = 14.sp,
-                        lineHeight = 21.sp
+                        fontSize = (14 * textScale).sp,
+                        lineHeight = (21 * textScale).sp
                     )
                 )
             } else {

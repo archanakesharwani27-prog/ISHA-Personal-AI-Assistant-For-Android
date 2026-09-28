@@ -60,6 +60,17 @@ open class IshaCallScreeningService : CallScreeningService() {
 
     private fun resolveContactName(number: String): String {
         if (number.isBlank()) return "Unknown Caller"
+
+        // 1. Check ISHA's persistent Contact Memory (with old number awareness!)
+        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(this, number)
+        if (memoryMatch != null) {
+            return if (memoryMatch.isOldNumber) {
+                "${memoryMatch.name} (purana number)"
+            } else {
+                memoryMatch.name
+            }
+        }
+
         return try {
             val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
             val cursor: Cursor? = contentResolver.query(

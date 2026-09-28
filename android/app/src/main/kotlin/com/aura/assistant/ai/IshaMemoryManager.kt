@@ -368,6 +368,7 @@ object IshaMemoryManager {
         val learnedRulesSection = formatLearnedRulesSection(context)
         val memorySection = formatMemorySection(context)
         val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
+        val contactSection = IshaContactMemoryManager.buildPromptContext(context)
         val liveContextSection = buildLiveContextSection(context)
 
         return """
@@ -378,6 +379,7 @@ Session start timestamp: $now (NOTE: Do NOT use this for answering "time kya hai
 Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
 $learnedRulesSection
 $memorySection
+$contactSection
 $lessonsSection
 $liveContextSection
 

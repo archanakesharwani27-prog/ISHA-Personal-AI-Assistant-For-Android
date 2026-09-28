@@ -87,23 +87,30 @@ object IshaCallAnnouncerManager {
      * Triggered when an incoming cellular or VoIP call starts ringing.
      */
     fun onCallRinging(context: Context, callerName: String, number: String) {
-        val cleanName = if (callerName.isNotBlank() && callerName != "Unknown Caller") callerName else ""
         val cleanNumber = number.trim()
+        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(context, cleanNumber)
+        val cleanName = when {
+            memoryMatch != null -> memoryMatch.name
+            callerName.isNotBlank() && callerName != "Unknown Caller" -> callerName
+            else -> ""
+        }
+        val isOldNumber = memoryMatch?.isOldNumber == true
 
         isRinging = true
         currentCallerName = cleanName
         currentCallerNumber = cleanNumber
 
-        Log.i(TAG, "Incoming call ringing from: '$cleanName' ($cleanNumber)")
+        Log.i(TAG, "Incoming call ringing from: '$cleanName' ($cleanNumber) [OldNumber=$isOldNumber]")
 
         // 1. Show interactive floating Heads-Up UI for direct hand tap
-        showFloatingCallHud(context, cleanName.ifBlank { cleanNumber }.ifBlank { "Unknown Caller" })
+        val hudTitle = if (isOldNumber) "$cleanName (Old Number)" else cleanName.ifBlank { cleanNumber }.ifBlank { "Unknown Caller" }
+        showFloatingCallHud(context, hudTitle)
 
         // 2. Start Hand Wave & Proximity Gesture Listener
         startProximityHandSensor(context)
 
         // 3. Announce Caller Name via TTS
-        announceCallerWithPrompt(context, cleanName, cleanNumber)
+        announceCallerWithPrompt(context, cleanName, cleanNumber, isOldNumber)
     }
 
     /**
@@ -124,13 +131,17 @@ object IshaCallAnnouncerManager {
     }
 
     // ── 1. Caller Announcement with Voice Prompt ──────────────────────────────
-    private fun announceCallerWithPrompt(context: Context, callerName: String, number: String) {
+    private fun announceCallerWithPrompt(context: Context, callerName: String, number: String, isOldNumber: Boolean = false) {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val ringMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
         if (ringMode == AudioManager.RINGER_MODE_SILENT) return
 
         val displayName = callerName.ifBlank { number }.ifBlank { "Unknown Caller" }
-        val speechText = "Incoming call from $displayName. Say Accept to answer, or Decline to reject."
+        val speechText = if (isOldNumber) {
+            "Incoming call from $displayName ke purane number se. Say Accept to answer, or Decline to reject."
+        } else {
+            "Incoming call from $displayName. Say Accept to answer, or Decline to reject."
+        }
 
         if (nativeTts == null) init(context)
 

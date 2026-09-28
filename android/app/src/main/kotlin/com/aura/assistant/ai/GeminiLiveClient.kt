@@ -104,6 +104,14 @@ class GeminiLiveClient(private val context: Context) {
 
     private var activeModel = PRIMARY_LIVE_MODEL
     private var isFallbackAttempt = false
+    private var activeVoiceName: String = com.aura.assistant.ui.components.IshaSettingsManager.getSavedVoice(context)
+
+    fun setActiveVoice(voice: String) {
+        if (voice.isNotBlank()) {
+            activeVoiceName = voice
+            Log.i(TAG, "Gemini Live voice updated to: $voice")
+        }
+    }
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
@@ -378,7 +386,7 @@ class GeminiLiveClient(private val context: Context) {
                     val speechConfig = JsonObject().apply {
                         val voiceConfig = JsonObject().apply {
                             val prebuilt = JsonObject().apply {
-                                addProperty("voiceName", FROZEN_VOICE_NAME)
+                                addProperty("voiceName", activeVoiceName)
                             }
                             add("prebuiltVoiceConfig", prebuilt)
                         }

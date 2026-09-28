@@ -1,6 +1,7 @@
 package com.aura.assistant.brain
 
 import android.content.Context
+import com.aura.assistant.ai.IshaContactMemoryManager
 import com.aura.assistant.ai.IshaToolRegistry
 import com.google.gson.JsonObject
 import java.util.regex.Pattern
@@ -324,6 +325,49 @@ object OfflineReflexEngine {
             return OfflineReflexResult("get_daily_briefing", msg, true)
         }
 
+        // 17. Contact Memory Reflex (Save & Update Phone Numbers with Versioning)
+        val phoneNum = extractPhoneNumber(prompt)
+        val hasContactIntent = (clean.contains("number") || clean.contains("no") || clean.contains("phone") || clean.contains("mobile") || clean.contains("contact")) &&
+                (clean.contains("save") || clean.contains("update") || clean.contains("yaad") || clean.contains("rakh") || clean.contains("store") || clean.contains("likh") || clean.contains("ka hai") || clean.contains("ki hai"))
+        if (phoneNum != null && hasContactIntent) {
+            val contactName = extractContactName(prompt, phoneNum)
+            if (contactName.isNotBlank() && contactName.length >= 2) {
+                val updateResult = if (execute) {
+                    IshaContactMemoryManager.rememberOrUpdateContact(context, contactName, phoneNum)
+                } else {
+                    com.aura.assistant.ai.ContactUpdateResult(contactName, phoneNum, null, false, "$contactName ka number save ho gaya hai Boss!")
+                }
+                return OfflineReflexResult("remember_contact", updateResult.message, true)
+            }
+        }
+
+        // 18. Contact Memory Query Reflex (Retrieve Active and Previous Phone Numbers)
+        val isContactQuery = (clean.contains("number") || clean.contains("no") || clean.contains("contact")) &&
+                (clean.contains("kya hai") || clean.contains("batao") || clean.contains("bataiye") || clean.contains("kya tha") || clean.startsWith("what is") || clean.contains("dikhao")) &&
+                phoneNum == null
+        if (isContactQuery) {
+            val targetName = extractContactQueryName(prompt)
+            if (targetName.isNotBlank()) {
+                val memoryEntry = IshaContactMemoryManager.getContactByName(context, targetName)
+                if (memoryEntry != null) {
+                    val isAskingOld = clean.contains("purana") || clean.contains("old") || clean.contains("pehle")
+                    val resp = if (isAskingOld) {
+                        if (memoryEntry.previousNumbers.isNotEmpty()) {
+                            "${memoryEntry.name} ka purana number ${memoryEntry.previousNumbers.joinToString(", ")} tha Boss! (Aur active number abhi ${memoryEntry.primaryNumber} hai)."
+                        } else {
+                            "${memoryEntry.name} ka koi purana number record mein nahi hai Boss. Inka active number ${memoryEntry.primaryNumber} hi hai."
+                        }
+                    } else {
+                        val historyText = if (memoryEntry.previousNumbers.isNotEmpty()) {
+                            ", aur inka purana number ${memoryEntry.previousNumbers.joinToString(", ")} tha"
+                        } else ""
+                        "${memoryEntry.name} ka number ${memoryEntry.primaryNumber} hai Boss$historyText! 📞"
+                    }
+                    return OfflineReflexResult("query_contact", resp, true)
+                }
+            }
+        }
+
         return null // Needs Gemini reasoning
     }
 
@@ -432,5 +476,28 @@ object OfflineReflexEngine {
             return mSec.group(1)?.toIntOrNull() ?: 30
         }
         return null
+    }
+
+    private fun extractPhoneNumber(text: String): String? {
+        val p = Pattern.compile("(?:\\+?91)?[\\s-]?([6-9]\\d{9})|\\b(\\d{10})\\b")
+        val m = p.matcher(text)
+        if (m.find()) {
+            return m.group(1) ?: m.group(2)
+        }
+        return null
+    }
+
+    private fun extractContactName(text: String, phoneNumber: String): String {
+        var clean = text.replace(phoneNumber, " ")
+        clean = clean.replace(Regex("\\b(\\+91|91)\\b"), " ")
+        clean = clean.replace(Regex("\\b(isha|aura|mobile|number|phone|contact|ka|ki|ke|ko|se|hai|save|kar|lo|karo|apne|apni|memory|mein|me|ab|naya|new|purana|update|kijiye|rakhlo|rakho|yaad|bhai|bhaiya|person|wala|wali|as|to|is|the|please)\\b", RegexOption.IGNORE_CASE), " ")
+        clean = clean.replace(Regex("[^a-zA-Z\\s]"), " ")
+        return clean.trim().replace(Regex("\\s+"), " ")
+    }
+
+    private fun extractContactQueryName(text: String): String {
+        var clean = text.replace(Regex("\\b(isha|aura|mobile|number|phone|contact|ka|ki|ke|ko|se|hai|tha|the|kya|batao|bataiye|dikhao|bata|what|is|the|tell|me|show|details|please|purana|old|naya|new)\\b", RegexOption.IGNORE_CASE), " ")
+        clean = clean.replace(Regex("[^a-zA-Z\\s]"), " ")
+        return clean.trim().replace(Regex("\\s+"), " ")
     }
 }

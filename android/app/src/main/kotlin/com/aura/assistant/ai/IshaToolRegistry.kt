@@ -724,6 +724,23 @@ object IshaToolRegistry {
             )
         ))
 
+        // 44b. Remember or Update Contact in Memory
+        toolsArray.add(createFunction(
+            name = "remember_contact",
+            desc = "Save or update a person's phone number in ISHA's persistent long-term memory. Automatically preserves old number history if updating. Call when user tells you a person's number to save, remember, or update (e.g. '9087654321 mobile number rahul ka hai save kar lo', 'ab 9875432106 rahul ka hai update kar lo').",
+            params = mapOf(
+                "name" to "string",
+                "phone_number" to "string",
+                "note" to "string"
+            ),
+            required = listOf("name", "phone_number"),
+            paramDescriptions = mapOf(
+                "name" to "Name of the person (e.g. 'Rahul', 'Doctor Sharma')",
+                "phone_number" to "The phone number to remember",
+                "note" to "Optional context or relationship (e.g. 'friend', 'office')"
+            )
+        ))
+
         // 45. Emergency SOS
         toolsArray.add(createFunction(
             name = "emergency_sos",
@@ -3891,16 +3908,46 @@ object IshaToolRegistry {
                 // 44. Query Contact Details
                 "query_contact" -> {
                     val name = args.get("name")?.asString ?: ""
-                    val resolvedNumber = resolveContactNumber(context, name)
-                    if (!resolvedNumber.isNullOrBlank()) {
+                    val memoryEntry = IshaContactMemoryManager.getContactByName(context, name)
+                    if (memoryEntry != null) {
                         result.addProperty("status", "success")
-                        result.addProperty("name", name)
-                        result.addProperty("phone_number", resolvedNumber)
-                        result.addProperty("message", "$name ka number $resolvedNumber hai Boss! 📞")
+                        result.addProperty("name", memoryEntry.name)
+                        result.addProperty("phone_number", memoryEntry.primaryNumber)
+                        if (memoryEntry.previousNumbers.isNotEmpty()) {
+                            result.addProperty("previous_numbers", memoryEntry.previousNumbers.joinToString(", "))
+                        }
+                        val historyText = if (memoryEntry.previousNumbers.isNotEmpty()) {
+                            ", aur purana number ${memoryEntry.previousNumbers.joinToString(", ")} tha"
+                        } else ""
+                        result.addProperty("message", "${memoryEntry.name} ka naya number ${memoryEntry.primaryNumber} hai Boss$historyText! 📞")
                     } else {
-                        result.addProperty("status", "not_found")
-                        result.addProperty("message", "$name contacts mein nahi mila Boss.")
+                        val resolvedNumber = resolveContactNumber(context, name)
+                        if (!resolvedNumber.isNullOrBlank()) {
+                            result.addProperty("status", "success")
+                            result.addProperty("name", name)
+                            result.addProperty("phone_number", resolvedNumber)
+                            result.addProperty("message", "$name ka number $resolvedNumber hai Boss! 📞")
+                        } else {
+                            result.addProperty("status", "not_found")
+                            result.addProperty("message", "$name contacts mein nahi mila Boss.")
+                        }
                     }
+                }
+
+                // 44b. Remember or Update Contact in Memory
+                "remember_contact" -> {
+                    val name = args.get("name")?.asString ?: ""
+                    val phoneNumber = args.get("phone_number")?.asString ?: ""
+                    val note = args.get("note")?.asString ?: ""
+                    val updateResult = IshaContactMemoryManager.rememberOrUpdateContact(context, name, phoneNumber, note)
+                    result.addProperty("status", "success")
+                    result.addProperty("name", updateResult.name)
+                    result.addProperty("phone_number", updateResult.currentNumber)
+                    if (updateResult.oldNumber != null) {
+                        result.addProperty("old_number", updateResult.oldNumber)
+                    }
+                    result.addProperty("is_updated", updateResult.isUpdated)
+                    result.addProperty("message", updateResult.message)
                 }
 
                 // 45. Emergency SOS
@@ -4900,6 +4947,14 @@ object IshaToolRegistry {
         // Clean honorifics, prepositions, etc. (Hindi & English)
         val cleanName = trimmed.replace(Regex("\\b(ko|ji|bhai|bhaiya|bro|sir|sahab|de|ka|ki|ke|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
         val queriesToTry = if (cleanName.isNotBlank() && cleanName != trimmed) listOf(cleanName, trimmed) else listOf(trimmed)
+
+        // 0. Check ISHA's long-term memory vault first (user-taught contacts)
+        for (target in queriesToTry) {
+            val memoryNumber = IshaContactMemoryManager.getNumberByName(context, target)
+            if (!memoryNumber.isNullOrBlank()) {
+                return memoryNumber
+            }
+        }
 
         try {
             val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI

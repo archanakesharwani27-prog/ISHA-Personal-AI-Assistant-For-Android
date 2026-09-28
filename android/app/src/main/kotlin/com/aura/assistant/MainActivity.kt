@@ -31,6 +31,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.aura.assistant.auth.IshaAuthManager
@@ -219,6 +220,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         setContent {
             IshaTheme {
                 val session by IshaAuthManager.sessionState.collectAsState()
+
+                LaunchedEffect(session.uid, session.isLoggedIn) {
+                    viewModel.switchUser(session)
+                }
+
                 AnimatedContent(
                     targetState = session.isLoggedIn,
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -623,6 +629,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun getContactName(phoneNumber: String): String {
         if (phoneNumber.isBlank()) return "Unknown Caller"
+
+        // 1. Check ISHA's persistent Contact Memory (with old number awareness!)
+        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(this, phoneNumber)
+        if (memoryMatch != null) {
+            return if (memoryMatch.isOldNumber) {
+                "${memoryMatch.name} (purana number)"
+            } else {
+                memoryMatch.name
+            }
+        }
+
         try {
             val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
             val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)

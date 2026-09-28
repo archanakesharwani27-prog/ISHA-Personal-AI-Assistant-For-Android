@@ -55,9 +55,17 @@ fun IshaSettingsSheet(
     isShakeEnabled: Boolean,
     isMessageSpeakEnabled: Boolean = true,
     userProfile: UserProfile = UserProfile(),
+    selectedVoice: String = "Aoede",
+    selectedLanguage: String = "Auto-detect",
+    textSize: String = "Default",
+    isSoundEnabled: Boolean = true,
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,
     onMessageSpeakToggle: (Boolean) -> Unit = {},
+    onVoiceChange: (String) -> Unit = {},
+    onLanguageChange: (String) -> Unit = {},
+    onTextSizeChange: (String) -> Unit = {},
+    onSoundToggle: (Boolean) -> Unit = {},
     onClearAllChats: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onOpenApiKeyEntry: () -> Unit = {},
@@ -66,10 +74,6 @@ fun IshaSettingsSheet(
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
-    var selectedVoice by remember { mutableStateOf("Aoede") }
-    var selectedLanguage by remember { mutableStateOf("Auto-detect") }
-    var textSize by remember { mutableStateOf("Default") }
-    var soundEnabled by remember { mutableStateOf(true) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
     val voices = listOf("Aoede", "Puck", "Charon", "Fenrir", "Kore")
@@ -232,8 +236,8 @@ fun IshaSettingsSheet(
                 iconTint = AuraAmberGold,
                 title = "Activation Sound",
                 subtitle = "Play a chime when ISHA wakes up",
-                checked = soundEnabled,
-                onCheckedChange = { soundEnabled = it }
+                checked = isSoundEnabled,
+                onCheckedChange = onSoundToggle
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -281,7 +285,7 @@ fun IshaSettingsSheet(
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clickable { selectedVoice = voice }
+                                    .clickable { onVoiceChange(voice) }
                             ) {
                                 Text(
                                     text = voice,
@@ -330,7 +334,7 @@ fun IshaSettingsSheet(
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clickable { selectedLanguage = lang }
+                                    .clickable { onLanguageChange(lang) }
                             ) {
                                 Text(
                                     text = lang,
@@ -379,7 +383,7 @@ fun IshaSettingsSheet(
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clickable { textSize = size }
+                                    .clickable { onTextSizeChange(size) }
                             ) {
                                 Text(
                                     text = size,

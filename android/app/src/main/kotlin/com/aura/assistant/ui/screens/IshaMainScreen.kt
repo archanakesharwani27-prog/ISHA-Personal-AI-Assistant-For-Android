@@ -56,10 +56,14 @@ fun IshaMainScreen(
 
     val isToolsSheetVisible by viewModel.isToolsSheetVisible.collectAsState()
     val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
-    val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     val isShakeEnabled by viewModel.isShakeEnabled.collectAsState()
     val isMessageSpeakEnabled by viewModel.isMessageSpeakEnabled.collectAsState()
+    val textSize by viewModel.textSize.collectAsState()
+    val selectedVoice by viewModel.selectedVoice.collectAsState()
+    val selectedLanguage by viewModel.selectedLanguage.collectAsState()
+    val isSoundEnabled by viewModel.isSoundEnabled.collectAsState()
+    val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
 
     // Activity Launchers for Attachments
@@ -193,7 +197,8 @@ fun IshaMainScreen(
                                     message = message,
                                     onSpeak = { text -> viewModel.speakText(text) },
                                     onRegenerate = { viewModel.regenerateLastMessage() },
-                                    onEditPrompt = { prompt -> editingPrompt = prompt }
+                                    onEditPrompt = { prompt -> editingPrompt = prompt },
+                                    textSize = textSize
                                 )
                             }
                         }
@@ -252,9 +257,17 @@ fun IshaMainScreen(
                     isShakeEnabled = isShakeEnabled,
                     isMessageSpeakEnabled = isMessageSpeakEnabled,
                     userProfile = userProfile,
+                    selectedVoice = selectedVoice,
+                    selectedLanguage = selectedLanguage,
+                    textSize = textSize,
+                    isSoundEnabled = isSoundEnabled,
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },
+                    onVoiceChange = { viewModel.setSelectedVoice(it) },
+                    onLanguageChange = { viewModel.setSelectedLanguage(it) },
+                    onTextSizeChange = { viewModel.setTextSize(it) },
+                    onSoundToggle = { viewModel.setSoundEnabled(it) },
                     onClearAllChats = { viewModel.clearAllChats() },
                     onOpenDiagnostics = { isDiagnosticsVisible = true },
                     onOpenApiKeyEntry = { viewModel.showApiKeyScreen() },
