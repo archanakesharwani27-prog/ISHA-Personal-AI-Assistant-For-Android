@@ -1,63 +1,27 @@
-# AURA 2.0 — Autonomous Personal AI Companion for Android
+# ISHA 2.0 — Autonomous Personal AI Companion for Android
 
 <p align="center">
-  <img src="https://img.shields.io/badge/AURA-2.0.3-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="AURA 2.0.3" />
+  <img src="https://img.shields.io/badge/ISHA-2.0.0-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="ISHA 2.0.0" />
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Gemini-Live%20Multimodal-10A37F?style=for-the-badge&logo=google&logoColor=white" alt="Gemini Live" />
   <img src="https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge" alt="Status" />
-  <img src="https://img.shields.io/badge/Training_Corpus-333+_Commands-FF6B35?style=for-the-badge" alt="Training Corpus" />
+  <img src="https://img.shields.io/badge/Developer-Ansh%20Kesharwani-FF6B35?style=for-the-badge" alt="Developer" />
 </p>
-
----
-
-## 📋 Version History
-
-| Version | Date | What's New |
-|---------|------|------------|
-| **2.0.3** 🆕 | 2026-09-19 | **AURA Training System** — 333+ command corpus, ExperienceMemory seeding, AuraTrainingEngine |
-| 2.0.2 | 2026-09-18 | ConversationalReactionEngine, IntentRouter, improved feminine grammar |
-| 2.0.1 | 2026-09-17 | MicOwnershipManager, ExecutionVerifier, RetryPolicy, 52+ tool registry |
-| 2.0.0 | 2026-09-13 | Full native Kotlin/Compose rewrite from Flutter, Gemini Live Bidi WebSocket |
-
----
-
-## 🆕 What's New in v2.0.3 — Training System
-
-> These features are **brand new** — not present in any previous version.
-
-### 🧠 AuraCommandCorpus (`training/AuraCommandCorpus.kt`)
-A massive pre-built training dataset with **333+ real-world user command patterns** spanning **55 categories**:
-- Hindi, Hinglish, English, typos, slang, compound commands, edge cases
-- Every command maps to the correct tool, parameters, and a pre-seeded lesson
-- Categories include: calls, SMS, WhatsApp, volume, brightness, WiFi, Bluetooth, alarms, timers, navigation, music, camera, battery, memory, notes, emergency, chitchat, and 37 more
-
-### ⚙️ AuraTrainingEngine (`training/AuraTrainingEngine.kt`)
-- **Idempotent seeding**: Seeds `ExperienceMemory` only once per corpus version (v3 → `CORPUS_VERSION = 3`)
-- **Background thread**: Non-blocking daemon thread seeded on app start
-- **5 extra lesson categories**: COMPOUND, CLARIFY, SAFETY, ANTI_HALLUCINATION, GRAMMAR
-- `diagnosticsReport()` — runtime stats about lessons loaded
-- `forceSeed()` — for debug/QA
-
-### 📚 Enhanced ExperienceMemory (`memory/ExperienceMemory.kt`)
-- Capacity raised: **200 total lessons** (was 3 per tool)
-- **5 lessons per tool** (was 3)
-- **Prioritised injection**: Warnings/failures first in system prompt (most critical)
-- New `recordLessonsBatch()` for efficient bulk seeding
-- `stats()` summary for diagnostics
-- `MAX_PROMPT_LESSONS = 15` injected per session
 
 ---
 
 ## 🌟 Overview
 
-**AURA 2.0** is an autonomous personal AI companion designed exclusively for Android. Moving far beyond traditional command bots, AURA combines:
+**ISHA 2.0** is an autonomous personal AI companion designed and created by **Ansh Kesharwani** exclusively for Android. Designed to be a warm, intelligent, and proactive female AI companion, ISHA combines:
 
-- **Gemini Live Multimodal Intelligence**: Real-time bidirectional voice & vision streaming over WebSocket.
-- **ChatGPT-Style Context-Preserving Barge-In**: Interrupt AURA naturally mid-speech without losing conversational context.
-- **Background Wake Word Detection**: Offline, high-precision keyword spotting (*"Hey Aura"*) via OpenWakeWord ONNX.
-- **Autonomous Tool Engine**: 52+ native Android device tools with multi-step execution, fallback, and verification.
-- **Gemini Floating Overlay & Dynamic Island**: Instant access over any running app without interrupting the user's workflow.
-- **Self-Learning Experience Memory**: AURA learns from successes and failures and never repeats the same mistake.
+- **Gemini Live Multimodal Intelligence**: Real-time bidirectional voice & vision streaming over low-latency WebSocket.
+- **Persistent Long-Term Memory**: Remembers user facts, preferences, and custom taught workflows with supreme priority execution.
+- **Dynamic Contact Memory with Versioning**: Remembers phone numbers naturally from speech, preserves historical numbers when updated, and identifies old numbers during incoming calls.
+- **Truecaller-Style Call Announcer & Gesture Response**: Announces callers (*"Incoming call from [Name]"* / *"Incoming call from [Name] ke purane number se"*) with hands-free voice Accept/Decline and proximity wave gestures.
+- **Multi-User Account Isolation**: Complete per-user data sandboxing ensuring private chats never cross-contaminate between different accounts.
+- **Autonomous Tool Engine**: 52+ native Android device tools (calling, WhatsApp messaging, typing, system settings, media playback, alarms, timers, SOS).
+- **ChatGPT-Style Context-Preserving Barge-In**: Interrupt ISHA naturally mid-speech without losing conversational context.
+- **Background Wake Word Detection**: Offline, high-precision keyword spotting (*"Hey ISHA"*) via OpenWakeWord ONNX.
 
 ---
 
@@ -65,28 +29,30 @@ A massive pre-built training dataset with **333+ real-world user command pattern
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           AURA 2.0 ECOSYSTEM                           │
+│                           ISHA 2.0 ECOSYSTEM                            │
 ├────────────────────────────────┬────────────────────────────────────────┤
 │         VOICE & PERCEPTION     │          DECISION & CONTROL            │
 │  • Gemini Live Bidi WebSocket  │  • Autonomous Tool Engine (52+ Tools)  │
 │  • 16kHz PCM In / 24kHz Out    │  • Execution & Verification Engine     │
 │  • OpenWakeWord ONNX Engine    │  • Intent Router & Fallback Pipeline   │
-│  • ChatGPT-Style Barge-In      │  • Long-Term Memory (AuraMemoryManager)│
+│  • ChatGPT-Style Barge-In      │  • Long-Term Memory (IshaMemoryManager)│
 ├────────────────────────────────┴────────────────────────────────────────┤
 │                       HARDWARE ARBITRATION LAYER                        │
 │  • MicOwnershipManager (Atomic handshake between WakeWord & GeminiLive) │
 │  • AcousticEchoCanceler (AEC) & AutomaticGainControl (AGC)              │
 │  • Adaptive Far-Field Gain (1.3x - 3.5x Dynamic RMS)                    │
 ├─────────────────────────────────────────────────────────────────────────┤
-│                    🆕 TRAINING & SELF-LEARNING LAYER                    │
-│  • AuraCommandCorpus (333+ command patterns, 55 categories)             │
-│  • AuraTrainingEngine (idempotent seeding, background daemon thread)    │
-│  • ExperienceMemory v2 (200 lessons, prioritised prompt injection)      │
+│                    CONTACT MEMORY & CALL INTELLIGENCE                   │
+│  • IshaContactMemoryManager (Dual vault JSON + Backup Prefs)            │
+│  • Number Versioning (Active + Previous Number History Archive)         │
+│  • Pre-Ringing Call Screening (IshaCallScreeningService)                │
+│  • Heads-Up Call HUD & Voice/Gesture Accept/Decline                     │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                             USER INTERFACE                              │
 │  • Jetpack Compose True-Dark Theme (ChatGPT Aesthetic)                  │
-│  • AuraDynamicIsland Floating Overlay Card                              │
-│  • Live Telemetry Diagnostics Screen                                    │
+│  • Dynamic Chat Text Scaling (Small, Default, Large)                    │
+│  • Voice Persona Switching (Aoede, Puck, Charon, Fenrir, Kore)          │
+│  • Multi-User Isolated Chat Sessions                                    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -94,67 +60,50 @@ A massive pre-built training dataset with **333+ real-world user command pattern
 
 ## 🚀 Key Features
 
-### 1. 🎙 ChatGPT-Style Context-Preserving Barge-In
-- When the user interrupts AURA mid-speech, the in-progress exchange is **not discarded**.
-- AURA automatically captures the partial turn (`InterruptedContext`), saves it to a rolling turn buffer, and silently merges it with the user's new command.
-- **Result**: Seamless, natural conversational continuity just like human dialogue.
+### 1. 📞 Contact Memory with History & Truecaller Announcer
+- **Natural Voice Learning**: Tell ISHA *"9087654321 mobile number Rahul ka hai save kar lo"* and ISHA archives it into persistent long-term storage.
+- **Automatic History Versioning**: When updated (*"ab 9875432106 Rahul ka hai update kar lo"*), ISHA sets the new number as primary while keeping past numbers archived in history.
+- **Smart Call Screening**: Identifies incoming calls before ringing, announcing *"Incoming call from Rahul"* or *"Incoming call from Rahul ke purane number se"*.
+- **Touchless Hand & Voice Controls**: Wave over the phone or speak *"Accept"* / *"Decline"* to handle calls hands-free.
 
-### 2. ⚡ Microphone Ownership Arbitration (`MicOwnershipManager`)
-- Eliminates race conditions and double-open crashes between background keyword spotting and live voice sessions.
-- `WakeWordService` immediately yields microphone ownership before broadcasting wake events.
-- `GeminiLiveClient` acquires exclusive 16kHz capture and releases cleanly upon session end.
+### 2. 🔒 Multi-User Privacy Isolation
+- Each user account has a completely isolated data sandbox (`files/isha_chats/user_$uid/`).
+- Switching accounts or logging in as guest immediately flushes runtime memory and loads only that account's private chat history.
 
-### 3. 🛠 52+ Native Android Autonomous Tools
-AURA executes native device actions directly via Android APIs:
-- **Communication**: WhatsApp auto-send, Direct SMS, Phone calls, Contacts lookup.
-- **Media & Music**: YouTube Music search/playback, System media transport controls (play/pause/next/like).
-- **Productivity**: Google Calendar events, Alarms, Timers, Notes.
-- **Device Control**: Flashlight, Volume, Brightness, Wi-Fi/Bluetooth settings, App launching.
-- **Navigation & Vision**: Google Maps routing, Real-time camera & screen frame analysis.
+### 3. 🎙 Gemini Live Multimodal Bi-Directional Streaming
+- Ultra-low latency voice duplex powered by Google Gemini Live WebSocket.
+- Voice persona switching between **Aoede** (default natural female tone), **Puck**, **Charon**, **Fenrir**, and **Kore**.
 
-### 4. 📊 Live Telemetry & Diagnostics
-- Integrated developer diagnostics accessible via **Settings → System & Diagnostics**.
-- Real-time observation of WebSocket connectivity, audio packet metrics, barge-in counts, tool invocations, and hardware mic owner.
-- Emergency manual **"Force Release Mic"** controls for testing.
-
-### 5. 🧠 Self-Learning Training System 🆕
-- **333+ pre-built command patterns** covering every realistic user input style.
-- Lessons seeded into `ExperienceMemory` on first boot — AURA starts smart, not blank.
-- Compound commands, ambiguity handling, safety rules, anti-hallucination rules, and grammar rules all pre-loaded.
+### 4. 🛠 52+ Native Android Autonomous Tools
+- **Messaging & Communication**: Read incoming messages aloud, send WhatsApp messages, type into screen inputs, place calls, look up contacts.
+- **Media & Music**: Play songs on YouTube, Spotify, Melodify, JioSaavn, Wynk, control playback.
+- **System Control**: Flashlight, Volume, Brightness, Wi-Fi, Bluetooth, Alarms, Timers, Screen lock, Screenshots.
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-aura_shell_backup/
-├── 2.0.md                                      # Comprehensive AURA 2.0 Specification
+ISHA/
 ├── android/
 │   ├── app/src/main/kotlin/com/aura/assistant/
-│   │   ├── MainActivity.kt                     # Compose entry point & Lifecycle
-│   │   ├── WakeWordService.kt                  # Foreground OpenWakeWord service
+│   │   ├── MainActivity.kt                     # Jetpack Compose entry point
+│   │   ├── WakeWordService.kt                  # Foreground wake word service
+│   │   ├── IshaCallScreeningService.kt         # Pre-ringing incoming call screening
+│   │   ├── IshaCallAnnouncerManager.kt         # Floating call HUD & voice announcer
 │   │   ├── ai/
 │   │   │   ├── GeminiLiveClient.kt             # Gemini Live Bidi WebSocket client
-│   │   │   ├── AuraMemoryManager.kt            # Persistent user memory + system prompt
-│   │   │   └── JarvisToolRegistry.kt           # 52+ tool declarations & dispatcher
-│   │   ├── memory/
-│   │   │   └── ExperienceMemory.kt             # 🆕 v2: 200 lessons, batch seeding
-│   │   ├── training/                           # 🆕 NEW in v2.0.3
-│   │   │   ├── AuraCommandCorpus.kt            # 🆕 333+ command patterns, 55 categories
-│   │   │   └── AuraTrainingEngine.kt           # 🆕 Idempotent corpus → memory seeder
+│   │   │   ├── IshaMemoryManager.kt            # Long-term memory vault & system prompt
+│   │   │   ├── IshaContactMemoryManager.kt     # Contact memory & number version history
+│   │   │   └── IshaToolRegistry.kt             # 52+ native tool dispatcher
 │   │   ├── brain/
-│   │   │   ├── ConversationalReactionEngine.kt # Emotional & contextual response logic
-│   │   │   └── IntentRouter.kt                 # Command intent classification
-│   │   ├── audio/
-│   │   │   ├── MicOwnershipManager.kt          # Hardware mic coordinator
-│   │   │   ├── AudioCaptureSession.kt          # 16kHz PCM capture + VAD + AGC
-│   │   │   └── AudioPlaybackSession.kt         # 24kHz PCM playback + instant flush
+│   │   │   └── OfflineReflexEngine.kt          # Zero-latency offline execution
+│   │   ├── data/
+│   │   │   └── IshaChatRepository.kt           # Multi-user partitioned chat repository
 │   │   └── ui/
-│   │       ├── screens/
-│   │       │   ├── AuraMainScreen.kt           # Main chat interface
-│   │       │   ├── ChatGPTVoiceScreen.kt       # Fullscreen voice orb
-│   │       │   └── AuraDiagnosticsScreen.kt    # Developer metrics screen
-│   │       └── theme/                          # True-dark ChatGPT tokens
+│   │       ├── screens/                        # Main chat, voice orb, diagnostics
+│   │       ├── components/                     # Settings sheet, Markdown text scaling
+│   │       └── theme/                          # True-dark ChatGPT design system
 └── README.md
 ```
 
@@ -164,21 +113,29 @@ aura_shell_backup/
 
 ### Prerequisites
 - Android Studio Ladybug | 2024.2+
-- Android SDK 34+ (Android 14 / 15 target)
-- JDK 17+
-- Gemini API Key with access to Google GenerativeService (v1beta Bidi WebSocket)
+- Android SDK 34+ (Android 14 / 15)
+- JDK 17
+- Google Gemini API Key
 
 ### Build & Run
 1. Open the `android/` directory in Android Studio.
-2. Add your Gemini API key in `Secrets.kt` or `local.properties`.
-3. Sync Gradle and run on a physical Android device or emulator with microphone support:
+2. Build via terminal:
    ```bash
-   ./gradlew installDebug
+   build_isha.bat
    ```
-4. Grant **Microphone**, **Accessibility**, and **Notification Listener** permissions when prompted for full autonomous functionality.
+3. Install to device:
+   ```bash
+   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+---
+
+## 👤 Developer & Creator
+- **Created & Developed By**: **Ansh Kesharwani**
+- **Companion**: ISHA (Intelligent System & Helpful Assistant)
 
 ---
 
 ## 📜 License
-
 This project is licensed under the MIT License — see the LICENSE file for details.
+
