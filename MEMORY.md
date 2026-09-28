@@ -12,6 +12,20 @@
 - **ADB Location**: `D:\android_01\platform-tools\adb.exe`
 - **Main Languages**: Kotlin (Android Native Jetpack Compose), minimal legacy Flutter bindings
 - **AI Brain**: Google Gemini Live WebSocket (Streaming Voice) + Gemini 1.5/2.5 Flash (Streaming Text & Tool Calling) + On-Device Offline Reflex Engine
+- **Active Name**: ISHA 2.0 (renamed from AURA/Jarvis on 27 Sep 2026 21:43 IST)
+
+---
+
+## 🗄️ Pre-Rename (AURA / Jarvis) Snapshot & Backups
+The entire complete codebase prior to the ISHA rename is permanently preserved across 3 layers:
+1. **GitHub Backup Branch**: `backup/aura-pre-rename` (Pushed to remote `origin`)
+2. **GitHub Git Tag**: `aura-pre-rename-v2.0`
+3. **Pre-Rename Commit**: `aa9b4f43e66b21e2bc3f14d6af7ac2634013eb3e` (Date: 27 September 2026, 15:16:17 IST)
+4. **Local Standalone Zip Archive**: `D:\Projects\aura_pre_rename_backup_20260928.zip` (37.5 MB, contains all 317 full source files including original `JarvisToolRegistry.kt`, `AuraNotificationListenerService.kt`, `AuraMainScreen.kt`, and `build_aura.bat`).
+- To checkout or inspect pre-rename state at any time:
+  ```bash
+  git checkout backup/aura-pre-rename
+  ```
 
 ---
 
