@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ISHA</string>
+    <string name="accessibility_service_description">Lets ISHA tap the WhatsApp send button after pre-filling a message, and tap the like/heart control in your music app, when you ask it to. It does not read message content or run in the background otherwise.</string>
+</resources>

@@ -1,0 +1,54 @@
+name: Build and Release AURA APK
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build AURA Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Make Gradlew Executable
+        run: chmod +x android/gradlew
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Assistant-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Create Release & Upload APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/master')
+        with:
+          tag_name: "v1.0.${{ github.run_number }}"
+          name: "AURA Assistant v1.0.${{ github.run_number }}"
+          body: |
+            🚀 **Automated Build for Commit `${{ github.sha }}`**
+            
+            📱 **How to Install on Mobile**:
+            1. Download `app-debug.apk` below directly on your Android phone.
+            2. Tap the downloaded file to install AURA.
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

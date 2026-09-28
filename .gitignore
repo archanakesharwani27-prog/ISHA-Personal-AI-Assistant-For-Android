@@ -1,0 +1,71 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ & IDE
+*.iml
+*.ipr
+*.iws
+.idea/
+.claude/
+.vscode/
+
+# Gradle & Android Build Artifacts
+.gradle/
+**/build/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Large archives and generated binaries
+*.zip
+*.tar.gz
+*.rar
+*.7z
+apks/
+*.apk
+local.properties
+**/local.properties
+
+# Flutter / Dart
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/coverage/
+
+# Symbols & Maps
+app.*.symbols
+app.*.map.json
+
+# Widget Preview
+.widget_preview/
+
+# Secrets & Environment
+*.env
+
+# Temporary build outputs & logs
+build_output.txt
+*.log
+*.png
+*.txt
+scratch/
+scratch_*.py
