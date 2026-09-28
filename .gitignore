@@ -38,9 +38,10 @@ captures/
 *.tar.gz
 *.rar
 *.7z
-apks/*
-!apks/aura_v5.3_time_clock_fix_20260921.apk
-/*.apk
+apks/
+*.apk
+local.properties
+**/local.properties
 
 # Flutter / Dart
 **/doc/api/

@@ -1,9 +1,20 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.gms.google-services")
 }
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        FileInputStream(localPropertiesFile).use { load(it) }
+    }
+}
+val geminiApiKey: String = localProperties.getProperty("GEMINI_API_KEY") ?: ""
 
 android {
     namespace = "com.aura.assistant"
@@ -15,6 +26,8 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "2.0.0"
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -28,6 +41,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     buildTypes {

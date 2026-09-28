@@ -1,14 +1,15 @@
 package com.aura.assistant.config
 
 import android.content.Context
+import com.aura.assistant.BuildConfig
 
 /**
- * Verified primary API credentials for AURA.
+ * Verified primary API credentials for ISHA.
  * Supports user-entered custom keys from ApiKeyManager with fallback.
  */
 object Secrets {
-    // Default fallback key (used if no custom key has been entered)
-    const val GEMINI_API_KEY = "AQ.Ab8RN6KGIOlNrVk9A0XwRGWS6WMu99oz8XhKk-AQ3s9u7WDMxg"
+    // Default fallback key (injected at build time from local.properties or BuildConfig)
+    val GEMINI_API_KEY: String = BuildConfig.GEMINI_API_KEY
 
     /**
      * Returns the active Gemini API key.

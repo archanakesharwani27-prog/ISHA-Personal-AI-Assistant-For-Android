@@ -63,7 +63,7 @@ object ApiKeyManager {
 
     /**
      * Returns a safely masked version of the key for UI presentation.
-     * Example: "AQ.Ab8...WDMxg"
+     * Example: "AIzaSy...WDMx"
      */
     fun maskKey(key: String): String {
         val trimmed = key.trim()
