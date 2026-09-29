@@ -34,17 +34,30 @@ object OfflineReflexEngine {
                                    clean.contains("kya hua") || clean.contains("kyu")
         if (isNegativeOrComplaint) return null
 
-        // 0. Cross-Device Command Interceptor (e.g. "Phone B par WhatsApp open karo", "Phone 2 par torch jalao")
-        val isCrossDevice = clean.contains("phone b") || clean.contains("phone 2") || clean.contains("dusre phone") ||
-                            clean.contains("dusra phone") || clean.contains("other phone") || clean.contains("second phone")
+        // 0. Cross-Device Command Interceptor (e.g. "Phone A par torch jalao", "Phone B par WhatsApp open karo")
+        val isCrossDevice = clean.contains("phone a") || clean.contains("phone b") ||
+                            clean.contains("phone 1") || clean.contains("phone 2") ||
+                            clean.contains("lava") || clean.contains("samsung") ||
+                            clean.contains("dusre phone") || clean.contains("dusra phone") ||
+                            clean.contains("other phone") || clean.contains("second phone") ||
+                            clean.contains("first phone")
         if (isCrossDevice) {
-            val targetQuery = if (clean.contains("phone b")) "Phone B" else if (clean.contains("phone 2") || clean.contains("second phone")) "Phone 2" else "other"
-            val actionPrompt = if (clean.contains("par ")) {
-                clean.substringAfter("par ").trim()
-            } else if (clean.contains("on ")) {
-                clean.substringAfter("on ").trim()
-            } else {
-                clean.replace("phone b", "").replace("phone 2", "").replace("dusre phone", "").trim()
+            val targetQuery = when {
+                clean.contains("phone a") || clean.contains("phone 1") || clean.contains("lava") -> "Phone A"
+                clean.contains("phone b") || clean.contains("phone 2") || clean.contains("samsung") -> "Phone B"
+                else -> "other"
+            }
+            val actionPrompt = when {
+                clean.contains("par ") -> clean.substringAfterLast("par ").trim()
+                clean.contains("pr ") -> clean.substringAfterLast("pr ").trim()
+                clean.contains("pe ") -> clean.substringAfterLast("pe ").trim()
+                clean.contains("on ") -> clean.substringAfterLast("on ").trim()
+                else -> clean.replace("phone a", "").replace("phone b", "")
+                    .replace("phone 1", "").replace("phone 2", "")
+                    .replace("lava", "").replace("samsung", "")
+                    .replace("dusre phone", "").replace("dusra phone", "")
+                    .replace("wale phone", "").replace("wala phone", "")
+                    .replace("yaani", "").trim()
             }
 
             if (execute) {
@@ -76,7 +89,7 @@ object OfflineReflexEngine {
                 }
                 return OfflineReflexResult("dispatch_remote_command", remoteMsg, remoteSuccess)
             } else {
-                return OfflineReflexResult("dispatch_remote_command", "Phone B par task bhej diya gaya hai Boss!", true)
+                return OfflineReflexResult("dispatch_remote_command", "$targetQuery par task bhej diya gaya hai Boss!", true)
             }
         }
 

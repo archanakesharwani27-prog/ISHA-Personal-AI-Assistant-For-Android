@@ -122,6 +122,13 @@ object IshaDeviceRegistry {
     private fun getDefaultDeviceAlias(): String {
         val model = Build.MODEL ?: "Phone"
         val mfr = Build.MANUFACTURER ?: "Android"
+        val lowerMfr = mfr.lowercase()
+        val lowerMdl = model.lowercase()
+        if (lowerMfr.contains("lava") || lowerMdl.contains("lex")) {
+            return "Phone A (Lava)"
+        } else if (lowerMfr.contains("samsung") || lowerMdl.contains("a14") || lowerMdl.contains("sm-")) {
+            return "Phone B (Samsung)"
+        }
         return "$mfr $model".trim()
     }
 
@@ -237,8 +244,8 @@ object IshaDeviceRegistry {
 
         if (otherDevices.isEmpty()) return null
 
-        // 1. If only 1 other device exists, any generic phrase routes to it
-        if (otherDevices.size == 1 && (clean.contains("phone") || clean.contains("dusra") || clean.contains("other") || clean.isBlank())) {
+        // 1. If only 1 other device exists, any cross-device request routes directly to it
+        if (otherDevices.size == 1) {
             return otherDevices.first()
         }
 
@@ -249,14 +256,14 @@ object IshaDeviceRegistry {
         otherDevices.firstOrNull {
             clean.contains(it.deviceAlias.lowercase()) ||
             clean.contains(it.model.lowercase()) ||
-            clean.contains(it.manufacturer.lowercase())
+            clean.contains(it.manufacturer.lowercase()) ||
+            (clean.contains("lava") && (it.deviceAlias.lowercase().contains("lava") || it.manufacturer.lowercase().contains("lava") || it.model.lowercase().contains("lex"))) ||
+            (clean.contains("samsung") && (it.deviceAlias.lowercase().contains("samsung") || it.manufacturer.lowercase().contains("samsung") || it.model.lowercase().contains("a14"))) ||
+            ((clean.contains("phone a") || clean.contains("phone 1")) && (it.deviceAlias.contains("A", ignoreCase = true) || it.manufacturer.contains("lava", ignoreCase = true))) ||
+            ((clean.contains("phone b") || clean.contains("phone 2")) && (it.deviceAlias.contains("B", ignoreCase = true) || it.manufacturer.contains("samsung", ignoreCase = true)))
         }?.let { return it }
 
-        // 4. "phone b" / "phone 2" heuristics
-        if (clean.contains("phone b") || clean.contains("phone 2") || clean.contains("second phone")) {
-            return otherDevices.firstOrNull()
-        }
-
+        // 4. Default to first available other device
         return otherDevices.firstOrNull()
     }
 

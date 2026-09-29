@@ -144,6 +144,10 @@ object IshaCrossDeviceBridge {
         rawPrompt: String
     ) {
         scope.launch {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "isha:cross_device_cmd")
+            wakeLock?.acquire(8000L)
+
             val firestore = FirebaseFirestore.getInstance()
             val docRef = firestore.collection("users")
                 .document(userId)
@@ -270,8 +274,15 @@ object IshaCrossDeviceBridge {
                 "result" to executionResult,
                 "completedAt" to FieldValue.serverTimestamp()
             )
-            docRef.update(updatePayload)
+            try {
+                docRef.update(updatePayload)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to update command status doc: ${e.message}")
+            }
             Log.i(TAG, "Remote command $cmdId finished with status: $finalStatus ($executionResult)")
+            try {
+                if (wakeLock?.isHeld == true) wakeLock.release()
+            } catch (_: Exception) {}
         }
     }
 

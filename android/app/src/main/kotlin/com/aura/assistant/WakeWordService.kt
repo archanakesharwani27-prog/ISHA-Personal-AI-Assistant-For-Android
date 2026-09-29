@@ -180,6 +180,12 @@ class WakeWordService : Service(), SensorEventListener {
         createSilentNotificationChannel()
         initShakeSensor()
         registerScreenReceiver()
+        try {
+            com.aura.assistant.sync.IshaDeviceRegistry.init(this)
+            com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
+        } catch (e: Exception) {
+            android.util.Log.w("WakeWordService", "CrossDeviceBridge init error: ${e.message}")
+        }
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
