@@ -141,6 +141,9 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     init {
         com.aura.assistant.ui.components.IshaSettingsManager.init(application)
         com.aura.assistant.ai.IshaContactMemoryManager.init(application)
+        com.aura.assistant.sync.IshaDeviceRegistry.init(application)
+        com.aura.assistant.sync.IshaCrossDeviceBridge.init(application)
+        com.aura.assistant.sync.IshaCloudSyncBridge.init(application)
         initTts()
         loadInitialSessions()
 

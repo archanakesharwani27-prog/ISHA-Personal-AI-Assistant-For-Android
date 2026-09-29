@@ -140,6 +140,7 @@ object IshaContactMemoryManager {
                 )
                 contactsMap[updatedEntry.id] = updatedEntry
                 saveToStorage(context)
+                com.aura.assistant.sync.IshaCloudSyncBridge.syncContactToCloud(context, updatedEntry)
 
                 Log.i(TAG, "Updated ${existingEntry.name}'s number: $oldNumber -> $cleanNumber (History: $updatedPreviousList)")
 
@@ -162,6 +163,7 @@ object IshaContactMemoryManager {
             )
             contactsMap[newEntry.id] = newEntry
             saveToStorage(context)
+            com.aura.assistant.sync.IshaCloudSyncBridge.syncContactToCloud(context, newEntry)
 
             Log.i(TAG, "Saved new contact in memory: $cleanName -> $cleanNumber")
 

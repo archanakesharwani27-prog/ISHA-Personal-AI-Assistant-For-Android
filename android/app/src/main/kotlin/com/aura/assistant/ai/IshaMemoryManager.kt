@@ -308,6 +308,14 @@ object IshaMemoryManager {
             sb.appendLine("• Last Executed Tool: '${action.toolName}' $secondsAgo seconds ago.")
         }
 
+        // 4. Linked Multi-Device Ecosystem
+        val otherDevices = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+        if (otherDevices.isNotEmpty()) {
+            val devListStr = otherDevices.joinToString(", ") { "${it.deviceAlias} (${it.deviceName}, Battery: ${it.batteryLevel}%, Online: ${it.isOnline})" }
+            sb.appendLine("• Linked Ecosystem Devices: $devListStr")
+            sb.appendLine("  -> CROSS-DEVICE RULE: If Boss asks to do something on another device (e.g. 'Phone B par WhatsApp open karo', 'Phone 2 par torch jalao', 'Phone B par message bhej do'), ALWAYS use 'dispatch_remote_command' targeting that device!")
+        }
+
         return sb.toString()
     }
 

@@ -34,6 +34,52 @@ object OfflineReflexEngine {
                                    clean.contains("kya hua") || clean.contains("kyu")
         if (isNegativeOrComplaint) return null
 
+        // 0. Cross-Device Command Interceptor (e.g. "Phone B par WhatsApp open karo", "Phone 2 par torch jalao")
+        val isCrossDevice = clean.contains("phone b") || clean.contains("phone 2") || clean.contains("dusre phone") ||
+                            clean.contains("dusra phone") || clean.contains("other phone") || clean.contains("second phone")
+        if (isCrossDevice) {
+            val targetQuery = if (clean.contains("phone b")) "Phone B" else if (clean.contains("phone 2") || clean.contains("second phone")) "Phone 2" else "other"
+            val actionPrompt = if (clean.contains("par ")) {
+                clean.substringAfter("par ").trim()
+            } else if (clean.contains("on ")) {
+                clean.substringAfter("on ").trim()
+            } else {
+                clean.replace("phone b", "").replace("phone 2", "").replace("dusre phone", "").trim()
+            }
+
+            if (execute) {
+                val (action, params) = when {
+                    actionPrompt.contains("whatsapp") -> "open_app" to mapOf("app_name" to "WhatsApp", "package_name" to "com.whatsapp")
+                    actionPrompt.contains("torch") || actionPrompt.contains("flashlight") -> {
+                        val turnOn = !(actionPrompt.contains("off") || actionPrompt.contains("band"))
+                        "toggle_flashlight" to mapOf("state" to if (turnOn) "on" else "off")
+                    }
+                    actionPrompt.contains("volume") -> {
+                        val num = Regex("[0-9]+").find(actionPrompt)?.value?.toIntOrNull() ?: 50
+                        "set_volume" to mapOf("level" to num)
+                    }
+                    else -> "generic_command" to mapOf("prompt" to actionPrompt)
+                }
+
+                var remoteMsg = "Remote task dispatched to $targetQuery"
+                var remoteSuccess = true
+                kotlinx.coroutines.runBlocking {
+                    val res = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                        context = context,
+                        targetDeviceQuery = targetQuery,
+                        action = action,
+                        params = params,
+                        rawPrompt = actionPrompt
+                    )
+                    remoteSuccess = res.success
+                    remoteMsg = res.message
+                }
+                return OfflineReflexResult("dispatch_remote_command", remoteMsg, remoteSuccess)
+            } else {
+                return OfflineReflexResult("dispatch_remote_command", "Phone B par task bhej diya gaya hai Boss!", true)
+            }
+        }
+
         // 1. Flashlight / Torch (Requires explicit action verb)
         val isTorchCommand = (clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")) &&
                              (clean.contains("on") || clean.contains("chalu") || clean.contains("jala") || clean.contains("chala") ||
