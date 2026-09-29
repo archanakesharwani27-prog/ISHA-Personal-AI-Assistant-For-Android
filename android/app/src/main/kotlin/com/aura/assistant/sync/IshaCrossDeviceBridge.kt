@@ -73,6 +73,15 @@ object IshaCrossDeviceBridge {
         val app = context.applicationContext
         IshaDeviceRegistry.init(app)
         startInboxListener(app)
+
+        scope.launch {
+            IshaAuthManager.sessionState.collect { user ->
+                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                    isListening = false
+                    startInboxListener(app)
+                }
+            }
+        }
     }
 
     /**

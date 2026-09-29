@@ -113,7 +113,9 @@ object IshaAuthManager {
      * Build Official GoogleSignInClient for ActivityResult launcher.
      */
     fun getGoogleSignInClient(context: Context): GoogleSignInClient {
+        val webClientId = "489681943195-i19ffgmn8oj5fo1gv7nbsi3qj7vio2nh.apps.googleusercontent.com"
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(webClientId)
             .requestEmail()
             .requestProfile()
             .build()
@@ -387,7 +389,7 @@ object IshaAuthManager {
     fun continueAsGuest(context: Context, name: String = "Boss") {
         init(context)
         val cleanName = name.trim().ifBlank { "Boss" }
-        val guestUid = "guest_" + System.currentTimeMillis()
+        val guestUid = "guest_boss_ecosystem"
 
         saveSession(
             context = context,

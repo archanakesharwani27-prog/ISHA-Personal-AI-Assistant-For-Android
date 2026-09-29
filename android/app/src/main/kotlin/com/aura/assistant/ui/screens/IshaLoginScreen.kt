@@ -74,6 +74,11 @@ fun IshaLoginScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
+    var showAccountPicker by remember { mutableStateOf(false) }
+    var availableGoogleAccounts by remember {
+        mutableStateOf(IshaAuthManager.getDeviceGoogleAccounts(context))
+    }
+
     // ── Official Google Sign-In Launcher ─────────────────────────────────────
     val googleSignInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -92,12 +97,10 @@ fun IshaLoginScreen(
                 onLoginSuccess()
             } catch (e: ApiException) {
                 Log.w("AuraLoginScreen", "Google Sign-In ApiException: code=${e.statusCode}")
-                // Graceful fallback to verified device account if cloud client is unlinked
                 val fallbackAccounts = IshaAuthManager.getDeviceGoogleAccounts(context)
                 if (fallbackAccounts.isNotEmpty()) {
-                    IshaAuthManager.loginWithGoogle(context, fallbackAccounts.first())
-                    Toast.makeText(context, "Signed in with ${fallbackAccounts.first()}", Toast.LENGTH_SHORT).show()
-                    onLoginSuccess()
+                    availableGoogleAccounts = fallbackAccounts
+                    showAccountPicker = true
                 } else {
                     errorMessage = "Google Sign-In was cancelled or unavailable (${e.statusCode}). You can Sign Up with Email below."
                 }
@@ -106,8 +109,14 @@ fun IshaLoginScreen(
                 errorMessage = e.message ?: "Sign-in error"
             }
         } else {
-            // Check if user tapped or if fallback account exists
             Log.i("AuraLoginScreen", "Google Sign-In result code: ${result.resultCode}")
+            val fallbackAccounts = IshaAuthManager.getDeviceGoogleAccounts(context)
+            if (fallbackAccounts.isNotEmpty()) {
+                availableGoogleAccounts = fallbackAccounts
+                showAccountPicker = true
+            } else {
+                errorMessage = "Google Sign-In was cancelled. Please Sign Up with Email below."
+            }
         }
     }
 
@@ -140,6 +149,65 @@ fun IshaLoginScreen(
             .navigationBarsPadding()
             .imePadding()
     ) {
+        if (showAccountPicker && availableGoogleAccounts.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = { showAccountPicker = false },
+                title = {
+                    Text(
+                        text = "Select Google Account",
+                        style = AuraTypography.titleMedium.copy(color = ChatGptTextPrimary, fontWeight = FontWeight.Bold)
+                    )
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "Choose your Google Account to connect with ISHA:",
+                            style = AuraTypography.bodySmall.copy(color = ChatGptTextSecondary)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        availableGoogleAccounts.forEach { acc ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        showAccountPicker = false
+                                        isLoading = true
+                                        IshaAuthManager.loginWithGoogle(context, acc)
+                                        Toast.makeText(context, "Welcome to ISHA!", Toast.LENGTH_SHORT).show()
+                                        onLoginSuccess()
+                                    },
+                                shape = RoundedCornerShape(10.dp),
+                                color = ChatGptBackground,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    GoogleGIcon()
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = acc,
+                                        style = AuraTypography.bodyMedium.copy(
+                                            color = ChatGptTextPrimary,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showAccountPicker = false }) {
+                        Text("Cancel", color = ChatGptTextSecondary)
+                    }
+                },
+                containerColor = ChatGptCard
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -280,6 +348,32 @@ fun IshaLoginScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp,
                                     color = Color(0xFF1F1F1F)
+                                )
+                            )
+                        }
+                    }
+
+                    if (availableGoogleAccounts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ChatGptBackground)
+                                .border(1.dp, ChatGptBorder, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    showAccountPicker = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "Device Google Account: ${availableGoogleAccounts.first()}",
+                                style = AuraTypography.bodySmall.copy(
+                                    color = ChatGptAccentGreen,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp
                                 )
                             )
                         }

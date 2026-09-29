@@ -95,6 +95,15 @@ object IshaDeviceRegistry {
         // Register heartbeat and start observing devices
         registerHeartbeat(app)
         startObservingDevices(app)
+
+        scope.launch {
+            IshaAuthManager.sessionState.collect { user ->
+                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                    registerHeartbeat(app)
+                    startObservingDevices(app)
+                }
+            }
+        }
     }
 
     fun getDeviceId(): String = cachedDeviceId

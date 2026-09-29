@@ -38,6 +38,14 @@ object IshaCloudSyncBridge {
         val app = context.applicationContext
         isInitialized = true
         startContactsListener(app)
+
+        scope.launch {
+            IshaAuthManager.sessionState.collect { user ->
+                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                    startContactsListener(app)
+                }
+            }
+        }
     }
 
     /**
