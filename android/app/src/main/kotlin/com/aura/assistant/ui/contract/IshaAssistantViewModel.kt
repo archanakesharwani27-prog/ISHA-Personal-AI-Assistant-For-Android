@@ -437,10 +437,61 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    private fun triggerLightHaptic() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getApplication<Application>().getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getApplication<Application>().getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(18, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(18)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun getFriendlyToolLabel(toolName: String): String {
+        return when (toolName.lowercase()) {
+            "toggle_flashlight" -> "Flashlight toggle kar rahi hoon..."
+            "get_battery_status" -> "Battery status check kar rahi hoon..."
+            "make_call" -> "Phone call connect kiya ja raha hai..."
+            "send_whatsapp", "chat_on_whatsapp" -> "WhatsApp message bheja ja raha hai..."
+            "type_message", "type_text" -> "Input box mein type kar rahi hoon..."
+            "open_app" -> "App open kiya ja raha hai..."
+            "take_screenshot" -> "Screenshot capture kiya ja raha hai..."
+            "show_recent_media" -> "Recent photo open kar rahi hoon..."
+            "set_volume" -> "Volume adjust ho raha hai..."
+            "set_brightness" -> "Brightness adjust ho rahi hai..."
+            "create_alarm", "set_alarm" -> "Alarm set kiya ja raha hai..."
+            "set_timer" -> "Timer lagaya ja raha hai..."
+            "toggle_wifi" -> "Wi-Fi toggle ho raha hai..."
+            "toggle_bluetooth" -> "Bluetooth toggle ho raha hai..."
+            "toggle_hotspot" -> "Personal Hotspot toggle ho raha hai..."
+            "get_wifi_networks" -> "Wi-Fi network check ho raha hai..."
+            "get_current_time" -> "Time check kiya ja raha hai..."
+            "get_storage_space" -> "Phone storage check ho rahi hai..."
+            "check_device_health" -> "Device health diagnose ho rahi hai..."
+            "get_location" -> "Current location find kar rahi hoon..."
+            "read_notifications" -> "Notifications check kiye ja rahe hain..."
+            "clear_notifications" -> "Notifications clear ho rahe hain..."
+            "dispatch_remote_command" -> "Remote device par command dispatch ho raha hai..."
+            "autonomous_ui_action" -> "Screen action execute kiya ja raha hai..."
+            "find_and_tap" -> "Button find karke tap kar rahi hoon..."
+            "read_screen_text" -> "Screen content padh rahi hoon..."
+            else -> "Action execute ho raha hai..."
+        }
+    }
+
     fun onSendTextMessage(prompt: String) {
         val trimmed = prompt.trim()
         val attached = _selectedAttachment.value
         if (trimmed.isBlank() && attached == null) return
+        triggerLightHaptic()
         if (_isGenerating.value) {
             Log.i(TAG, "⚡ [QUEUE] Assistant busy generating, queuing command: \"$trimmed\"")
             _selectedAttachment.value = null
@@ -545,7 +596,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                         val toolMsg = ChatMessage(
                             sessionId = currentSessionId,
                             role = MessageRole.TOOL,
-                            text = "Executing $toolName...",
+                            text = getFriendlyToolLabel(toolName),
                             toolName = toolName,
                             toolArgs = args,
                             toolResult = null,

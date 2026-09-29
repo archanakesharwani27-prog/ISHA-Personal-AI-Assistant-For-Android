@@ -51,10 +51,31 @@ class GeminiChatService(private val context: Context) {
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
+
+    @Volatile private var cachedSystemInstruction: JsonObject? = null
+    @Volatile private var lastSystemInstructionTime: Long = 0L
+
+    private val SCREEN_INTERACTIVE_TOOLS = setOf(
+        "find_and_tap",
+        "screen_tap",
+        "screen_scroll",
+        "type_message",
+        "type_text",
+        "open_app",
+        "chat_on_whatsapp",
+        "send_whatsapp",
+        "autonomous_ui_action",
+        "dismiss_screen_popups",
+        "press_system_key",
+        "take_screenshot",
+        "open_camera"
+    )
 
     private var activeCall: Call? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -234,28 +255,9 @@ class GeminiChatService(private val context: Context) {
             try { reader.close() } catch (_: Exception) {}
         }
 
-        // If function calls were requested, execute all natively in order
+        // If function calls were requested, execute natively (parallel for independent tools, sequential for screen tools)
         if (pendingFunctionCalls.isNotEmpty()) {
-            val executedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
-            for (fnCall in pendingFunctionCalls) {
-                val fnName = fnCall.get("name")?.asString ?: continue
-                val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
-
-                Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
-                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
-                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
-                val resultSummary = toolResult.get("message")?.asString
-                    ?: toolResult.get("status")?.asString
-                    ?: "Completed"
-
-                callback.onToolExecution(
-                    toolName = fnName,
-                    args = fnArgs.toString(),
-                    result = resultSummary
-                )
-                executedTools.add(Triple(fnName, fnArgs, toolResult))
-            }
-
+            val executedTools = executeFunctionCalls(pendingFunctionCalls, callback)
             // Send tool responses back to complete conversation turn with natural speech
             executeToolResponsesStream(model, history, newPrompt, executedTools, exactModelTurnContent, callback)
         } else {
@@ -330,7 +332,7 @@ class GeminiChatService(private val context: Context) {
                                 val outputObj = if (toolResult.isJsonObject) toolResult.asJsonObject.deepCopy() else JsonObject()
                                 outputObj.addProperty(
                                     "_task_guidance",
-                                    "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise chat_on_whatsapp ke baad reply bhejna), to IMMEDIATELY unka tool call karo — text summary abhi mat do!"
+                                    "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise chat_on_whatsapp ke baad reply bhejna), to IMMEDIATELY unka tool call karo — text summary abhi mat do! Speak directly and naturally to Boss in Hindi — NEVER echo raw technical tool data or write '[Tool Output]' in your spoken message."
                                 )
                                 add("output", outputObj)
                             }
@@ -354,11 +356,11 @@ class GeminiChatService(private val context: Context) {
             }
             add("tools", tools)
 
-            // Generation Config for rich multi-turn reasoning without truncation
+            // Generation Config: Low temperature (0.25) after tool completion ensures crisp, accurate spoken confirmation
             val genConfig = JsonObject().apply {
-                addProperty("temperature", 0.7)
+                addProperty("temperature", 0.25)
                 addProperty("topP", 0.95)
-                addProperty("maxOutputTokens", 8192)
+                addProperty("maxOutputTokens", 4096)
             }
             add("generationConfig", genConfig)
         }
@@ -442,16 +444,7 @@ class GeminiChatService(private val context: Context) {
         // If the model chained another function call (e.g. open_app -> get_screen_context -> find_and_tap)
         if (nextPendingFunctionCalls.isNotEmpty() && currentStep < 8) {
             Log.i(TAG, "Multi-step tool chaining: Step $currentStep complete, executing next ${nextPendingFunctionCalls.size} tools")
-            val nextExecutedTools = mutableListOf<Triple<String, JsonObject, JsonObject>>()
-            for (fnCall in nextPendingFunctionCalls) {
-                val fnName = fnCall.get("name")?.asString ?: continue
-                val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
-                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
-                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
-                val summary = toolResult.get("message")?.asString ?: toolResult.get("status")?.asString ?: "OK"
-                callback.onToolExecution(fnName, fnArgs.toString(), summary)
-                nextExecutedTools.add(Triple(fnName, fnArgs, toolResult))
-            }
+            val nextExecutedTools = executeFunctionCalls(nextPendingFunctionCalls, callback)
 
             executeToolResponsesStream(
                 model = model,
@@ -523,19 +516,37 @@ class GeminiChatService(private val context: Context) {
         }
         root.add("tools", tools)
 
-        // 4. Generation Config
+        // 4. Generation Config: Fast dynamic temperature (0.2 for device actions, 0.7 for conversational chat)
         val genConfig = JsonObject().apply {
-            addProperty("temperature", 0.7)
+            addProperty("temperature", getDynamicTemperature(newPrompt))
             addProperty("topP", 0.95)
-            addProperty("maxOutputTokens", 8192)
+            addProperty("maxOutputTokens", 4096)
         }
         root.add("generationConfig", genConfig)
 
         return root
     }
 
+    private fun getDynamicTemperature(prompt: String): Double {
+        val lower = prompt.lowercase()
+        val isActionIntent = listOf(
+            "khol", "open", "band", "close", "on kar", "off kar", "toggle",
+            "bhejo", "send", "call", "phone", "dial", "lagao", "set", "alarm",
+            "timer", "volume", "brightness", "torch", "flashlight", "wifi",
+            "bluetooth", "hotspot", "screenshot", "camera", "photo", "whatsapp",
+            "message", "sms", "navigate", "location", "battery", "storage",
+            "clean", "clear", "type", "likho", "tap", "click"
+        ).any { lower.contains(it) }
+        return if (isActionIntent) 0.2 else 0.7
+    }
+
     private fun createSystemInstruction(): JsonObject {
-        return JsonObject().apply {
+        val now = System.currentTimeMillis()
+        val cached = cachedSystemInstruction
+        if (cached != null && (now - lastSystemInstructionTime) < 45_000L) {
+            return cached
+        }
+        val newInstruction = JsonObject().apply {
             val parts = JsonArray().apply {
                 val part = JsonObject().apply {
                     addProperty("text", AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false))
@@ -544,24 +555,72 @@ class GeminiChatService(private val context: Context) {
             }
             add("parts", parts)
         }
+        cachedSystemInstruction = newInstruction
+        lastSystemInstructionTime = now
+        return newInstruction
+    }
+
+    private suspend fun executeFunctionCalls(
+        functionCalls: List<JsonObject>,
+        callback: ChatStreamCallback
+    ): List<Triple<String, JsonObject, JsonObject>> = coroutineScope {
+        val validCalls = functionCalls.mapNotNull { fnCall ->
+            val name = fnCall.get("name")?.asString ?: return@mapNotNull null
+            val args = fnCall.getAsJsonObject("args") ?: JsonObject()
+            Pair(name, args)
+        }
+
+        if (validCalls.isEmpty()) return@coroutineScope emptyList()
+
+        val requiresSequential = validCalls.size <= 1 || validCalls.any { (name, _) -> SCREEN_INTERACTIVE_TOOLS.contains(name) }
+
+        if (requiresSequential) {
+            val results = mutableListOf<Triple<String, JsonObject, JsonObject>>()
+            for ((fnName, fnArgs) in validCalls) {
+                Log.i(TAG, "Executing tool sequentially: $fnName with args: $fnArgs")
+                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
+                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
+                val resultSummary = toolResult.get("message")?.asString
+                    ?: toolResult.get("status")?.asString
+                    ?: "Completed"
+                callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                results.add(Triple(fnName, fnArgs, toolResult))
+            }
+            results
+        } else {
+            Log.i(TAG, "Executing ${validCalls.size} independent tools in parallel!")
+            validCalls.map { (fnName, fnArgs) ->
+                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
+                async(Dispatchers.IO) {
+                    val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
+                    val resultSummary = toolResult.get("message")?.asString
+                        ?: toolResult.get("status")?.asString
+                        ?: "Completed"
+                    callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                    Triple(fnName, fnArgs, toolResult)
+                }
+            }.awaitAll()
+        }
     }
 
     private fun createHistoryContents(history: List<ChatMessage>): JsonArray {
         val contents = JsonArray()
-        // Include recent USER, ASSISTANT, and TOOL messages (up to 30 items) for maximum context retention
+        // Include recent USER, ASSISTANT, and TOOL messages (up to 20 items) for maximum context without payload bloat
         val cleanHistory = history.filter {
             it.text.isNotBlank() && !it.isStreaming
-        }.takeLast(30)
+        }.takeLast(20)
 
         var lastRole: String? = null
         for (msg in cleanHistory) {
             val role = if (msg.role == MessageRole.USER) "user" else "model"
             val messageText = when {
                 msg.role == MessageRole.TOOL -> {
-                    "[Tool Output (${msg.toolName ?: "action"})]: ${msg.text}"
+                    val trimmed = if (msg.text.length > 400) msg.text.take(400) + "... [truncated]" else msg.text
+                    "[Tool Output (${msg.toolName ?: "action"})]: $trimmed"
                 }
                 !msg.toolResult.isNullOrBlank() -> {
-                    "${msg.text}\n[Executed Action Output]: ${msg.toolResult}"
+                    val trimmedResult = if (msg.toolResult.length > 400) msg.toolResult.take(400) + "... [truncated]" else msg.toolResult
+                    "${msg.text}\n[Executed Action Output]: $trimmedResult"
                 }
                 else -> msg.text
             }

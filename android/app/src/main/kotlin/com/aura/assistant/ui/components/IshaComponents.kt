@@ -782,16 +782,28 @@ fun ToolExecutionStepPill(
     }
 
     val title = when (toolName) {
-        "toggle_flashlight" -> "Flashlight Action"
+        "toggle_flashlight" -> "Flashlight"
         "open_app" -> "Open App"
         "dispatch_remote_command" -> "Cross-Device Task"
-        "set_volume" -> "Adjust Volume"
-        "set_brightness" -> "Screen Brightness"
-        "toggle_wifi" -> "Wi-Fi Settings"
+        "set_volume" -> "Volume"
+        "set_brightness" -> "Brightness"
+        "toggle_wifi" -> "Wi-Fi"
         "toggle_bluetooth" -> "Bluetooth"
-        "chat_on_whatsapp", "send_whatsapp" -> "WhatsApp Automation"
-        "set_alarm" -> "Set Alarm"
+        "chat_on_whatsapp", "send_whatsapp" -> "WhatsApp"
+        "set_alarm", "create_alarm" -> "Alarm"
+        "set_timer" -> "Timer"
         "get_battery_status" -> "Battery Check"
+        "make_call" -> "Phone Call"
+        "take_screenshot" -> "Screenshot"
+        "get_current_time" -> "Live Time"
+        "get_storage_space" -> "Storage Space"
+        "check_device_health" -> "Device Health"
+        "get_location" -> "Location"
+        "read_notifications" -> "Notifications"
+        "type_message", "type_text" -> "Type Message"
+        "autonomous_ui_action" -> "Screen Action"
+        "find_and_tap" -> "Tap on Screen"
+        "read_screen_text" -> "Read Screen"
         else -> toolName.replace('_', ' ').split(" ").joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
     }
 
