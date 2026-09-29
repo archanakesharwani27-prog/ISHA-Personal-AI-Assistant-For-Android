@@ -741,6 +741,27 @@ object IshaToolRegistry {
             )
         ))
 
+        // 44c. Cross-Device Remote Execution
+        toolsArray.add(createFunction(
+            name = "dispatch_remote_command",
+            desc = "Execute a command, open an app, or send a message on another linked phone or device (e.g. 'Phone B par WhatsApp open karo', 'Phone B par flashlight jalao', 'Phone A ka text copy karke Phone B par WhatsApp par Rahul ko bhej do'). Call whenever user asks to do something on another device.",
+            params = mapOf(
+                "target_device" to "string",
+                "action" to "string",
+                "prompt" to "string",
+                "contact" to "string",
+                "message" to "string"
+            ),
+            required = listOf("target_device", "action"),
+            paramDescriptions = mapOf(
+                "target_device" to "Target device name or alias (e.g. 'Phone B', 'Phone 2', 'Pixel', 'Redmi')",
+                "action" to "Action to execute (e.g. 'open_app', 'toggle_flashlight', 'chat_on_whatsapp', 'set_volume', 'copy_clipboard')",
+                "prompt" to "The natural language instruction for the remote device",
+                "contact" to "Optional target contact name if sending a message on WhatsApp",
+                "message" to "Optional message content to send or type"
+            )
+        ))
+
         // 45. Emergency SOS
         toolsArray.add(createFunction(
             name = "emergency_sos",
@@ -3948,6 +3969,48 @@ object IshaToolRegistry {
                     }
                     result.addProperty("is_updated", updateResult.isUpdated)
                     result.addProperty("message", updateResult.message)
+                }
+
+                // 44c. Cross-Device Remote Execution
+                "dispatch_remote_command" -> {
+                    val targetDevice = args.get("target_device")?.asString ?: "Phone B"
+                    val action = args.get("action")?.asString ?: "generic_command"
+                    val prompt = args.get("prompt")?.asString ?: ""
+                    val contact = args.get("contact")?.asString ?: ""
+                    val message = args.get("message")?.asString ?: ""
+
+                    val params = mutableMapOf<String, Any>()
+                    if (contact.isNotBlank()) params["contact"] = contact
+                    if (message.isNotBlank()) params["message"] = message
+                    if (action == "open_app") {
+                        val app = args.get("app_name")?.asString ?: prompt
+                        params["app_name"] = app
+                        if (app.lowercase().contains("whatsapp")) params["package_name"] = "com.whatsapp"
+                    } else if (action == "toggle_flashlight") {
+                        val state = args.get("state")?.asString ?: if (prompt.contains("off") || prompt.contains("band")) "off" else "on"
+                        params["state"] = state
+                    }
+
+                    var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Execution error")
+                    kotlinx.coroutines.runBlocking {
+                        executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = action,
+                            params = params,
+                            rawPrompt = prompt
+                        )
+                    }
+
+                    if (executionResult.success) {
+                        result.addProperty("status", "success")
+                        result.addProperty("target_device", executionResult.targetDeviceName)
+                        result.addProperty("message", executionResult.message)
+                    } else {
+                        result.addProperty("status", "error")
+                        result.addProperty("target_device", executionResult.targetDeviceName)
+                        result.addProperty("message", executionResult.message)
+                    }
                 }
 
                 // 45. Emergency SOS
