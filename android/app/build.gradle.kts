@@ -21,7 +21,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.aura.assistant"
+        applicationId = "com.isha.assistant"
         minSdk = 26
         targetSdk = 35
         versionCode = 2
