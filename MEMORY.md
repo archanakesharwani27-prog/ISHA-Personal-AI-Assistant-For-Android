@@ -13,6 +13,8 @@
 - **Main Languages**: Kotlin (Android Native Jetpack Compose), minimal legacy Flutter bindings
 - **AI Brain**: Google Gemini Live WebSocket (Streaming Voice) + Gemini 1.5/2.5 Flash (Streaming Text & Tool Calling) + On-Device Offline Reflex Engine
 - **Active Name**: ISHA 2.0 (renamed from AURA/Jarvis on 27 Sep 2026 21:43 IST)
+- **Official App ID**: `com.isha.assistant` (Updated from `com.aura.assistant`)
+- **Multi-Device Orchestration**: `IshaDeviceRegistry`, `IshaCrossDeviceBridge`, `IshaCloudSyncBridge` (Phone A ⟷ Phone B realtime commands & cloud memory sync)
 
 ---
 
