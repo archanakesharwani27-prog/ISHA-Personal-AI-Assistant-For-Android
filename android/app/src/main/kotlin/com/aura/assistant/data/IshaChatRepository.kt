@@ -90,9 +90,54 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
     fun switchUser(userId: String) {
         val clean = sanitizeUserId(userId)
         if (clean != currentUserId) {
+            val oldUserDir = getUserDir()
             Log.i(TAG, "Switching chat partition: $currentUserId -> $clean")
             currentUserId = clean
-            getUserDir() // ensure directory exists
+            val newUserDir = getUserDir()
+
+            // If new user partition has no sessions, carry over from old partition
+            val newSessions = getSessionsFile()
+            val hasExistingSessions = newSessions.exists() && try {
+                val json = newSessions.readText()
+                val type = object : TypeToken<MutableList<ChatSession>>() {}.type
+                val list: MutableList<ChatSession>? = gson.fromJson(json, type)
+                !list.isNullOrEmpty() && list.any { getMessages(it.id).isNotEmpty() }
+            } catch (_: Exception) { false }
+
+            if (!hasExistingSessions) {
+                val oldSessions = File(oldUserDir, SESSIONS_FILE)
+                if (oldSessions.exists()) {
+                    try {
+                        oldSessions.copyTo(newSessions, overwrite = true)
+                        oldUserDir.listFiles()?.forEach { f ->
+                            if (f.name.startsWith("session_") && f.name.endsWith(".json")) {
+                                f.copyTo(File(newUserDir, f.name), overwrite = true)
+                            }
+                        }
+                        Log.i(TAG, "Successfully copied existing chats from ${oldUserDir.name} to $clean")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error copying chats during user switch", e)
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun upsertSessionAndMessages(session: ChatSession, messages: List<ChatMessage>) {
+        val sessions = getAllSessions()
+        val idx = sessions.indexOfFirst { it.id == session.id }
+        if (idx >= 0) {
+            sessions[idx] = session
+        } else {
+            sessions.add(0, session)
+        }
+        sessions.sortByDescending { it.updatedAt }
+        saveSessions(sessions)
+
+        if (messages.isNotEmpty()) {
+            val file = File(getUserDir(), "session_${session.id}.json")
+            file.writeText(gson.toJson(messages))
         }
     }
 

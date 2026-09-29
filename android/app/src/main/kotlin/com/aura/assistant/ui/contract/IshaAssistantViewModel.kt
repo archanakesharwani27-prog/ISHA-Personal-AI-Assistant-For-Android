@@ -196,6 +196,32 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                     repository.renameSession(currentSessionId, autoTitle)
                     _sessions.value = repository.getAllSessions()
                 }
+
+                val finalSession = _sessions.value.find { it.id == currentSessionId }
+                if (finalSession != null) {
+                    com.aura.assistant.sync.IshaCloudSyncBridge.syncSessionToCloud(application, finalSession, updated)
+                }
+            }
+        }
+
+        // Real-Time Cloud Sessions Synchronization across devices (Phone A <-> Phone B)
+        viewModelScope.launch {
+            com.aura.assistant.auth.IshaAuthManager.sessionState.collect { user ->
+                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                    repository.switchUser(user.uid)
+                    loadInitialSessions()
+                    com.aura.assistant.sync.IshaCloudSyncBridge.syncAllLocalSessionsToCloud(application, repository)
+                    com.aura.assistant.sync.IshaCloudSyncBridge.startSessionsListener(application, repository) {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            val updatedSessions = repository.getAllSessions()
+                            _sessions.value = updatedSessions
+                            val activeId = _activeSessionId.value
+                            if (activeId.isNotBlank()) {
+                                _chatMessages.value = repository.getMessages(activeId)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -250,13 +276,19 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     fun renameSession(sessionId: String, newTitle: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.renameSession(sessionId, newTitle)
-            _sessions.value = repository.getAllSessions()
+            val updated = repository.getAllSessions()
+            _sessions.value = updated
+            updated.find { it.id == sessionId }?.let { sess ->
+                val msgs = repository.getMessages(sessionId)
+                com.aura.assistant.sync.IshaCloudSyncBridge.syncSessionToCloud(getApplication(), sess, msgs)
+            }
         }
     }
 
     fun deleteSession(sessionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteSession(sessionId)
+            com.aura.assistant.sync.IshaCloudSyncBridge.deleteSessionFromCloud(getApplication(), sessionId)
             val updated = repository.getAllSessions()
             _sessions.value = updated
             if (_activeSessionId.value == sessionId) {
@@ -560,9 +592,14 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     private fun saveCurrentMessages() {
         val currentSessionId = _activeSessionId.value
         if (currentSessionId.isNotBlank()) {
+            val msgs = _chatMessages.value
             viewModelScope.launch(Dispatchers.IO) {
-                repository.saveMessages(currentSessionId, _chatMessages.value)
-                _sessions.value = repository.getAllSessions()
+                repository.saveMessages(currentSessionId, msgs)
+                val all = repository.getAllSessions()
+                _sessions.value = all
+                all.find { it.id == currentSessionId }?.let { sess ->
+                    com.aura.assistant.sync.IshaCloudSyncBridge.syncSessionToCloud(getApplication(), sess, msgs)
+                }
             }
         }
     }
