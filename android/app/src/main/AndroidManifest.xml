@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.aura.assistant">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ── Networking ──────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -180,11 +179,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="aura" android:host="open" />
+                <data android:scheme="isha" android:host="open" />
             </intent-filter>
 
             <!-- Activity launcher when user explicitly taps "Open Full App" on the overlay -->
             <intent-filter>
                 <action android:name="com.aura.assistant.WAKE_ACTIVATE" />
+                <action android:name="com.isha.assistant.WAKE_ACTIVATE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
@@ -206,7 +207,7 @@
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="AURA background voice keyword and device shake detection" />
+                android:value="ISHA background voice keyword and device shake detection" />
         </service>
 
         <!-- ── Boot receiver (restart wake service after phone restart) ─── -->
@@ -225,6 +226,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.aura.assistant.ADB_INJECT" />
+                <action android:name="com.isha.assistant.ADB_INJECT" />
             </intent-filter>
         </receiver>
 

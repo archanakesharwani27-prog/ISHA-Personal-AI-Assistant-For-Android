@@ -275,7 +275,7 @@ object IshaMemoryManager {
 
         // 1. Active Screen / Foreground App
         val a11y = com.aura.assistant.AuraAccessibilityService.instance
-        val fgPkg = a11y?.rootInActiveWindow?.packageName?.toString() ?: "com.aura.assistant"
+        val fgPkg = a11y?.rootInActiveWindow?.packageName?.toString() ?: (context?.packageName ?: "com.isha.assistant")
         sb.appendLine("• Foreground Screen/App: $fgPkg")
 
         // 2. Battery & Power State

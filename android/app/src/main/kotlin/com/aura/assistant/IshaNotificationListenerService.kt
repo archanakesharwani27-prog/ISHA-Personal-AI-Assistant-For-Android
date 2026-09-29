@@ -117,6 +117,7 @@ open class IshaNotificationListenerService : NotificationListenerService() {
             "com.android.settings",
             "com.google.android.gms",
             "com.aura.assistant",
+            "com.isha.assistant",
         )
 
         // Packages that are always personal messages
