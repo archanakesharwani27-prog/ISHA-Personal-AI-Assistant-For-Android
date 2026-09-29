@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 interface ChatStreamCallback {
     fun onToken(chunk: String)
+    fun onToolStart(toolName: String, args: String) {}
     fun onToolExecution(toolName: String, args: String, result: String)
     fun onComplete(fullText: String)
     fun onError(errorMessage: String)
@@ -241,6 +242,7 @@ class GeminiChatService(private val context: Context) {
                 val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
 
                 Log.i(TAG, "Executing function call: $fnName with args: $fnArgs")
+                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
                 val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
                 val resultSummary = toolResult.get("message")?.asString
                     ?: toolResult.get("status")?.asString
@@ -444,6 +446,7 @@ class GeminiChatService(private val context: Context) {
             for (fnCall in nextPendingFunctionCalls) {
                 val fnName = fnCall.get("name")?.asString ?: continue
                 val fnArgs = fnCall.getAsJsonObject("args") ?: JsonObject()
+                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
                 val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
                 val summary = toolResult.get("message")?.asString ?: toolResult.get("status")?.asString ?: "OK"
                 callback.onToolExecution(fnName, fnArgs.toString(), summary)

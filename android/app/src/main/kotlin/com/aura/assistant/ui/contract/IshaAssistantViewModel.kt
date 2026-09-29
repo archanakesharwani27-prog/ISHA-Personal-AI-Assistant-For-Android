@@ -15,6 +15,7 @@ import com.aura.assistant.ai.ChatStreamCallback
 import com.aura.assistant.ai.GeminiChatService
 import com.aura.assistant.ai.GeminiLiveClient
 import com.aura.assistant.data.AuraChatRepository
+import com.aura.assistant.data.IshaChatRepository
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.ChatSession
 import com.aura.assistant.data.MessageRole
@@ -139,12 +140,21 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     val isSoundEnabled = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.settingsState.value.isSoundEnabled)
 
     init {
+        com.aura.assistant.auth.IshaAuthManager.init(application)
         com.aura.assistant.ui.components.IshaSettingsManager.init(application)
         com.aura.assistant.ai.IshaContactMemoryManager.init(application)
         com.aura.assistant.sync.IshaDeviceRegistry.init(application)
         com.aura.assistant.sync.IshaCrossDeviceBridge.init(application)
         com.aura.assistant.sync.IshaCloudSyncBridge.init(application)
         initTts()
+
+        val currentProfile = com.aura.assistant.auth.IshaAuthManager.sessionState.value
+        val initialUid = if (currentProfile.isLoggedIn && currentProfile.provider != "GUEST" && currentProfile.uid.isNotBlank() && !currentProfile.uid.startsWith("guest")) {
+            currentProfile.uid
+        } else {
+            "guest"
+        }
+        repository.switchUser(initialUid)
         loadInitialSessions()
 
         // Sync completed Gemini Live turns into current chat session
@@ -207,9 +217,22 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         // Real-Time Cloud Sessions Synchronization across devices (Phone A <-> Phone B)
         viewModelScope.launch {
             com.aura.assistant.auth.IshaAuthManager.sessionState.collect { user ->
-                if (user.isLoggedIn && user.uid.isNotBlank()) {
-                    repository.switchUser(user.uid)
+                val targetUid = if (user.isLoggedIn && user.provider != "GUEST" && user.uid.isNotBlank() && !user.uid.startsWith("guest")) {
+                    user.uid
+                } else {
+                    "guest"
+                }
+                val sanitizedTarget = IshaChatRepository.sanitizeUserId(targetUid)
+                if (repository.getCurrentUserId() != sanitizedTarget) {
+                    Log.i(TAG, "Switching user partition strictly: ${repository.getCurrentUserId()} -> $sanitizedTarget")
+                    com.aura.assistant.sync.IshaCloudSyncBridge.stopSessionsListener()
+                    repository.switchUser(targetUid)
+                    _activeSessionId.value = ""
+                    _chatMessages.value = emptyList()
                     loadInitialSessions()
+                }
+
+                if (targetUid != "guest") {
                     com.aura.assistant.sync.IshaCloudSyncBridge.syncAllLocalSessionsToCloud(application, repository)
                     com.aura.assistant.sync.IshaCloudSyncBridge.startSessionsListener(application, repository) {
                         viewModelScope.launch(Dispatchers.Main) {
@@ -221,6 +244,8 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                             }
                         }
                     }
+                } else {
+                    com.aura.assistant.sync.IshaCloudSyncBridge.stopSessionsListener()
                 }
             }
         }
@@ -314,6 +339,10 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun clearAllChats() {
         viewModelScope.launch(Dispatchers.IO) {
+            val oldSessions = repository.getAllSessions()
+            for (s in oldSessions) {
+                com.aura.assistant.sync.IshaCloudSyncBridge.deleteSessionFromCloud(getApplication(), s.id)
+            }
             val defaultSession = repository.clearAllSessions()
             _sessions.value = listOf(defaultSession)
             _activeSessionId.value = defaultSession.id
@@ -423,6 +452,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         _selectedAttachment.value = null // consume attachment
 
+
         val currentSessionId = if (_activeSessionId.value.isNotBlank()) {
             _activeSessionId.value
         } else {
@@ -510,15 +540,16 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
 
-                override fun onToolExecution(toolName: String, args: String, result: String) {
+                override fun onToolStart(toolName: String, args: String) {
                     viewModelScope.launch(Dispatchers.Main) {
                         val toolMsg = ChatMessage(
                             sessionId = currentSessionId,
                             role = MessageRole.TOOL,
-                            text = result,
+                            text = "Executing $toolName...",
                             toolName = toolName,
                             toolArgs = args,
-                            toolResult = result
+                            toolResult = null,
+                            isStreaming = true
                         )
                         val current = _chatMessages.value.toMutableList()
                         val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
@@ -526,6 +557,38 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                             current.add(assistantIdx, toolMsg)
                         } else {
                             current.add(toolMsg)
+                        }
+                        _chatMessages.value = current
+                    }
+                }
+
+                override fun onToolExecution(toolName: String, args: String, result: String) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        val current = _chatMessages.value.toMutableList()
+                        val pendingToolIdx = current.indexOfLast { it.role == MessageRole.TOOL && it.toolName == toolName && it.isStreaming }
+                        if (pendingToolIdx != -1) {
+                            val existing = current[pendingToolIdx]
+                            current[pendingToolIdx] = existing.copy(
+                                text = result,
+                                toolResult = result,
+                                isStreaming = false
+                            )
+                        } else {
+                            val toolMsg = ChatMessage(
+                                sessionId = currentSessionId,
+                                role = MessageRole.TOOL,
+                                text = result,
+                                toolName = toolName,
+                                toolArgs = args,
+                                toolResult = result,
+                                isStreaming = false
+                            )
+                            val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
+                            if (assistantIdx != -1) {
+                                current.add(assistantIdx, toolMsg)
+                            } else {
+                                current.add(toolMsg)
+                            }
                         }
                         _chatMessages.value = current
                     }
@@ -829,16 +892,32 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
      * Switched active user partition: Clears previous user's chat memory and loads target user's private sessions!
      */
     fun switchUser(userProfile: com.aura.assistant.auth.UserProfile) {
-        val uid = if (userProfile.isLoggedIn) userProfile.uid.ifBlank { userProfile.email } else "guest"
-        val prevUid = repository.getCurrentUserId()
-        if (uid != prevUid) {
-            Log.i(TAG, "Switching user partition in ViewModel: $prevUid -> $uid")
-            repository.switchUser(uid)
-            val userSessions = repository.getAllSessions()
-            _sessions.value = userSessions
-            val target = userSessions.firstOrNull() ?: repository.createSession("New Chat")
-            _activeSessionId.value = target.id
-            _chatMessages.value = repository.getMessages(target.id)
+        val targetUid = if (userProfile.isLoggedIn && userProfile.provider != "GUEST" && userProfile.uid.isNotBlank() && !userProfile.uid.startsWith("guest")) {
+            userProfile.uid
+        } else {
+            "guest"
+        }
+        val sanitizedTarget = IshaChatRepository.sanitizeUserId(targetUid)
+        if (repository.getCurrentUserId() != sanitizedTarget) {
+            Log.i(TAG, "Switching user partition strictly in ViewModel: ${repository.getCurrentUserId()} -> $sanitizedTarget")
+            com.aura.assistant.sync.IshaCloudSyncBridge.stopSessionsListener()
+            repository.switchUser(targetUid)
+            _activeSessionId.value = ""
+            _chatMessages.value = emptyList()
+            loadInitialSessions()
+            if (targetUid != "guest") {
+                com.aura.assistant.sync.IshaCloudSyncBridge.syncAllLocalSessionsToCloud(getApplication(), repository)
+                com.aura.assistant.sync.IshaCloudSyncBridge.startSessionsListener(getApplication(), repository) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        val updatedSessions = repository.getAllSessions()
+                        _sessions.value = updatedSessions
+                        val activeId = _activeSessionId.value
+                        if (activeId.isNotBlank()) {
+                            _chatMessages.value = repository.getMessages(activeId)
+                        }
+                    }
+                }
+            }
         }
     }
 

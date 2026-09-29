@@ -3982,13 +3982,23 @@ object IshaToolRegistry {
                     val params = mutableMapOf<String, Any>()
                     if (contact.isNotBlank()) params["contact"] = contact
                     if (message.isNotBlank()) params["message"] = message
-                    if (action == "open_app") {
+                    val normAction = when (action.lowercase()) {
+                        "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight" -> "toggle_flashlight"
+                        "volume", "set_volume_level" -> "set_volume"
+                        "launch_app", "open" -> "open_app"
+                        "battery", "battery_status" -> "battery"
+                        else -> action
+                    }
+                    if (normAction == "open_app") {
                         val app = args.get("app_name")?.asString ?: prompt
                         params["app_name"] = app
                         if (app.lowercase().contains("whatsapp")) params["package_name"] = "com.whatsapp"
-                    } else if (action == "toggle_flashlight") {
-                        val state = args.get("state")?.asString ?: if (prompt.contains("off") || prompt.contains("band")) "off" else "on"
+                    } else if (normAction == "toggle_flashlight") {
+                        val state = args.get("state")?.asString ?: if (prompt.contains("off") || prompt.contains("band") || action.contains("off")) "off" else "on"
                         params["state"] = state
+                    } else if (normAction == "set_volume") {
+                        val level = args.get("level")?.asInt ?: 50
+                        params["level"] = level
                     }
 
                     var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Execution error")
@@ -3996,7 +4006,7 @@ object IshaToolRegistry {
                         executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
                             context = context,
                             targetDeviceQuery = targetDevice,
-                            action = action,
+                            action = normAction,
                             params = params,
                             rawPrompt = prompt
                         )

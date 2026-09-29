@@ -43,82 +43,35 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
         private const val TAG = "IshaChatRepo"
         private const val SESSIONS_FILE = "chat_sessions.json"
         private const val CHATS_DIR = "isha_chats"
+
+        fun sanitizeUserId(uid: String): String {
+            val clean = uid.trim().lowercase()
+            return if (clean.isBlank()) "guest" else clean.replace(Regex("[^a-zA-Z0-9_]"), "_")
+        }
     }
 
     private val gson = Gson()
     @Volatile private var currentUserId: String = sanitizeUserId(initialUserId)
 
-    private fun sanitizeUserId(uid: String): String {
-        val clean = uid.trim().lowercase()
-        return if (clean.isBlank()) "guest" else clean.replace(Regex("[^a-zA-Z0-9_]"), "_")
-    }
-
     private fun getUserDir(): File {
         val dir = File(context.filesDir, "$CHATS_DIR/user_$currentUserId")
         if (!dir.exists()) {
             dir.mkdirs()
-            // Auto-migrate legacy root sessions if this is the first user directory
-            migrateLegacySessionsIfNeeded(dir)
         }
         return dir
     }
 
     private fun getSessionsFile(): File = File(getUserDir(), SESSIONS_FILE)
 
-    private fun migrateLegacySessionsIfNeeded(targetUserDir: File) {
-        try {
-            val legacyRootDir = File(context.filesDir, CHATS_DIR)
-            val legacySessionsFile = File(legacyRootDir, SESSIONS_FILE)
-            if (legacySessionsFile.exists()) {
-                val targetFile = File(targetUserDir, SESSIONS_FILE)
-                if (!targetFile.exists()) {
-                    legacySessionsFile.copyTo(targetFile, overwrite = true)
-                    legacyRootDir.listFiles()?.forEach { f ->
-                        if (f.name.startsWith("session_") && f.name.endsWith(".json")) {
-                            f.copyTo(File(targetUserDir, f.name), overwrite = true)
-                        }
-                    }
-                    Log.i(TAG, "Migrated legacy chats to user directory: ${targetUserDir.name}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Legacy migration error", e)
-        }
-    }
-
     @Synchronized
     fun switchUser(userId: String) {
         val clean = sanitizeUserId(userId)
         if (clean != currentUserId) {
-            val oldUserDir = getUserDir()
-            Log.i(TAG, "Switching chat partition: $currentUserId -> $clean")
+            Log.i(TAG, "Switching chat partition strictly: $currentUserId -> $clean")
             currentUserId = clean
-            val newUserDir = getUserDir()
-
-            // If new user partition has no sessions, carry over from old partition
-            val newSessions = getSessionsFile()
-            val hasExistingSessions = newSessions.exists() && try {
-                val json = newSessions.readText()
-                val type = object : TypeToken<MutableList<ChatSession>>() {}.type
-                val list: MutableList<ChatSession>? = gson.fromJson(json, type)
-                !list.isNullOrEmpty() && list.any { getMessages(it.id).isNotEmpty() }
-            } catch (_: Exception) { false }
-
-            if (!hasExistingSessions) {
-                val oldSessions = File(oldUserDir, SESSIONS_FILE)
-                if (oldSessions.exists()) {
-                    try {
-                        oldSessions.copyTo(newSessions, overwrite = true)
-                        oldUserDir.listFiles()?.forEach { f ->
-                            if (f.name.startsWith("session_") && f.name.endsWith(".json")) {
-                                f.copyTo(File(newUserDir, f.name), overwrite = true)
-                            }
-                        }
-                        Log.i(TAG, "Successfully copied existing chats from ${oldUserDir.name} to $clean")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error copying chats during user switch", e)
-                    }
-                }
+            val dir = getUserDir()
+            if (!dir.exists()) {
+                dir.mkdirs()
             }
         }
     }

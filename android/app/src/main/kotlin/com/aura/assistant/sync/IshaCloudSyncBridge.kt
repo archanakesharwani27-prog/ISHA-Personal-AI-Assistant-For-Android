@@ -147,8 +147,9 @@ object IshaCloudSyncBridge {
      * Pushes an entire chat session and its messages to Cloud Firestore.
      */
     fun syncSessionToCloud(context: Context, session: ChatSession, messages: List<ChatMessage>) {
-        val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) return
+        val user = IshaAuthManager.sessionState.value
+        val userId = user.uid
+        if (userId.isBlank() || user.provider == "GUEST" || userId.startsWith("guest") || !user.isLoggedIn) return
 
         scope.launch {
             try {
@@ -196,11 +197,17 @@ object IshaCloudSyncBridge {
      * Pushes all local sessions to Cloud Firestore.
      */
     fun syncAllLocalSessionsToCloud(context: Context, repo: IshaChatRepository) {
-        val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) return
+        val user = IshaAuthManager.sessionState.value
+        val userId = user.uid
+        if (userId.isBlank() || user.provider == "GUEST" || userId.startsWith("guest") || !user.isLoggedIn) return
 
         scope.launch {
             try {
+                val sanitizedExpected = IshaChatRepository.sanitizeUserId(userId)
+                if (repo.getCurrentUserId() != sanitizedExpected) {
+                    Log.w(TAG, "Skip syncAllLocalSessions: repo on ${repo.getCurrentUserId()} != expected $sanitizedExpected")
+                    return@launch
+                }
                 val allSessions = repo.getAllSessions()
                 Log.i(TAG, "Syncing ${allSessions.size} local sessions to cloud for user $userId")
                 for (sess in allSessions) {
@@ -216,21 +223,41 @@ object IshaCloudSyncBridge {
     }
 
     /**
+     * Stops observing cloud sessions when user logs out or switches to guest.
+     */
+    fun stopSessionsListener() {
+        try {
+            sessionsListener?.remove()
+            sessionsListener = null
+            Log.i(TAG, "Stopped cloud sessions listener")
+        } catch (_: Exception) {}
+    }
+
+    /**
      * Listens in real-time to `users/{userId}/sessions` and updates the local chat repository.
      */
     fun startSessionsListener(context: Context, repo: IshaChatRepository, onSessionsChanged: () -> Unit) {
-        val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) return
+        val user = IshaAuthManager.sessionState.value
+        val userId = user.uid
+        if (userId.isBlank() || user.provider == "GUEST" || userId.startsWith("guest") || !user.isLoggedIn) {
+            stopSessionsListener()
+            return
+        }
 
         try {
             sessionsListener?.remove()
             val firestore = FirebaseFirestore.getInstance()
+            val expectedSanitized = IshaChatRepository.sanitizeUserId(userId)
             sessionsListener = firestore.collection("users")
                 .document(userId)
                 .collection("sessions")
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.w(TAG, "Error observing cloud sessions: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (repo.getCurrentUserId() != expectedSanitized) {
+                        Log.w(TAG, "Ignoring cloud session snapshot: repo is on ${repo.getCurrentUserId()} but expected $expectedSanitized")
                         return@addSnapshotListener
                     }
                     if (snapshot != null && !snapshot.isEmpty) {
@@ -280,16 +307,18 @@ object IshaCloudSyncBridge {
                                         updatedAt = updatedAt
                                     )
 
-                                    val localMsgs = repo.getMessages(id)
-                                    if (chatMessages.size >= localMsgs.size) {
-                                        repo.upsertSessionAndMessages(session, chatMessages)
-                                        hasUpdates = true
+                                    if (repo.getCurrentUserId() == expectedSanitized) {
+                                        val localMsgs = repo.getMessages(id)
+                                        if (chatMessages.size >= localMsgs.size) {
+                                            repo.upsertSessionAndMessages(session, chatMessages)
+                                            hasUpdates = true
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Error parsing remote session doc", e)
                                 }
                             }
-                            if (hasUpdates) {
+                            if (hasUpdates && repo.getCurrentUserId() == expectedSanitized) {
                                 Log.i(TAG, "Cloud sessions synced into local repository successfully")
                                 onSessionsChanged()
                             }
@@ -303,8 +332,9 @@ object IshaCloudSyncBridge {
     }
 
     fun deleteSessionFromCloud(context: Context, sessionId: String) {
-        val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) return
+        val user = IshaAuthManager.sessionState.value
+        val userId = user.uid
+        if (userId.isBlank() || user.provider == "GUEST" || userId.startsWith("guest") || !user.isLoggedIn) return
 
         scope.launch {
             try {

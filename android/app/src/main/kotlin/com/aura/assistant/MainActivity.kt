@@ -202,10 +202,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         registerReceivers()
         initShakeSensor()
         IshaCallAnnouncerManager.init(this)
+        IshaAuthManager.init(this)
         com.aura.assistant.sync.IshaDeviceRegistry.init(this)
         com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
 
-        IshaAuthManager.init(this)
         startWakeWordService()
         handleWakeIntent(intent)
 
@@ -455,6 +455,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         } else {
             sensorManager?.unregisterListener(this)
         }
+        com.aura.assistant.sync.IshaDeviceRegistry.registerHeartbeat(this)
+        com.aura.assistant.sync.IshaCrossDeviceBridge.startInboxListener(this)
     }
 
     override fun onUserLeaveHint() {

@@ -181,6 +181,7 @@ class WakeWordService : Service(), SensorEventListener {
         initShakeSensor()
         registerScreenReceiver()
         try {
+            com.aura.assistant.auth.IshaAuthManager.init(this)
             com.aura.assistant.sync.IshaDeviceRegistry.init(this)
             com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
         } catch (e: Exception) {

@@ -93,10 +93,14 @@ object OfflineReflexEngine {
             }
         }
 
-        // 1. Flashlight / Torch (Requires explicit action verb)
-        val isTorchCommand = (clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")) &&
-                             (clean.contains("on") || clean.contains("chalu") || clean.contains("jala") || clean.contains("chala") ||
-                              clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok"))
+        // 1. Flashlight / Torch (Requires explicit action verb or direct noun)
+        val isTorchMention = clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")
+        val isTorchAction = clean.contains("on") || clean.contains("chalu") || clean.contains("jala") ||
+                            clean.contains("chala") || clean.contains("khol") || clean.contains("start") ||
+                            clean.contains("band") || clean.contains("off") || clean.contains("bujha") ||
+                            clean.contains("rok") || clean.contains("krdo") || clean.contains("kardo")
+        val isTorchExact = clean == "torch" || clean == "flashlight" || clean == "flash light" || clean == "torch light"
+        val isTorchCommand = isTorchMention && (isTorchAction || isTorchExact)
         if (isTorchCommand) {
             val isOff = clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
@@ -275,7 +279,11 @@ object OfflineReflexEngine {
         }
 
         // 11. Open Quick Apps (Camera, Settings, YouTube, WhatsApp, Chrome, Gallery)
-        if (clean.startsWith("open ") || clean.startsWith("kholo ") || clean.endsWith(" kholo") || clean.endsWith(" open karo")) {
+        val isOpenAppCmd = clean.startsWith("open ") || clean.startsWith("kholo ") || 
+                           clean.endsWith(" kholo") || clean.endsWith(" open karo") ||
+                           clean.endsWith(" open krdo") || clean.contains("open karo") ||
+                           clean.contains("open krdo") || clean.contains("khol do")
+        if (isOpenAppCmd) {
             val appMap = mapOf(
                 "camera" to "camera",
                 "settings" to "settings",

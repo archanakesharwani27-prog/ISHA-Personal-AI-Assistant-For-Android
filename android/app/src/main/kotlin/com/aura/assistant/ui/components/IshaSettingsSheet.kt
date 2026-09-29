@@ -75,6 +75,8 @@ fun IshaSettingsSheet(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     var showClearConfirm by remember { mutableStateOf(false) }
+    var deviceToRename by remember { mutableStateOf<com.aura.assistant.sync.IshaDeviceInfo?>(null) }
+    var newDeviceAliasInput by remember { mutableStateOf("") }
 
     val voices = listOf("Aoede", "Puck", "Charon", "Fenrir", "Kore")
     val languages = listOf("Auto-detect", "English", "Hindi", "Hinglish")
@@ -473,6 +475,150 @@ fun IshaSettingsSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // ── Section: Connected Devices & Cross-Control ─────────────────────
+            SettingsSectionHeader(icon = Icons.Default.Devices, title = "Connected Devices & Cross-Control")
+
+            val allRegisteredDevices by com.aura.assistant.sync.IshaDeviceRegistry.knownDevices.collectAsState()
+            val currentDeviceId = remember { com.aura.assistant.sync.IshaDeviceRegistry.getDeviceId() }
+            val currentAlias = remember { com.aura.assistant.sync.IshaDeviceRegistry.getDeviceAlias() }
+
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Devices linked to this account can be commanded remotely by ISHA (e.g. \"Phone A par torch on karo\"). Tap ✏️ to rename.",
+                        style = AuraTypography.bodySmall.copy(color = ChatGptTextMuted, fontSize = 11.sp)
+                    )
+
+                    if (allRegisteredDevices.isEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(ChatGptAccentGreen.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Smartphone, contentDescription = null, tint = ChatGptAccentGreen, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = currentAlias,
+                                    style = AuraTypography.bodyMedium.copy(color = ChatGptTextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                )
+                                Text(
+                                    text = "This Device • Ready for sync",
+                                    style = AuraTypography.bodySmall.copy(color = ChatGptAccentGreen, fontSize = 11.sp)
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    deviceToRename = com.aura.assistant.sync.IshaDeviceInfo(
+                                        deviceId = currentDeviceId,
+                                        deviceAlias = currentAlias,
+                                        isCurrentDevice = true
+                                    )
+                                    newDeviceAliasInput = currentAlias
+                                },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = "Rename", tint = ChatGptTextMuted, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    } else {
+                        allRegisteredDevices.forEach { dev ->
+                            val isMe = dev.deviceId == currentDeviceId || dev.isCurrentDevice
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isMe) ChatGptBackground.copy(alpha = 0.5f) else Color.Transparent)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isMe) ChatGptAccentGreen.copy(alpha = 0.15f) else ChatGptBorderSubtle),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Smartphone,
+                                        contentDescription = null,
+                                        tint = if (isMe) ChatGptAccentGreen else ChatGptTextSecondary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = dev.deviceAlias.ifBlank { dev.deviceName },
+                                            style = AuraTypography.bodyMedium.copy(
+                                                color = ChatGptTextPrimary,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        if (isMe) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(ChatGptAccentGreen.copy(alpha = 0.2f))
+                                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "This Device",
+                                                    style = AuraTypography.labelSmall.copy(color = ChatGptAccentGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                )
+                                            }
+                                        } else if (dev.isOnline) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF132F20))
+                                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Online 🟢",
+                                                    style = AuraTypography.labelSmall.copy(color = ChatGptAccentGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    val batteryStr = if (dev.batteryLevel >= 0) " • ⚡ ${dev.batteryLevel}%" else ""
+                                    Text(
+                                        text = "${dev.manufacturer} ${dev.model}$batteryStr",
+                                        style = AuraTypography.bodySmall.copy(color = ChatGptTextMuted, fontSize = 11.sp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        deviceToRename = dev
+                                        newDeviceAliasInput = dev.deviceAlias.ifBlank { dev.deviceName }
+                                    },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Rename", tint = ChatGptTextMuted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             // ── Section 5: Accessibility & Permissions ────────────────────────
             SettingsSectionHeader(icon = Icons.Default.Accessibility, title = "Permissions & Accessibility")
 
@@ -757,6 +903,57 @@ fun IshaSettingsSheet(
                 )
             }
         }
+    }
+
+    // ── Rename Device Dialog ───────────────────────────────────────────────────
+    if (deviceToRename != null) {
+        val dev = deviceToRename!!
+        AlertDialog(
+            onDismissRequest = { deviceToRename = null },
+            containerColor = ChatGptCard,
+            title = {
+                Text("Rename Device", color = ChatGptTextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text(
+                        "Give this phone a short name so you can command it easily (e.g. \"Phone A\", \"Phone B\", \"Office Phone\").",
+                        color = ChatGptTextSecondary,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = newDeviceAliasInput,
+                        onValueChange = { newDeviceAliasInput = it },
+                        singleLine = true,
+                        placeholder = { Text("Device Name") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = ChatGptTextPrimary,
+                            unfocusedTextColor = ChatGptTextPrimary,
+                            focusedBorderColor = ChatGptAccentGreen,
+                            unfocusedBorderColor = ChatGptBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val clean = newDeviceAliasInput.trim()
+                    if (clean.isNotBlank()) {
+                        com.aura.assistant.sync.IshaDeviceRegistry.updateDeviceAlias(context, dev.deviceId, clean)
+                    }
+                    deviceToRename = null
+                }) {
+                    Text("Save", color = ChatGptAccentGreen, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deviceToRename = null }) {
+                    Text("Cancel", color = ChatGptTextMuted)
+                }
+            }
+        )
     }
 
     // ── Clear Chats Confirmation Dialog ───────────────────────────────────────

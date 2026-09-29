@@ -754,6 +754,119 @@ fun StreamingCursor(modifier: Modifier = Modifier) {
     )
 }
 
+// ── 2b. ChatGPT-style Live Tool Execution Step Pill ──────────────────────────
+@Composable
+fun ToolExecutionStepPill(
+    message: ChatMessage,
+    textScale: Float = 1.0f,
+    modifier: Modifier = Modifier
+) {
+    val toolName = (message.toolName ?: "action").lowercase()
+    var expanded by remember { mutableStateOf(false) }
+
+    val icon: ImageVector = when {
+        toolName.contains("flashlight") || toolName.contains("torch") -> Icons.Default.FlashlightOn
+        toolName.contains("whatsapp") -> Icons.Outlined.Chat
+        toolName.contains("app") -> Icons.Outlined.Apps
+        toolName.contains("volume") -> Icons.Outlined.VolumeUp
+        toolName.contains("brightness") -> Icons.Outlined.BrightnessMedium
+        toolName.contains("wifi") -> Icons.Outlined.Wifi
+        toolName.contains("bluetooth") -> Icons.Outlined.Bluetooth
+        toolName.contains("remote") || toolName.contains("device") -> Icons.Outlined.Devices
+        toolName.contains("call") || toolName.contains("phone") -> Icons.Outlined.Call
+        toolName.contains("sms") || toolName.contains("message") -> Icons.Outlined.Send
+        toolName.contains("alarm") || toolName.contains("timer") -> Icons.Outlined.Alarm
+        toolName.contains("battery") -> Icons.Outlined.BatteryChargingFull
+        toolName.contains("search") -> Icons.Outlined.Search
+        else -> Icons.Outlined.CheckCircle
+    }
+
+    val title = when (toolName) {
+        "toggle_flashlight" -> "Flashlight Action"
+        "open_app" -> "Open App"
+        "dispatch_remote_command" -> "Cross-Device Task"
+        "set_volume" -> "Adjust Volume"
+        "set_brightness" -> "Screen Brightness"
+        "toggle_wifi" -> "Wi-Fi Settings"
+        "toggle_bluetooth" -> "Bluetooth"
+        "chat_on_whatsapp", "send_whatsapp" -> "WhatsApp Automation"
+        "set_alarm" -> "Set Alarm"
+        "get_battery_status" -> "Battery Check"
+        else -> toolName.replace('_', ' ').split(" ").joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+    }
+
+    val resultSummary = (message.toolResult ?: message.text).trim()
+
+    val isRunning = message.isStreaming
+    val statusText = if (isRunning) "⏳ Running..." else "✓ Completed"
+    val statusBg = if (isRunning) Color(0xFF2E2412) else Color(0xFF132F20)
+    val statusTint = if (isRunning) Color(0xFFF6AD55) else ChatGptAccentGreen
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            color = Color(0xFF1B1B1F),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E2E36)),
+            modifier = Modifier.clickable { expanded = !expanded }
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = statusTint,
+                        modifier = Modifier.size((16 * textScale).dp)
+                    )
+                    Text(
+                        text = title,
+                        style = AuraTypography.bodySmall.copy(
+                            color = ChatGptTextPrimary,
+                            fontSize = (12 * textScale).sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(statusBg)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = statusText,
+                            style = AuraTypography.labelSmall.copy(
+                                color = statusTint,
+                                fontSize = (10 * textScale).sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                    }
+                }
+                if ((expanded || isRunning) && resultSummary.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = resultSummary,
+                        style = AuraTypography.bodySmall.copy(
+                            color = ChatGptTextSecondary,
+                            fontSize = (11 * textScale).sp
+                        ),
+                        modifier = Modifier.padding(start = 24.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ── 3. ChatGPT Message Bubble / Markdown Item ────────────────────────────────
 @Composable
 fun ChatMessageItem(
@@ -774,7 +887,7 @@ fun ChatMessageItem(
     }
 
     if (isTool) {
-        // Suppress tool execution pill for pristine chat aesthetic
+        ToolExecutionStepPill(message = message, textScale = textScale, modifier = modifier)
         return
     }
 

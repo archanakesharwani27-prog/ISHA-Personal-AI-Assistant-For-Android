@@ -67,6 +67,7 @@ object IshaDeviceRegistry {
     fun init(context: Context) {
         if (isInitialized) return
         val app = context.applicationContext
+        IshaAuthManager.init(app)
         prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         // Retrieve or generate stable device ID
@@ -87,7 +88,12 @@ object IshaDeviceRegistry {
         cachedDeviceId = did
 
         // Default alias is Model name or saved alias
-        cachedDeviceAlias = prefs?.getString(KEY_DEVICE_ALIAS, getDefaultDeviceAlias()) ?: getDefaultDeviceAlias()
+        var savedAlias = prefs?.getString(KEY_DEVICE_ALIAS, null)
+        if (savedAlias.isNullOrBlank() || savedAlias.equals("LAVA LAVA LEX402", ignoreCase = true) || savedAlias.equals("LEX402", ignoreCase = true)) {
+            savedAlias = getDefaultDeviceAlias()
+            prefs?.edit()?.putString(KEY_DEVICE_ALIAS, savedAlias)?.apply()
+        }
+        cachedDeviceAlias = savedAlias
         isInitialized = true
 
         Log.i(TAG, "Device Registry initialized. My Device ID: $cachedDeviceId ($cachedDeviceAlias)")
@@ -116,6 +122,24 @@ object IshaDeviceRegistry {
             cachedDeviceAlias = clean
             prefs?.edit()?.putString(KEY_DEVICE_ALIAS, clean)?.apply()
             registerHeartbeat(context.applicationContext)
+        }
+    }
+
+    fun updateDeviceAlias(context: Context, targetDeviceId: String, newAlias: String) {
+        val clean = newAlias.trim()
+        if (clean.isBlank()) return
+        if (targetDeviceId == cachedDeviceId) {
+            setDeviceAlias(context, clean)
+        } else {
+            val userId = IshaAuthManager.sessionState.value.uid
+            if (userId.isNotBlank()) {
+                FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(userId)
+                    .collection("devices")
+                    .document(targetDeviceId)
+                    .set(mapOf("deviceAlias" to clean), SetOptions.merge())
+            }
         }
     }
 

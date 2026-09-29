@@ -71,6 +71,7 @@ object IshaCrossDeviceBridge {
      */
     fun init(context: Context) {
         val app = context.applicationContext
+        IshaAuthManager.init(app)
         IshaDeviceRegistry.init(app)
         startInboxListener(app)
 
@@ -88,12 +89,23 @@ object IshaCrossDeviceBridge {
      * Subscribes to `users/{userId}/devices/{myDeviceId}/inbox` for pending tasks.
      */
     fun startInboxListener(context: Context) {
-        if (isListening) return
+        val app = context.applicationContext
+        IshaAuthManager.init(app)
+        IshaDeviceRegistry.init(app)
+
         val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) return
+        if (userId.isBlank()) {
+            Log.w(TAG, "Cannot start inbox listener: user not logged in yet")
+            return
+        }
 
         val myDeviceId = IshaDeviceRegistry.getDeviceId()
-        if (myDeviceId.isBlank()) return
+        if (myDeviceId.isBlank()) {
+            Log.w(TAG, "Cannot start inbox listener: deviceId not generated")
+            return
+        }
+
+        if (isListening) return
 
         try {
             inboxListener?.remove()
@@ -108,6 +120,7 @@ object IshaCrossDeviceBridge {
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.w(TAG, "Inbox listener error: ${error.message}")
+                        isListening = false
                         return@addSnapshotListener
                     }
                     if (snapshot != null && !snapshot.isEmpty) {
@@ -124,8 +137,9 @@ object IshaCrossDeviceBridge {
                     }
                 }
             isListening = true
-            Log.i(TAG, "Started cross-device inbox listener for device: $myDeviceId")
+            Log.i(TAG, "Started cross-device inbox listener for device: $myDeviceId (User: $userId)")
         } catch (e: Exception) {
+            isListening = false
             Log.w(TAG, "Failed to start inbox listener: ${e.message}")
         }
     }
@@ -146,7 +160,7 @@ object IshaCrossDeviceBridge {
         scope.launch {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
             val wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "isha:cross_device_cmd")
-            wakeLock?.acquire(8000L)
+            wakeLock?.acquire(15000L)
 
             val firestore = FirebaseFirestore.getInstance()
             val docRef = firestore.collection("users")
@@ -167,37 +181,72 @@ object IshaCrossDeviceBridge {
                     "open_app" -> {
                         val pkgName = params["package_name"]?.toString() ?: ""
                         val appName = params["app_name"]?.toString() ?: "app"
+                        var launched = false
                         if (pkgName.isNotBlank()) {
                             val launchIntent = context.packageManager.getLaunchIntentForPackage(pkgName)
                             if (launchIntent != null) {
                                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 context.startActivity(launchIntent)
-                                executionResult = "$appName successfully opened"
-                            } else {
-                                success = false
-                                executionResult = "Could not find package $pkgName"
+                                launched = true
                             }
-                        } else {
-                            OfflineReflexEngine.tryExecute(context, "open $appName")
-                            executionResult = "$appName opened"
                         }
-                    }
-
-                    "toggle_flashlight" -> {
-                        val state = params["state"]?.toString() ?: "on"
-                        val turnOn = state.contains("on") || state.contains("true") || state.contains("jalao")
-                        val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-                        val cameraId = cm.cameraIdList.firstOrNull()
-                        if (cameraId != null) {
-                            cm.setTorchMode(cameraId, turnOn)
-                            executionResult = if (turnOn) "Flashlight turned on" else "Flashlight turned off"
+                        if (!launched && appName.isNotBlank()) {
+                            val pm = context.packageManager
+                            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+                            val apps = pm.queryIntentActivities(mainIntent, 0)
+                            val match = apps.firstOrNull { it.loadLabel(pm).toString().contains(appName, ignoreCase = true) }
+                            if (match != null) {
+                                val launchIntent = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
+                                if (launchIntent != null) {
+                                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launchIntent)
+                                    launched = true
+                                }
+                            }
+                        }
+                        if (launched) {
+                            executionResult = "$appName opened successfully"
                         } else {
                             success = false
-                            executionResult = "Camera flash hardware unavailable"
+                            executionResult = "Could not find app $appName"
                         }
                     }
 
-                    "set_volume" -> {
+                    "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight" -> {
+                        val state = params["state"]?.toString() ?: if (rawPrompt.contains("off") || rawPrompt.contains("band") || action.contains("off")) "off" else "on"
+                        val turnOn = !(state.contains("off") || state.contains("false") || state.contains("band"))
+                        val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                        var targetCamId: String? = null
+                        for (id in cm.cameraIdList) {
+                            try {
+                                val chars = cm.getCameraCharacteristics(id)
+                                val hasFlash = chars.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                                if (hasFlash) {
+                                    targetCamId = id
+                                    break
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        if (targetCamId == null) {
+                            targetCamId = cm.cameraIdList.firstOrNull() ?: "0"
+                        }
+                        try {
+                            cm.setTorchMode(targetCamId, turnOn)
+                            executionResult = if (turnOn) "Flashlight turned on" else "Flashlight turned off"
+                        } catch (e: Exception) {
+                            success = false
+                            executionResult = "Flashlight error: ${e.message}"
+                        }
+                    }
+
+                    "battery", "battery_status", "get_battery" -> {
+                        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+                        val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+                        val isCharging = bm?.isCharging == true
+                        executionResult = "Battery level is $level%${if (isCharging) " (Charging ⚡)" else ""}"
+                    }
+
+                    "set_volume", "volume" -> {
                         val level = (params["level"]?.toString()?.toIntOrNull()) ?: 50
                         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                         val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -248,17 +297,7 @@ object IshaCrossDeviceBridge {
                     }
 
                     else -> {
-                        // Pass raw prompt to Offline Reflex Engine
-                        if (rawPrompt.isNotBlank()) {
-                            val reflexResult = OfflineReflexEngine.tryExecute(context, rawPrompt)
-                            if (reflexResult != null) {
-                                executionResult = reflexResult.naturalResponse
-                            } else {
-                                executionResult = "Command executed on target device"
-                            }
-                        } else {
-                            executionResult = "Executed $action"
-                        }
+                        executionResult = "Command acknowledged: $action"
                     }
                 }
             } catch (e: Exception) {
@@ -275,7 +314,7 @@ object IshaCrossDeviceBridge {
                 "completedAt" to FieldValue.serverTimestamp()
             )
             try {
-                docRef.update(updatePayload)
+                docRef.set(updatePayload, SetOptions.merge())
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update command status doc: ${e.message}")
             }
@@ -295,7 +334,7 @@ object IshaCrossDeviceBridge {
         action: String,
         params: Map<String, Any>,
         rawPrompt: String
-    ): RemoteExecutionResult = withTimeoutOrNull(15000L) {
+    ): RemoteExecutionResult = withTimeoutOrNull(25000L) {
         val app = context.applicationContext
         IshaDeviceRegistry.init(app)
 
