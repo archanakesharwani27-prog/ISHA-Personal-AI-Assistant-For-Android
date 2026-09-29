@@ -39,7 +39,10 @@ open class IshaCallScreeningService : CallScreeningService() {
 
         val callerName = resolveContactName(number)
 
-        // Broadcast to MainActivity so it immediately triggers the pre-ringing announcement
+        // Immediately trigger IshaCallAnnouncerManager directly for instant 0ms pre-ringing announcement & voice mic
+        IshaCallAnnouncerManager.onCallRinging(this, callerName, number)
+
+        // Broadcast to MainActivity so it immediately updates if active
         val intent = Intent(ACTION_PRE_CALL_SCREENED).apply {
             `package` = packageName
             putExtra(EXTRA_NUMBER, number)
@@ -59,36 +62,7 @@ open class IshaCallScreeningService : CallScreeningService() {
     }
 
     private fun resolveContactName(number: String): String {
-        if (number.isBlank()) return "Unknown Caller"
-
-        // 1. Check ISHA's persistent Contact Memory (with old number awareness!)
-        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(this, number)
-        if (memoryMatch != null) {
-            return if (memoryMatch.isOldNumber) {
-                "${memoryMatch.name} (purana number)"
-            } else {
-                memoryMatch.name
-            }
-        }
-
-        return try {
-            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
-            val cursor: Cursor? = contentResolver.query(
-                uri,
-                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-                null,
-                null,
-                null
-            )
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (nameIndex >= 0) it.getString(nameIndex) else "Unknown Caller"
-                } else "Unknown Caller"
-            } ?: "Unknown Caller"
-        } catch (_: Exception) {
-            "Unknown Caller"
-        }
+        return IshaCallAnnouncerManager.resolveContactName(this, number).first
     }
 }
 

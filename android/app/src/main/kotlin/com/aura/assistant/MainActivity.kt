@@ -122,12 +122,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val SHAKE_MAX_INTERVAL_MS = 600L
     private val SHAKE_COOLDOWN_MS = 2500L
 
-    // ── Native Caller Name Announcer TTS ──────────────────────────────────────
-    private var nativeTts: TextToSpeech? = null
-    private var isTtsReady = false
-    private var hasAnnouncedCurrentCall = false
-    private var lastAnnouncedCallerTime = 0L
-    private var lastAnnouncedCallerNumber = ""
 
     // ── Wake Word Receiver ────────────────────────────────────────────────────
     private val wakeReceiver = object : BroadcastReceiver() {
@@ -161,7 +155,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     TelephonyManager.EXTRA_STATE_OFFHOOK,
                     TelephonyManager.EXTRA_STATE_IDLE -> {
                         IshaCallAnnouncerManager.onCallEnded(ctx)
-                        hasAnnouncedCurrentCall = false
                     }
                 }
             } else if (intent?.action == IshaCallScreeningService.ACTION_PRE_CALL_SCREENED) {
@@ -176,7 +169,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     IshaCallAnnouncerManager.onCallRinging(ctx, callerName, number)
                 } else {
                     IshaCallAnnouncerManager.onCallEnded(ctx)
-                    hasAnnouncedCurrentCall = false
                 }
             }
         }
@@ -209,7 +201,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         checkAndRequestPermissions()
         registerReceivers()
         initShakeSensor()
-        initNativeTts()
         IshaCallAnnouncerManager.init(this)
 
 
@@ -504,8 +495,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         try { unregisterReceiver(shakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(screenShareStopReceiver) } catch (_: Exception) {}
-        stopCallerAnnouncement()
-        try { nativeTts?.shutdown() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -579,80 +568,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    // ── Caller Name Announcer ──────────────────────────────────────────────────
-    private fun initNativeTts() {
-        try {
-            nativeTts = TextToSpeech(applicationContext) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    nativeTts?.language = Locale("en", "IN")
-                    nativeTts?.setSpeechRate(0.92f)
-                    isTtsReady = true
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun announceCaller(callerName: String, number: String) {
-        if (hasAnnouncedCurrentCall) return
-        val now = System.currentTimeMillis()
-        if (now - lastAnnouncedCallerTime < 10000L && (lastAnnouncedCallerNumber == number || number.isBlank())) return
-
-        hasAnnouncedCurrentCall = true
-        lastAnnouncedCallerTime = now
-        lastAnnouncedCallerNumber = number
-
-        val announcement = if (callerName.isNotBlank() && callerName != "Unknown Caller") {
-            "Incoming call from $callerName identified by ISHA"
-        } else if (number.isNotBlank()) {
-            "Incoming call from $number identified by ISHA"
-        } else {
-            "Incoming call identified by ISHA"
-        }
-
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        val ringMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
-        if (ringMode == AudioManager.RINGER_MODE_SILENT) return
-
-        val params = Bundle().apply {
-            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
-        }
-        if (isTtsReady && nativeTts != null) {
-            nativeTts?.speak(announcement, TextToSpeech.QUEUE_FLUSH, params, "ISHA_CALL_ANNOUNCE")
-        }
-    }
-
-    private fun stopCallerAnnouncement() {
-        try {
-            nativeTts?.stop()
-        } catch (_: Exception) {}
-    }
-
+    // ── Contact Name Resolution ────────────────────────────────────────────────
     private fun getContactName(phoneNumber: String): String {
-        if (phoneNumber.isBlank()) return "Unknown Caller"
-
-        // 1. Check ISHA's persistent Contact Memory (with old number awareness!)
-        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(this, phoneNumber)
-        if (memoryMatch != null) {
-            return if (memoryMatch.isOldNumber) {
-                "${memoryMatch.name} (purana number)"
-            } else {
-                memoryMatch.name
-            }
-        }
-
-        try {
-            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
-            val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
-            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (nameIdx >= 0) {
-                        val name = cursor.getString(nameIdx)
-                        if (!name.isNullOrBlank()) return name
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return phoneNumber
+        return IshaCallAnnouncerManager.resolveContactName(this, phoneNumber).first
     }
 }
