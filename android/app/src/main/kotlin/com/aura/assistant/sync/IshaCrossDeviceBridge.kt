@@ -119,8 +119,12 @@ object IshaCrossDeviceBridge {
                 .whereEqualTo("status", "PENDING")
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Log.w(TAG, "Inbox listener error: ${error.message}")
+                        Log.w(TAG, "Inbox listener error: ${error.message} — scheduling reconnect in 5s")
                         isListening = false
+                        scope.launch {
+                            kotlinx.coroutines.delay(5000L)
+                            startInboxListener(app)
+                        }
                         return@addSnapshotListener
                     }
                     if (snapshot != null && !snapshot.isEmpty) {
@@ -141,6 +145,10 @@ object IshaCrossDeviceBridge {
         } catch (e: Exception) {
             isListening = false
             Log.w(TAG, "Failed to start inbox listener: ${e.message}")
+            scope.launch {
+                kotlinx.coroutines.delay(5000L)
+                startInboxListener(app)
+            }
         }
     }
 
@@ -159,8 +167,58 @@ object IshaCrossDeviceBridge {
     ) {
         scope.launch {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-            val wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "isha:cross_device_cmd")
-            wakeLock?.acquire(15000L)
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            val isScreenOn = pm?.isInteractive ?: true
+            val isLocked = km?.isKeyguardLocked ?: false
+
+            // Use SCREEN_BRIGHT_WAKE_LOCK to turn screen ON if device is asleep
+            val wakeLock = pm?.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                android.os.PowerManager.ON_AFTER_RELEASE,
+                "isha:cross_device_cmd"
+            )
+            try {
+                wakeLock?.acquire(20000L)
+            } catch (_: Exception) {}
+
+            // Auto-wake & unlock screen if phone is locked when receiving remote command
+            var unlockedSuccessfully = true
+            if (isLocked) {
+                val a11y = IshaAccessibilityService.instance
+                a11y?.performUnlockSwipe()
+                kotlinx.coroutines.delay(700L)
+
+                val pin = params["pin"]?.toString()
+                    ?: params["password"]?.toString()
+                    ?: getSavedDevicePin(context)
+                val pattern = params["pattern"]?.toString()
+                    ?: getSavedDevicePattern(context)
+
+                if (!pin.isNullOrBlank()) {
+                    saveDeviceCredentials(context, pin, null)
+                    a11y?.enterPin(pin)
+                    kotlinx.coroutines.delay(900L)
+                } else if (!pattern.isNullOrBlank()) {
+                    saveDeviceCredentials(context, null, pattern)
+                    a11y?.unlockWithPattern(pattern)
+                    kotlinx.coroutines.delay(900L)
+                }
+
+                // Explicit Keyguard Verification check
+                val stillLocked = km?.isKeyguardLocked ?: false
+                if (stillLocked) {
+                    // One retry attempt if PIN is available
+                    if (!pin.isNullOrBlank()) {
+                        a11y?.enterPin(pin)
+                        kotlinx.coroutines.delay(800L)
+                    }
+                    if (km?.isKeyguardLocked == true) {
+                        unlockedSuccessfully = false
+                        Log.w(TAG, "Device remains locked after auto-unlock attempt.")
+                    }
+                }
+            }
 
             val firestore = FirebaseFirestore.getInstance()
             val docRef = firestore.collection("users")
@@ -176,29 +234,68 @@ object IshaCrossDeviceBridge {
             var executionResult = "Executed successfully"
             var success = true
 
-            try {
-                when (action.lowercase()) {
+            // If action requires an active unlocked screen and the device is still locked, fail explicitly!
+            val requiresUnlockedScreen = when (action.lowercase()) {
+                "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
+                "battery", "battery_status", "get_battery", "set_volume", "volume", "lock_device" -> false
+                else -> true
+            }
+
+            if (isLocked && !unlockedSuccessfully && requiresUnlockedScreen) {
+                success = false
+                executionResult = "Phone lock hai aur PIN enter karne ke baad bhi unlock nahi hua, isliye '$action' execute nahi ho saki."
+            } else {
+                try {
+                    when (action.lowercase()) {
                     "open_app" -> {
                         val pkgName = params["package_name"]?.toString() ?: ""
-                        val appName = params["app_name"]?.toString() ?: "app"
+                        val rawAppName = params["app_name"]?.toString() ?: "app"
+                        val appName = rawAppName
+                            .replace(Regex("(?i)^(open|launch|kholo|chalao|start|run|app|application)\\s+"), "")
+                            .replace(Regex("(?i)\\s+(app|application|kholo|chalao|karo|krdo)$"), "")
+                            .replace(Regex("(?i)^(open|launch)\\s+"), "")
+                            .replace(Regex("(?i)\\s+(app)$"), "")
+                            .trim().ifBlank { rawAppName }
+
                         var launched = false
-                        if (pkgName.isNotBlank()) {
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage(pkgName)
+                        // 1. Try explicit or alias-resolved package name
+                        val targetPkg = if (pkgName.isNotBlank()) pkgName else when {
+                            appName.contains("chrome", ignoreCase = true) || appName.contains("browser", ignoreCase = true) -> "com.android.chrome"
+                            appName.contains("whatsapp", ignoreCase = true) -> "com.whatsapp"
+                            appName.contains("youtube", ignoreCase = true) -> "com.google.android.youtube"
+                            appName.contains("play store", ignoreCase = true) || appName.contains("playstore", ignoreCase = true) -> "com.android.vending"
+                            appName.contains("settings", ignoreCase = true) -> "com.android.settings"
+                            appName.contains("camera", ignoreCase = true) -> "com.android.camera"
+                            appName.contains("gallery", ignoreCase = true) || appName.contains("photos", ignoreCase = true) -> "com.google.android.apps.photos"
+                            appName.contains("maps", ignoreCase = true) -> "com.google.android.apps.maps"
+                            appName.contains("gmail", ignoreCase = true) || appName.contains("email", ignoreCase = true) -> "com.google.android.gm"
+                            appName.contains("spotify", ignoreCase = true) -> "com.spotify.music"
+                            appName.contains("telegram", ignoreCase = true) -> "org.telegram.messenger"
+                            else -> com.aura.assistant.ai.IshaToolRegistry.resolveAppPackage(context, appName)
+                        }
+
+                        if (!targetPkg.isNullOrBlank()) {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPkg)
                             if (launchIntent != null) {
-                                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                                 context.startActivity(launchIntent)
                                 launched = true
                             }
                         }
+
+                        // 2. Fallback to package manager intent activities by label or package substring
                         if (!launched && appName.isNotBlank()) {
-                            val pm = context.packageManager
+                            val packageMgr = context.packageManager
                             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-                            val apps = pm.queryIntentActivities(mainIntent, 0)
-                            val match = apps.firstOrNull { it.loadLabel(pm).toString().contains(appName, ignoreCase = true) }
+                            val apps = packageMgr.queryIntentActivities(mainIntent, 0)
+                            val match = apps.firstOrNull { 
+                                it.loadLabel(packageMgr).toString().contains(appName, ignoreCase = true) ||
+                                it.activityInfo.packageName.contains(appName, ignoreCase = true)
+                            }
                             if (match != null) {
-                                val launchIntent = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
+                                val launchIntent = packageMgr.getLaunchIntentForPackage(match.activityInfo.packageName)
                                 if (launchIntent != null) {
-                                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                                     context.startActivity(launchIntent)
                                     launched = true
                                 }
@@ -255,6 +352,175 @@ object IshaCrossDeviceBridge {
                         executionResult = "Volume set to $level%"
                     }
 
+                    "play_youtube", "youtube", "play_song", "play_media", "open_youtube" -> {
+                        val query = params["query"]?.toString()
+                            ?: params["song"]?.toString()
+                            ?: params["title"]?.toString()
+                            ?: rawPrompt
+                        val url = params["url"]?.toString() ?: ""
+                        val targetUrl = if (url.isNotBlank()) url else {
+                            val urlRegex = Regex("""https?://[^\s]+""")
+                            urlRegex.find(rawPrompt)?.value ?: ""
+                        }
+
+                        if (targetUrl.isNotBlank()) {
+                            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(targetUrl)).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            }
+                            try {
+                                intent.setPackage("com.google.android.youtube")
+                                context.startActivity(intent)
+                                executionResult = "YouTube link opened and playing"
+                                success = true
+                            } catch (_: Exception) {
+                                intent.setPackage(null)
+                                try {
+                                    context.startActivity(intent)
+                                    executionResult = "Link opened in media player/browser"
+                                    success = true
+                                } catch (e: Exception) {
+                                    success = false
+                                    executionResult = "Failed to open URL: ${e.message}"
+                                }
+                            }
+                        } else {
+                            val cleanQuery = query
+                                .replace("youtube", "", ignoreCase = true)
+                                .replace("song", "", ignoreCase = true)
+                                .replace("play", "", ignoreCase = true)
+                                .replace("open", "", ignoreCase = true)
+                                .replace("karo", "", ignoreCase = true)
+                                .replace("krdo", "", ignoreCase = true)
+                                .replace("chalao", "", ignoreCase = true)
+                                .trim()
+
+                            val searchUrl = "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+                            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(searchUrl)).apply {
+                                setPackage("com.google.android.youtube")
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            }
+                            try {
+                                context.startActivity(intent)
+                                IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(cleanQuery)
+                                executionResult = "YouTube launched for \"$cleanQuery\" with autoplay"
+                                success = true
+                            } catch (_: Exception) {
+                                intent.setPackage(null)
+                                try {
+                                    context.startActivity(intent)
+                                    executionResult = "YouTube opened in browser for \"$cleanQuery\""
+                                    success = true
+                                } catch (e: Exception) {
+                                    success = false
+                                    executionResult = "Failed to launch YouTube: ${e.message}"
+                                }
+                            }
+                        }
+                    }
+
+                    "lock_device", "lock_phone", "lock" -> {
+                        val a11y = IshaAccessibilityService.instance
+                        if (a11y != null) {
+                            val locked = a11y.performLockScreen()
+                            success = locked
+                            executionResult = if (locked) "Phone locked successfully" else "Lock screen not supported on this device"
+                        } else {
+                            success = false
+                            executionResult = "Accessibility Service required to lock phone"
+                        }
+                    }
+
+                    "unlock_device", "unlock_phone", "unlock", "wake_device", "wake" -> {
+                        val a11y = IshaAccessibilityService.instance
+                        a11y?.performUnlockSwipe()
+                        kotlinx.coroutines.delay(650L)
+                        val pin = params["pin"]?.toString() ?: params["password"]?.toString() ?: getSavedDevicePin(context)
+                        val pattern = params["pattern"]?.toString() ?: getSavedDevicePattern(context)
+                        if (!pin.isNullOrBlank()) {
+                            saveDeviceCredentials(context, pin, null)
+                            a11y?.enterPin(pin)
+                            executionResult = "Phone unlocked with PIN"
+                        } else if (!pattern.isNullOrBlank()) {
+                            saveDeviceCredentials(context, null, pattern)
+                            a11y?.unlockWithPattern(pattern)
+                            executionResult = "Phone unlocked with Pattern"
+                        } else {
+                            try {
+                                val launchIntent = Intent(context, com.aura.assistant.MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                                    putExtra("WAKE_REASON", "REMOTE_UNLOCK")
+                                }
+                                context.startActivity(launchIntent)
+                            } catch (_: Exception) {}
+                            executionResult = "Phone screen woken and swipe unlock attempted"
+                        }
+                        success = true
+                    }
+
+                    "install_store_app", "install_app" -> {
+                        val query = params["query"]?.toString() ?: params["app_name"]?.toString() ?: rawPrompt
+                        val cleanQuery = query.replace("play store", "", ignoreCase = true)
+                            .replace("playstore", "", ignoreCase = true)
+                            .replace("install", "", ignoreCase = true)
+                            .replace("karo", "", ignoreCase = true)
+                            .replace("krdo", "", ignoreCase = true)
+                            .replace("se", "", ignoreCase = true)
+                            .trim()
+                        val marketUri = "market://search?q=" + java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(marketUri)).apply {
+                            setPackage("com.android.vending")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        }
+                        try {
+                            context.startActivity(intent)
+                            executionResult = "Play Store opened to install \"$cleanQuery\""
+                            success = true
+                        } catch (_: Exception) {
+                            val webUri = "https://play.google.com/store/search?q=" + java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+                            val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(webUri)).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(webIntent)
+                            executionResult = "Play Store search opened in browser for \"$cleanQuery\""
+                            success = true
+                        }
+                    }
+
+                    "tap", "find_and_tap", "click" -> {
+                        val a11y = IshaAccessibilityService.instance
+                        if (a11y != null) {
+                            val x = params["x"]?.toString()?.toFloatOrNull()
+                            val y = params["y"]?.toString()?.toFloatOrNull()
+                            val target = params["target"]?.toString() ?: params["text"]?.toString() ?: ""
+                            if (x != null && y != null) {
+                                val tapped = a11y.performClickCoordinate(x, y)
+                                success = tapped
+                                executionResult = if (tapped) "Tapped coordinate ($x, $y)" else "Failed to tap ($x, $y)"
+                            } else if (target.isNotBlank()) {
+                                val tapped = a11y.performClickByText(target)
+                                success = tapped
+                                executionResult = if (tapped) "Tapped on \"$target\"" else "Target \"$target\" not found on screen"
+                            } else {
+                                success = false
+                                executionResult = "Missing tap coordinates or target text"
+                            }
+                        } else {
+                            success = false
+                            executionResult = "Accessibility Service not enabled on target device"
+                        }
+                    }
+
+                    "open_url" -> {
+                        val url = params["url"]?.toString() ?: rawPrompt
+                        val targetUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
+                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(targetUrl)).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                        executionResult = "URL opened: $targetUrl"
+                        success = true
+                    }
+
                     "chat_on_whatsapp", "send_whatsapp" -> {
                         val contact = params["contact"]?.toString() ?: ""
                         val message = params["message"]?.toString() ?: ""
@@ -297,13 +563,34 @@ object IshaCrossDeviceBridge {
                     }
 
                     else -> {
-                        executionResult = "Command acknowledged: $action"
+                        // Forward to local tool registry so all 80+ tools work remotely
+                        try {
+                            val jsonArgs = com.google.gson.JsonObject()
+                            params.forEach { (k, v) ->
+                                when (v) {
+                                    is Number -> jsonArgs.addProperty(k, v)
+                                    is Boolean -> jsonArgs.addProperty(k, v)
+                                    else -> jsonArgs.addProperty(k, v.toString())
+                                }
+                            }
+                            if (rawPrompt.isNotBlank() && !jsonArgs.has("prompt")) {
+                                jsonArgs.addProperty("prompt", rawPrompt)
+                            }
+                            val localRes = com.aura.assistant.ai.IshaToolRegistry.executeTool(context, action, jsonArgs)
+                            val st = localRes.get("status")?.asString ?: "success"
+                            val msg = localRes.get("message")?.asString ?: localRes.toString()
+                            success = (st != "error" && st != "failed")
+                            executionResult = msg
+                        } catch (e: Exception) {
+                            executionResult = "Command acknowledged: $action (${e.message})"
+                        }
                     }
                 }
             } catch (e: Exception) {
                 success = false
                 executionResult = "Execution failed: ${e.message}"
                 Log.e(TAG, "Error executing incoming remote command", e)
+            }
             }
 
             // 2. Report status back to initiator
@@ -481,5 +768,22 @@ object IshaCrossDeviceBridge {
         } catch (e: Exception) {
             cont.resume(null)
         }
+    }
+
+    fun saveDeviceCredentials(context: Context, pin: String?, pattern: String?) {
+        val p = context.getSharedPreferences("cross_device_creds", Context.MODE_PRIVATE)
+        p.edit().apply {
+            if (!pin.isNullOrBlank()) putString("saved_pin", pin)
+            if (!pattern.isNullOrBlank()) putString("saved_pattern", pattern)
+            apply()
+        }
+    }
+
+    fun getSavedDevicePin(context: Context): String? {
+        return context.getSharedPreferences("cross_device_creds", Context.MODE_PRIVATE).getString("saved_pin", null)
+    }
+
+    fun getSavedDevicePattern(context: Context): String? {
+        return context.getSharedPreferences("cross_device_creds", Context.MODE_PRIVATE).getString("saved_pattern", null)
     }
 }

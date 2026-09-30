@@ -64,6 +64,7 @@ fun IshaMainScreen(
     val selectedLanguage by viewModel.selectedLanguage.collectAsState()
     val isSoundEnabled by viewModel.isSoundEnabled.collectAsState()
     val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
+    val settingsState by viewModel.settingsState.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
 
     // Activity Launchers for Attachments
@@ -256,6 +257,7 @@ fun IshaMainScreen(
                     isWakeWordEnabled = isWakeWordEnabled,
                     isShakeEnabled = isShakeEnabled,
                     isMessageSpeakEnabled = isMessageSpeakEnabled,
+                    isCallAnnouncementEnabled = settingsState.isCallAnnouncementEnabled,
                     userProfile = userProfile,
                     selectedVoice = selectedVoice,
                     selectedLanguage = selectedLanguage,
@@ -264,6 +266,7 @@ fun IshaMainScreen(
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },
+                    onCallAnnouncementToggle = { viewModel.setCallAnnouncementEnabled(it) },
                     onVoiceChange = { viewModel.setSelectedVoice(it) },
                     onLanguageChange = { viewModel.setSelectedLanguage(it) },
                     onTextSizeChange = { viewModel.setTextSize(it) },

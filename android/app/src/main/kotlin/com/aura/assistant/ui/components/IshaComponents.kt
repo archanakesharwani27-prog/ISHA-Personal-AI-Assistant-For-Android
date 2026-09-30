@@ -810,9 +810,35 @@ fun ToolExecutionStepPill(
     val resultSummary = (message.toolResult ?: message.text).trim()
 
     val isRunning = message.isStreaming
-    val statusText = if (isRunning) "⏳ Running..." else "✓ Completed"
-    val statusBg = if (isRunning) Color(0xFF2E2412) else Color(0xFF132F20)
-    val statusTint = if (isRunning) Color(0xFFF6AD55) else ChatGptAccentGreen
+    val isError = !isRunning && (
+        resultSummary.contains("error", ignoreCase = true) ||
+        resultSummary.contains("fail", ignoreCase = true) ||
+        resultSummary.contains("not found", ignoreCase = true) ||
+        resultSummary.contains("nahi mila", ignoreCase = true) ||
+        resultSummary.contains("nhi mila", ignoreCase = true) ||
+        resultSummary.contains("nahi ho paya", ignoreCase = true) ||
+        resultSummary.contains("nhi ho paya", ignoreCase = true) ||
+        resultSummary.contains("timeout", ignoreCase = true) ||
+        resultSummary.contains("denied", ignoreCase = true) ||
+        resultSummary.contains("rejected", ignoreCase = true) ||
+        resultSummary.contains("unsupported", ignoreCase = true) ||
+        resultSummary.contains("unavailable", ignoreCase = true)
+    )
+    val statusText = when {
+        isRunning -> "⏳ Running..."
+        isError -> "✗ Failed"
+        else -> "✓ Completed"
+    }
+    val statusBg = when {
+        isRunning -> Color(0xFF2E2412)
+        isError -> Color(0xFF3B1818)
+        else -> Color(0xFF132F20)
+    }
+    val statusTint = when {
+        isRunning -> Color(0xFFF6AD55)
+        isError -> Color(0xFFEF4444)
+        else -> ChatGptAccentGreen
+    }
 
     Row(
         modifier = modifier
@@ -900,6 +926,11 @@ fun ChatMessageItem(
 
     if (isTool) {
         ToolExecutionStepPill(message = message, textScale = textScale, modifier = modifier)
+        return
+    }
+
+    // Do not render empty assistant bubbles when stopped/not streaming
+    if (!isUser && !message.isStreaming && message.text.isBlank()) {
         return
     }
 

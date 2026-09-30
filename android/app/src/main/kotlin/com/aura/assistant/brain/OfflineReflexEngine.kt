@@ -71,6 +71,17 @@ object OfflineReflexEngine {
                         val num = Regex("[0-9]+").find(actionPrompt)?.value?.toIntOrNull() ?: 50
                         "set_volume" to mapOf("level" to num)
                     }
+                    actionPrompt.contains("youtube") || actionPrompt.contains("song") || actionPrompt.contains("play") || actionPrompt.contains("video") || actionPrompt.contains("gaana") -> {
+                        val urlRegex = Regex("""https?://[^\s]+""")
+                        val url = urlRegex.find(actionPrompt)?.value ?: ""
+                        "play_youtube" to mapOf("query" to actionPrompt, "url" to url)
+                    }
+                    actionPrompt.contains("unlock") || actionPrompt.contains("kholo") -> {
+                        "unlock_device" to emptyMap<String, Any>()
+                    }
+                    actionPrompt.contains("lock") || actionPrompt.contains("band karo") -> {
+                        "lock_device" to emptyMap<String, Any>()
+                    }
                     else -> "generic_command" to mapOf("prompt" to actionPrompt)
                 }
 

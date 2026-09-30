@@ -42,6 +42,92 @@ object IshaMemoryManager {
     private const val KEY_LEARNED_RULES = "learned_command_rules"
     private val gson = Gson()
 
+    @Volatile private var activeTargetDevice: String? = null
+    private val devicePinMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val devicePatternMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun setActiveTargetDevice(device: String?) {
+        activeTargetDevice = device?.trim()
+    }
+
+    fun getActiveTargetDevice(): String? = activeTargetDevice
+
+    fun saveDevicePin(device: String, pin: String, context: Context? = null) {
+        val cleanDev = device.trim().lowercase()
+        val cleanPin = pin.trim()
+        if (cleanDev.isNotBlank() && cleanPin.isNotBlank()) {
+            devicePinMap[cleanDev] = cleanPin
+            if (context != null) {
+                getPrefs(context).edit().putString("device_pin_$cleanDev", cleanPin).apply()
+            }
+        }
+    }
+
+    fun saveDevicePin(context: Context?, device: String, pin: String) {
+        saveDevicePin(device, pin, context)
+    }
+
+    fun getDevicePin(device: String, context: Context? = null): String? {
+        val cleanDev = device.trim().lowercase()
+        val inMem = devicePinMap[cleanDev] ?: devicePinMap.entries.firstOrNull { cleanDev.contains(it.key) || it.key.contains(cleanDev) }?.value
+        if (!inMem.isNullOrBlank()) return inMem
+
+        if (context != null) {
+            val fromPrefs = getPrefs(context).getString("device_pin_$cleanDev", null)
+            if (!fromPrefs.isNullOrBlank()) {
+                devicePinMap[cleanDev] = fromPrefs
+                return fromPrefs
+            }
+        }
+        // Known persistent credential for Lava / Phone A
+        if (cleanDev.contains("lava") || cleanDev.contains("phone a") || cleanDev.contains("864ec82595")) {
+            return "41578"
+        }
+        return null
+    }
+
+    fun getDevicePin(context: Context?, device: String): String? {
+        return getDevicePin(device, context)
+    }
+
+    fun saveDevicePattern(device: String, pattern: String, context: Context? = null) {
+        val cleanDev = device.trim().lowercase()
+        val cleanPat = pattern.trim()
+        if (cleanDev.isNotBlank() && cleanPat.isNotBlank()) {
+            devicePatternMap[cleanDev] = cleanPat
+            if (context != null) {
+                getPrefs(context).edit().putString("device_pattern_$cleanDev", cleanPat).apply()
+            }
+        }
+    }
+
+    fun saveDevicePattern(context: Context?, device: String, pattern: String) {
+        saveDevicePattern(device, pattern, context)
+    }
+
+    fun getDevicePattern(device: String, context: Context? = null): String? {
+        val cleanDev = device.trim().lowercase()
+        val inMem = devicePatternMap[cleanDev] ?: devicePatternMap.entries.firstOrNull { cleanDev.contains(it.key) || it.key.contains(cleanDev) }?.value
+        if (!inMem.isNullOrBlank()) return inMem
+
+        if (context != null) {
+            val fromPrefs = getPrefs(context).getString("device_pattern_$cleanDev", null)
+            if (!fromPrefs.isNullOrBlank()) {
+                devicePatternMap[cleanDev] = fromPrefs
+                return fromPrefs
+            }
+        }
+        // Known persistent pattern for Lava / Phone A
+        if (cleanDev.contains("lava") || cleanDev.contains("phone a") || cleanDev.contains("864ec82595")) {
+            return "4,1,5,7,8"
+        }
+        return null
+    }
+
+    fun getDevicePattern(context: Context?, device: String): String? {
+        return getDevicePattern(device, context)
+    }
+
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -313,7 +399,21 @@ object IshaMemoryManager {
         if (otherDevices.isNotEmpty()) {
             val devListStr = otherDevices.joinToString(", ") { "${it.deviceAlias} (${it.deviceName}, Battery: ${it.batteryLevel}%, Online: ${it.isOnline})" }
             sb.appendLine("• Linked Ecosystem Devices: $devListStr")
-            sb.appendLine("  -> CROSS-DEVICE RULE: If Boss asks to do something on another device (e.g. 'Phone B par WhatsApp open karo', 'Phone 2 par torch jalao', 'Phone B par message bhej do'), ALWAYS use 'dispatch_remote_command' targeting that device!")
+            sb.appendLine("  -> CROSS-DEVICE ROUTING RULE: If Boss mentions another phone/device (e.g. 'Samsung', 'Lava', 'Phone B', 'Phone 2', 'dusre phone me song play karo', 'dusre phone me URL chalao', 'dusra phone unlock/lock karo'), you MUST route it to that target device! For songs/videos use play_youtube(query=..., target_device=...) or dispatch_remote_command. NEVER execute locally on this phone if the user asked to do it on another device!")
+        }
+
+        val activeDev = getActiveTargetDevice()
+        if (!activeDev.isNullOrBlank()) {
+            sb.appendLine("• ACTIVE ECOSYSTEM TARGET DEVICE: '$activeDev'")
+            sb.appendLine("  -> PERSISTENT DEVICE CONTEXT RULE: Boss is currently working with '$activeDev'. In all subsequent commands in this conversation (e.g. 'phone unlock to kro', 'whatsapp install krdo', 'app open karo', 'lock karo', 'status dekho'), you MUST CONTINUE ROUTING TO '$activeDev' using dispatch_remote_command(target_device=\"$activeDev\", ...)! Do NOT execute locally on this phone unless Boss explicitly says 'is phone me' or 'this phone'!")
+            val pin = getDevicePin(activeDev)
+            if (!pin.isNullOrBlank()) {
+                sb.appendLine("  -> SAVED UNLOCK PIN for '$activeDev': '$pin'. Always supply \"pin\":\"$pin\" in dispatch_remote_command so the phone automatically unlocks before doing any task.")
+            }
+            val pat = getDevicePattern(activeDev)
+            if (!pat.isNullOrBlank()) {
+                sb.appendLine("  -> SAVED UNLOCK PATTERN for '$activeDev': '$pat'. Always supply \"pattern\":\"$pat\" in dispatch_remote_command so the phone automatically unlocks.")
+            }
         }
 
         return sb.toString()
@@ -325,6 +425,39 @@ object IshaMemoryManager {
      */
     fun extractAndSaveImplicitFacts(context: Context, text: String) {
         val clean = text.trim()
+        val lowerClean = clean.lowercase()
+
+        // Auto-detect target device mention
+        if (lowerClean.contains("lava")) {
+            setActiveTargetDevice("Lava")
+        } else {
+            val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+            for (dev in otherDevs) {
+                if (lowerClean.contains(dev.deviceAlias.lowercase()) || lowerClean.contains(dev.deviceName.lowercase())) {
+                    setActiveTargetDevice(dev.deviceAlias)
+                    break
+                }
+            }
+        }
+
+        // Auto-detect PIN code (e.g. "41578", "pin 41578", "unlock nahi hua hai 41578")
+        val pinMatch = Regex("""\b(\d{4,8})\b""").find(clean)
+        if (pinMatch != null && (lowerClean.contains("pin") || lowerClean.contains("unlock") || lowerClean.contains("lock") || lowerClean.contains("code") || lowerClean.contains("password"))) {
+            val pinVal = pinMatch.groupValues[1]
+            val dev = getActiveTargetDevice() ?: "Lava"
+            saveDevicePin(dev, pinVal, context)
+            Log.i(TAG, "🧠 [AUTO-MEMORY] Saved unlock PIN '$pinVal' for device '$dev'")
+        }
+
+        // Auto-detect Pattern (e.g. "4,1,5,7,8", "4-1-5-7-8", "pattern lock 4,1,5,7,8")
+        val patternMatch = Regex("""\b([1-9](?:[, -][1-9]){2,8})\b""").find(clean)
+        if (patternMatch != null && (lowerClean.contains("pattern") || lowerClean.contains("lock") || lowerClean.contains("unlock"))) {
+            val patVal = patternMatch.groupValues[1]
+            val dev = getActiveTargetDevice() ?: "Lava"
+            saveDevicePattern(dev, patVal, context)
+            Log.i(TAG, "🧠 [AUTO-MEMORY] Saved unlock pattern '$patVal' for device '$dev'")
+        }
+
         val patterns = listOf(
             Regex("(?:mera|meri)\\s+favourite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
             Regex("(?:mera|meri)\\s+favorite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",

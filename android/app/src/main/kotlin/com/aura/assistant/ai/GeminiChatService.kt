@@ -95,9 +95,12 @@ class GeminiChatService(private val context: Context) {
             try {
                 executeStreamRequest(history, newPrompt, imageBytes, callback)
             } catch (e: Exception) {
-                if (e !is CancellationException) {
+                val isCanceled = e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)
+                if (!isCanceled) {
                     Log.e(TAG, "Stream execution failed", e)
                     callback.onError(e.localizedMessage ?: "Network error")
+                } else {
+                    Log.i(TAG, "Generation cleanly canceled by user.")
                 }
             }
         }
@@ -163,7 +166,10 @@ class GeminiChatService(private val context: Context) {
             val response = try {
                 withContext(Dispatchers.IO) { call.execute() }
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)) {
+                    Log.i(TAG, "Streaming request canceled by user.")
+                    return
+                }
                 Log.w(TAG, "Model $model connection failed: ${e.message}, trying fallback...")
                 lastErrorMsg = e.localizedMessage ?: "Connection error"
                 continue
@@ -380,7 +386,10 @@ class GeminiChatService(private val context: Context) {
             val response = try {
                 withContext(Dispatchers.IO) { call.execute() }
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)) {
+                    Log.i(TAG, "Tool response request canceled by user.")
+                    return
+                }
                 Log.w(TAG, "Tool response model $candidateModel connection failed: ${e.message}, trying fallback...")
                 continue
             }
@@ -580,9 +589,13 @@ class GeminiChatService(private val context: Context) {
                 Log.i(TAG, "Executing tool sequentially: $fnName with args: $fnArgs")
                 callback.onToolStart(toolName = fnName, args = fnArgs.toString())
                 val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
-                val resultSummary = toolResult.get("message")?.asString
-                    ?: toolResult.get("status")?.asString
-                    ?: "Completed"
+                val status = toolResult.get("status")?.asString ?: "success"
+                val rawMsg = toolResult.get("message")?.asString ?: status
+                val resultSummary = if ((status == "error" || status == "failed") && !rawMsg.startsWith("Failed", ignoreCase = true) && !rawMsg.startsWith("Error", ignoreCase = true)) {
+                    "Failed: $rawMsg"
+                } else {
+                    rawMsg
+                }
                 callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
                 results.add(Triple(fnName, fnArgs, toolResult))
             }
@@ -593,9 +606,13 @@ class GeminiChatService(private val context: Context) {
                 callback.onToolStart(toolName = fnName, args = fnArgs.toString())
                 async(Dispatchers.IO) {
                     val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
-                    val resultSummary = toolResult.get("message")?.asString
-                        ?: toolResult.get("status")?.asString
-                        ?: "Completed"
+                    val status = toolResult.get("status")?.asString ?: "success"
+                    val rawMsg = toolResult.get("message")?.asString ?: status
+                    val resultSummary = if ((status == "error" || status == "failed") && !rawMsg.startsWith("Failed", ignoreCase = true) && !rawMsg.startsWith("Error", ignoreCase = true)) {
+                        "Failed: $rawMsg"
+                    } else {
+                        rawMsg
+                    }
                     callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
                     Triple(fnName, fnArgs, toolResult)
                 }

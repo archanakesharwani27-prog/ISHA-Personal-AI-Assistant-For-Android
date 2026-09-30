@@ -69,6 +69,7 @@ object IshaCallAnnouncerManager {
     private var floatingCallView: View? = null
 
     private var lastAnnouncedCallTime = 0L
+    @Volatile private var voiceRetryCount = 0
 
     /**
      * Resolves contact name with multi-tier fallbacks:
@@ -183,6 +184,14 @@ object IshaCallAnnouncerManager {
             return
         }
 
+        // Check user setting toggle
+        val isEnabled = com.aura.assistant.ui.components.IshaSettingsManager.isCallAnnouncementEnabled(context)
+        if (!isEnabled) {
+            Log.i(TAG, "Call announcement disabled in settings — skipping.")
+            return
+        }
+
+        voiceRetryCount = 0
         lastAnnouncedCallTime = now
         isRinging = true
         currentCallerName = resolvedName
@@ -205,6 +214,7 @@ object IshaCallAnnouncerManager {
         isRinging = false
         currentCallerName = ""
         currentCallerNumber = ""
+        voiceRetryCount = 0
 
         stopProximityHandSensor(context)
         stopVoiceResponseListener()
@@ -407,26 +417,22 @@ object IshaCallAnnouncerManager {
                                 speechRecognizer?.destroy()
                                 speechRecognizer = null
                             } catch (_: Exception) {}
-                            // Keep listening while phone is ringing!
-                            if (isRinging) {
+                            // Limit to 1 retry to avoid infinite mic flapping/flickering
+                            if (isRinging && voiceRetryCount < 1) {
+                                voiceRetryCount++
                                 mainHandler.postDelayed({
                                     if (isRinging && !isListeningVoiceResponse) {
                                         startVoiceResponseListener(context)
                                     }
-                                }, 350L)
+                                }, 1200L)
+                            } else {
+                                Log.i(TAG, "Call voice mic listener stopped (voiceRetryCount=$voiceRetryCount).")
                             }
                         }
                         override fun onResults(results: Bundle?) {
                             isListeningVoiceResponse = false
                             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
                             evaluateVoiceResponse(context, matches)
-                            if (isRinging && !isListeningVoiceResponse) {
-                                mainHandler.postDelayed({
-                                    if (isRinging && !isListeningVoiceResponse) {
-                                        startVoiceResponseListener(context)
-                                    }
-                                }, 350L)
-                            }
                         }
                         override fun onPartialResults(partialResults: Bundle?) {
                             val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return

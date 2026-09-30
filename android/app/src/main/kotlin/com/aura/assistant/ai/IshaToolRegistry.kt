@@ -396,11 +396,17 @@ object IshaToolRegistry {
         // 20. Dedicated YouTube Play
         toolsArray.add(createFunction(
             name = "play_youtube",
-            desc = "Directly search and play a song, music video, playlist, or artist on YouTube. ALWAYS call when user asks to play a song, video, music, or lofi beats (e.g. 'lofi chalao', 'play Arijit Singh', 'gaana bajao', 'YouTube par video chalao'). NEVER use open_app for music!",
-            params = mapOf("query" to "string"),
+            desc = "Directly search and play a song, music video, playlist, artist, or URL on YouTube on this phone or another linked phone (e.g. 'Samsung phone me Tu Hai Kahan song play karo', 'Phone B par video chalao', 'dusre phone me URL chalao'). NEVER use open_app for music!",
+            params = mapOf(
+                "query" to "string",
+                "target_device" to "string",
+                "url" to "string"
+            ),
             required = listOf("query"),
             paramDescriptions = mapOf(
-                "query" to "Search query for song, video title, or artist on YouTube"
+                "query" to "Search query for song, video title, artist, or YouTube URL",
+                "target_device" to "Optional target device name or alias (e.g. 'Samsung', 'Lava', 'Phone B', 'Phone 2'). Leave empty for current device.",
+                "url" to "Optional direct YouTube video URL (e.g. 'https://youtu.be/...')"
             )
         ))
 
@@ -762,17 +768,49 @@ object IshaToolRegistry {
             params = mapOf(
                 "target_device" to "string",
                 "action" to "string",
+                "app_name" to "string",
                 "prompt" to "string",
                 "contact" to "string",
-                "message" to "string"
+                "message" to "string",
+                "url" to "string",
+                "query" to "string"
             ),
             required = listOf("target_device", "action"),
             paramDescriptions = mapOf(
-                "target_device" to "Target device name or alias (e.g. 'Phone B', 'Phone 2', 'Pixel', 'Redmi')",
-                "action" to "Action to execute (e.g. 'open_app', 'toggle_flashlight', 'chat_on_whatsapp', 'set_volume', 'copy_clipboard')",
+                "target_device" to "Target device name or alias (e.g. 'Phone B', 'Phone 2', 'Pixel', 'Samsung', 'Lava')",
+                "action" to "Action to execute (e.g. 'open_app', 'toggle_flashlight', 'play_youtube', 'lock_device', 'unlock_device', 'chat_on_whatsapp', 'set_volume', 'copy_clipboard')",
+                "app_name" to "Name of the application to open or install (e.g. 'Chrome', 'WhatsApp', 'YouTube', 'Settings')",
                 "prompt" to "The natural language instruction for the remote device",
                 "contact" to "Optional target contact name if sending a message on WhatsApp",
-                "message" to "Optional message content to send or type"
+                "message" to "Optional message content to send or type",
+                "url" to "Optional web URL or YouTube video link to open on remote device",
+                "query" to "Optional search term or song query to search and play on remote device"
+            )
+        ))
+
+        // 44d. Lock Device
+        toolsArray.add(createFunction(
+            name = "lock_device",
+            desc = "Lock the screen of this device or a remote device immediately (e.g. 'phone lock karo', 'screen band karo', 'Samsung phone lock kar do').",
+            params = mapOf(
+                "target_device" to "string"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target_device" to "Optional target device name (e.g. 'Samsung', 'Lava', 'Phone B'). Omit to lock current device."
+            )
+        ))
+
+        // 44e. Unlock / Wake Device
+        toolsArray.add(createFunction(
+            name = "unlock_device",
+            desc = "Wake screen and unlock this phone or a remote phone (e.g. 'phone unlock karo', 'Lava phone unlock kar do', 'screen on karo').",
+            params = mapOf(
+                "target_device" to "string"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target_device" to "Optional target device name (e.g. 'Samsung', 'Lava', 'Phone B'). Omit to unlock current device."
             )
         ))
 
@@ -3043,7 +3081,8 @@ object IshaToolRegistry {
                     }
 
                     if (intent != null) {
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        wakeAndUnlockIfNeeded(context)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                         context.startActivity(intent)
                         result.addProperty("status", "success")
                         result.addProperty("message", "Launched $appName")
@@ -3315,6 +3354,11 @@ object IshaToolRegistry {
                     val params = args.get("tool_parameters")?.asString
                     if (trigger.isNotBlank() && action.isNotBlank()) {
                         AuraMemoryManager.teachRule(context, trigger, action, primaryTool, params)
+                        val pinMatch = Regex("""\b(\d{4,8})\b""").find("$trigger $action")
+                        if (pinMatch != null) {
+                            val activeDev = IshaMemoryManager.getActiveTargetDevice() ?: "Lava"
+                            IshaMemoryManager.saveDevicePin(activeDev, pinMatch.groupValues[1])
+                        }
                         com.aura.assistant.memory.ExperienceMemory.recordLesson(
                             context,
                             primaryTool ?: "custom_rule",
@@ -3350,14 +3394,70 @@ object IshaToolRegistry {
                 }
 
                 "play_youtube" -> {
+                    val rawTarget = args.get("target_device")?.asString ?: ""
                     val query = args.get("query")?.asString
                         ?: args.get("song")?.asString
                         ?: args.get("video")?.asString
                         ?: ""
-                    val success = playMediaInApp(context, query, "youtube")
-                    result.addProperty("status", if (success) "success" else "error")
-                    result.addProperty("query", query)
-                    result.addProperty("message", "YouTube par \"$query\" play kiya ja raha hai Boss! 🎵")
+                    val url = args.get("url")?.asString ?: ""
+                    val effectiveUrl = if (url.isNotBlank()) url else if (query.startsWith("http://") || query.startsWith("https://")) query else ""
+
+                    // Infer target device from query or prompt if not explicitly passed
+                    val qLower = query.lowercase()
+                    val targetDevice = if (rawTarget.isNotBlank()) rawTarget else when {
+                        qLower.contains("samsung") || qLower.contains("phone b") || qLower.contains("phone 2") -> "Phone B"
+                        qLower.contains("lava") || qLower.contains("phone a") || qLower.contains("phone 1") -> "Phone A"
+                        qLower.contains("dusre phone") || qLower.contains("dusra phone") || qLower.contains("other phone") -> "other"
+                        else -> ""
+                    }
+
+                    if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
+                        val cleanQuery = query
+                            .replace("samsung", "", ignoreCase = true)
+                            .replace("lava", "", ignoreCase = true)
+                            .replace("phone b", "", ignoreCase = true)
+                            .replace("phone a", "", ignoreCase = true)
+                            .replace("dusre phone me", "", ignoreCase = true)
+                            .replace("dusre phone mein", "", ignoreCase = true)
+                            .replace("dusre phone par", "", ignoreCase = true)
+                            .replace("dusre phone pr", "", ignoreCase = true)
+                            .replace("dusre phone", "", ignoreCase = true)
+                            .replace("phone mein", "", ignoreCase = true)
+                            .replace("phone me", "", ignoreCase = true)
+                            .trim()
+
+                        val params = mutableMapOf<String, Any>(
+                            "query" to (if (cleanQuery.isNotBlank()) cleanQuery else query),
+                            "action" to "play_youtube"
+                        )
+                        if (effectiveUrl.isNotBlank()) params["url"] = effectiveUrl
+
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Remote error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "play_youtube",
+                                params = params,
+                                rawPrompt = query
+                            )
+                        }
+
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par YouTube start kar diya hai Boss! 🎵")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                    } else {
+                        val success = playMediaInApp(context, if (effectiveUrl.isNotBlank()) effectiveUrl else query, "youtube")
+                        result.addProperty("status", if (success) "success" else "error")
+                        result.addProperty("query", query)
+                        result.addProperty("message", "YouTube par \"$query\" play kiya ja raha hai Boss! 🎵")
+                    }
                 }
 
                 "play_media" -> {
@@ -3992,27 +4092,113 @@ object IshaToolRegistry {
                     val prompt = args.get("prompt")?.asString ?: ""
                     val contact = args.get("contact")?.asString ?: ""
                     val message = args.get("message")?.asString ?: ""
+                    val url = args.get("url")?.asString ?: ""
+                    val query = args.get("query")?.asString ?: ""
+
+                    // Update active target device in session memory
+                    IshaMemoryManager.setActiveTargetDevice(targetDevice)
 
                     val params = mutableMapOf<String, Any>()
                     if (contact.isNotBlank()) params["contact"] = contact
                     if (message.isNotBlank()) params["message"] = message
-                    val normAction = when (action.lowercase()) {
-                        "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight" -> "toggle_flashlight"
-                        "volume", "set_volume_level" -> "set_volume"
-                        "launch_app", "open" -> "open_app"
-                        "battery", "battery_status" -> "battery"
+                    if (url.isNotBlank()) params["url"] = url
+                    if (query.isNotBlank()) params["query"] = query
+
+                    // Inject PIN or Pattern for remote unlock if known
+                    val pinFromArgs = args.get("pin")?.asString
+                    val patternFromArgs = args.get("pattern")?.asString
+                    if (!pinFromArgs.isNullOrBlank()) {
+                        IshaMemoryManager.saveDevicePin(context, targetDevice, pinFromArgs)
+                        params["pin"] = pinFromArgs
+                    } else {
+                        val savedPin = IshaMemoryManager.getDevicePin(context, targetDevice)
+                        if (!savedPin.isNullOrBlank()) params["pin"] = savedPin
+                    }
+                    if (!patternFromArgs.isNullOrBlank()) {
+                        IshaMemoryManager.saveDevicePattern(context, targetDevice, patternFromArgs)
+                        params["pattern"] = patternFromArgs
+                    } else {
+                        val savedPattern = IshaMemoryManager.getDevicePattern(context, targetDevice)
+                        if (!savedPattern.isNullOrBlank()) params["pattern"] = savedPattern
+                    }
+
+                    // Extract YouTube URL or video query from prompt if present
+                    val promptUrlRegex = Regex("""https?://[^\s]+""")
+                    val foundUrl = url.ifBlank { promptUrlRegex.find(prompt)?.value ?: "" }
+                    if (foundUrl.isNotBlank()) params["url"] = foundUrl
+
+                    val actLower = action.lowercase()
+                    val pmtLower = prompt.lowercase()
+
+                    val isPlayStore = pmtLower.contains("play store") || pmtLower.contains("playstore") || pmtLower.contains("play_store") || actLower.contains("store")
+                    val isAppInstall = actLower.contains("install") || actLower.contains("download") || pmtLower.contains("install") || pmtLower.contains("download")
+
+                    val normAction = when {
+                        actLower.contains("flashlight") || actLower.contains("torch") -> "toggle_flashlight"
+                        actLower.contains("volume") -> "set_volume"
+                        actLower.contains("lock") && !actLower.contains("unlock") && !pmtLower.contains("unlock") -> "lock_device"
+                        actLower.contains("unlock") || pmtLower.contains("unlock") || actLower.contains("wake") || pmtLower.contains("wake") -> "unlock_device"
+                        isAppInstall -> "install_store_app"
+                        !isPlayStore && (actLower.contains("youtube") || actLower.contains("song") || (actLower.contains("play") && !actLower.contains("store")) || pmtLower.contains("youtube") || pmtLower.contains("song") || (pmtLower.contains("play") && !pmtLower.contains("store") && !pmtLower.contains("install"))) -> "play_youtube"
+                        actLower.contains("launch_app") || actLower.contains("open") || isPlayStore -> "open_app"
+                        actLower.contains("battery") -> "battery"
                         else -> action
                     }
-                    if (normAction == "open_app") {
-                        val app = args.get("app_name")?.asString ?: prompt
-                        params["app_name"] = app
-                        if (app.lowercase().contains("whatsapp")) params["package_name"] = "com.whatsapp"
+
+                    if (normAction == "install_store_app" || (normAction == "open_app" && isPlayStore)) {
+                        val app = if (query.isNotBlank()) query else (args.get("app_name")?.asString ?: prompt)
+                        val cleanAppName = app.replace("play store", "", ignoreCase = true)
+                            .replace("playstore", "", ignoreCase = true)
+                            .replace("install", "", ignoreCase = true)
+                            .replace("karo", "", ignoreCase = true)
+                            .replace("krdo", "", ignoreCase = true)
+                            .replace("se", "", ignoreCase = true)
+                            .trim()
+                        params["app_name"] = cleanAppName
+                        params["query"] = cleanAppName
+                        params["action"] = "install_store_app"
+                    } else if (normAction == "open_app") {
+                        val rawApp = (args.get("app_name")?.asString ?: (if (query.isNotBlank()) query else prompt)).trim()
+                        val cleanApp = rawApp
+                            .replace(Regex("(?i)^(open|launch|kholo|chalao|start|run|app|application)\\s+"), "")
+                            .replace(Regex("(?i)\\s+(app|application|kholo|chalao|karo|krdo)$"), "")
+                            .replace(Regex("(?i)^(open|launch)\\s+"), "")
+                            .replace(Regex("(?i)\\s+(app)$"), "")
+                            .trim()
+                        val finalApp = if (cleanApp.isNotBlank()) cleanApp else rawApp
+                        params["app_name"] = finalApp
+
+                        val appLower = finalApp.lowercase()
+                        val resolvedPkg = when {
+                            appLower.contains("chrome") || appLower.contains("browser") -> "com.android.chrome"
+                            appLower.contains("whatsapp") -> "com.whatsapp"
+                            appLower.contains("youtube") -> "com.google.android.youtube"
+                            appLower.contains("instagram") -> "com.instagram.android"
+                            appLower.contains("facebook") -> "com.facebook.katana"
+                            appLower.contains("camera") -> "com.android.camera"
+                            appLower.contains("gallery") || appLower.contains("photos") -> "com.google.android.apps.photos"
+                            appLower.contains("maps") -> "com.google.android.apps.maps"
+                            appLower.contains("settings") -> "com.android.settings"
+                            appLower.contains("play store") || appLower.contains("playstore") -> "com.android.vending"
+                            appLower.contains("calculator") -> "com.google.android.calculator"
+                            appLower.contains("clock") || appLower.contains("alarm") -> "com.google.android.deskclock"
+                            appLower.contains("gmail") || appLower.contains("email") -> "com.google.android.gm"
+                            appLower.contains("spotify") -> "com.spotify.music"
+                            appLower.contains("telegram") -> "org.telegram.messenger"
+                            else -> resolveAppPackage(context, finalApp)
+                        }
+                        if (resolvedPkg != null) {
+                            params["package_name"] = resolvedPkg
+                        }
                     } else if (normAction == "toggle_flashlight") {
                         val state = args.get("state")?.asString ?: if (prompt.contains("off") || prompt.contains("band") || action.contains("off")) "off" else "on"
                         params["state"] = state
                     } else if (normAction == "set_volume") {
                         val level = args.get("level")?.asInt ?: 50
                         params["level"] = level
+                    } else if (normAction == "play_youtube") {
+                        if (query.isNotBlank()) params["query"] = query
+                        else if (params["url"] == null && prompt.isNotBlank()) params["query"] = prompt
                     }
 
                     var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Execution error")
@@ -4034,6 +4220,103 @@ object IshaToolRegistry {
                         result.addProperty("status", "error")
                         result.addProperty("target_device", executionResult.targetDeviceName)
                         result.addProperty("message", executionResult.message)
+                    }
+                }
+
+                // 44d. Lock Device
+                "lock_device" -> {
+                    val targetDevice = args.get("target_device")?.asString ?: ""
+                    if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
+                        // Remote lock
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Lock error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "lock_device",
+                                params = emptyMap(),
+                                rawPrompt = "lock device"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${executionResult.targetDeviceName} phone lock kar diya hai Boss! 🔒")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", executionResult.message)
+                        }
+                    } else {
+                        // Local lock
+                        val a11y = IshaAccessibilityService.instance
+                        if (a11y != null) {
+                            val locked = a11y.performLockScreen()
+                            if (locked) {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Phone lock kar diya hai Boss! 🔒")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Device lock supported nahi hai.")
+                            }
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Screen lock karne ke liye Accessibility Service required hai.")
+                        }
+                    }
+                }
+
+                // 44e. Unlock / Wake Device
+                "unlock_device" -> {
+                    val rawTarget = args.get("target_device")?.asString ?: ""
+                    val activeDev = IshaMemoryManager.getActiveTargetDevice()
+                    val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
+                    if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
+                        // Remote unlock
+                        val unlockParams = mutableMapOf<String, Any>()
+                        val pin = args.get("pin")?.asString ?: IshaMemoryManager.getDevicePin(context, targetDevice)
+                        val pattern = args.get("pattern")?.asString ?: IshaMemoryManager.getDevicePattern(context, targetDevice)
+                        if (!pin.isNullOrBlank()) unlockParams["pin"] = pin
+                        if (!pattern.isNullOrBlank()) unlockParams["pattern"] = pattern
+
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Unlock error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "unlock_device",
+                                params = unlockParams,
+                                rawPrompt = "unlock device"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "${executionResult.targetDeviceName} phone screen wake aur unlock attempt kar diya hai Boss! 🔓")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", executionResult.message)
+                        }
+                    } else {
+                        // Local unlock
+                        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                        val wl = pm?.newWakeLock(
+                            android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                            android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                            android.os.PowerManager.ON_AFTER_RELEASE,
+                            "isha:unlock"
+                        )
+                        wl?.acquire(5000L)
+                        val a11y = IshaAccessibilityService.instance
+                        a11y?.performUnlockSwipe()
+                        val pin = args.get("pin")?.asString ?: IshaMemoryManager.getDevicePin("local")
+                        val pattern = args.get("pattern")?.asString ?: IshaMemoryManager.getDevicePattern("local")
+                        if (!pin.isNullOrBlank()) {
+                            try { Thread.sleep(600) } catch (_: Exception) {}
+                            a11y?.enterPin(pin)
+                        } else if (!pattern.isNullOrBlank()) {
+                            try { Thread.sleep(600) } catch (_: Exception) {}
+                            a11y?.unlockWithPattern(pattern)
+                        }
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Phone screen wake aur unlock kar diya hai Boss! 🔓")
                     }
                 }
 
@@ -5266,12 +5549,43 @@ object IshaToolRegistry {
         }
     }
 
+    fun wakeAndUnlockIfNeeded(context: Context) {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            val isScreenOn = pm?.isInteractive ?: true
+            val isLocked = km?.isKeyguardLocked ?: false
+
+            if (!isScreenOn || isLocked) {
+                val wl = pm?.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    android.os.PowerManager.ON_AFTER_RELEASE,
+                    "isha:auto_wake_unlock"
+                )
+                try {
+                    wl?.acquire(5000L)
+                } catch (_: Exception) {}
+
+                if (isLocked) {
+                    IshaAccessibilityService.instance?.performUnlockSwipe()
+                    try {
+                        Thread.sleep(350L)
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeAndUnlockIfNeeded error: ${e.message}")
+        }
+    }
+
     /**
      * Universal Media Player helper:
      * Resolves app package, sends MediaStore search intent, launches deep links,
      * and arms IshaAccessibilityService to auto-tap the first result.
      */
     private fun playMediaInApp(context: Context, query: String, targetApp: String): Boolean {
+        wakeAndUnlockIfNeeded(context)
         val trimmedQuery = query.trim()
         val appLower = targetApp.lowercase().trim()
 
@@ -5292,14 +5606,27 @@ object IshaToolRegistry {
 
         try {
             if (packageName == "com.google.android.youtube") {
-                // Launch YouTube search URL directly
-                val searchUri = Uri.parse("https://www.youtube.com/results?search_query=" + URLEncoder.encode(trimmedQuery, "UTF-8"))
-                val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                val isDirectUrl = trimmedQuery.startsWith("http://", ignoreCase = true) || trimmedQuery.startsWith("https://", ignoreCase = true)
+                val targetUri = if (isDirectUrl) {
+                    Uri.parse(trimmedQuery)
+                } else {
+                    Uri.parse("https://www.youtube.com/results?search_query=" + URLEncoder.encode(trimmedQuery, "UTF-8"))
+                }
+                val intent = Intent(Intent.ACTION_VIEW, targetUri).apply {
                     setPackage(packageName)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
-                context.startActivity(intent)
-                IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
+                try {
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    val fallback = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(fallback)
+                }
+                if (!isDirectUrl) {
+                    IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
+                }
                 return true
             }
 

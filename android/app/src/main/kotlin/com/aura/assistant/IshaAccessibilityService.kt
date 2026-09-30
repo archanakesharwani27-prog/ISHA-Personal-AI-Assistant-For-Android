@@ -158,6 +158,11 @@ open class IshaAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "AuraAccessibilityService connected")
+        try {
+            com.aura.assistant.sync.IshaCrossDeviceBridge.init(applicationContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize CrossDeviceBridge from AccessibilityService: ${e.message}")
+        }
     }
 
     override fun onDestroy() {
@@ -2065,6 +2070,140 @@ open class IshaAccessibilityService : AccessibilityService() {
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.toLong())
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
+    }
+
+    /**
+     * Locks the screen immediately via Accessibility Global Action (Android 9+).
+     */
+    fun performLockScreen(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Performs a vertical upward swipe to dismiss keyguard / swipe-to-unlock screen.
+     */
+    fun performUnlockSwipe(): Boolean {
+        val dm = resources.displayMetrics
+        val startX = dm.widthPixels / 2
+        val startY = (dm.heightPixels * 0.82f).toInt()
+        val endX = dm.widthPixels / 2
+        val endY = (dm.heightPixels * 0.20f).toInt()
+        return performSwipe(startX, startY, endX, endY, 280)
+    }
+
+    /**
+     * Enters a numeric lock screen PIN (e.g. "41578") on the active keyguard/pin pad.
+     */
+    fun enterPin(pin: String): Boolean {
+        if (pin.isBlank()) return false
+        val cleanPin = pin.filter { it.isDigit() }
+        if (cleanPin.isEmpty()) return false
+
+        // 1. Try finding numeric keypad buttons via Accessibility Node tree
+        var allFound = true
+        for (ch in cleanPin) {
+            val digitStr = ch.toString()
+            var digitClicked = false
+            val root = rootInActiveWindow
+            if (root != null) {
+                fun findDigitNode(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                    if (node == null) return null
+                    val text = node.text?.toString()?.trim()
+                    val desc = node.contentDescription?.toString()?.trim()
+                    val viewId = node.viewIdResourceName?.lowercase() ?: ""
+                    if ((text == digitStr || desc == digitStr || viewId.endsWith("key_$digitStr") || viewId.endsWith("button_$digitStr")) && node.isClickable) {
+                        return node
+                    }
+                    for (i in 0 until node.childCount) {
+                        val found = findDigitNode(node.getChild(i))
+                        if (found != null) return found
+                    }
+                    return null
+                }
+                val node = findDigitNode(root)
+                if (node != null) {
+                    node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                    digitClicked = true
+                    try { Thread.sleep(90) } catch (_: Exception) {}
+                }
+            }
+            if (!digitClicked) {
+                allFound = false
+                break
+            }
+        }
+        if (allFound) {
+            try { Thread.sleep(120) } catch (_: Exception) {}
+            val root = rootInActiveWindow
+            if (root != null) {
+                val okLabels = listOf("enter", "ok", "done", "confirm", "✓")
+                for (lbl in okLabels) {
+                    if (performClickByText(lbl)) break
+                }
+            }
+            return true
+        }
+
+        // 2. Physical Coordinate Fallback for standard 3x4 numeric lockpad
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels.toFloat()
+        val height = dm.heightPixels.toFloat()
+
+        val padTop = height * 0.52f
+        val padBottom = height * 0.88f
+        val padLeft = width * 0.08f
+        val padRight = width * 0.92f
+
+        val colWidth = (padRight - padLeft) / 3f
+        val rowHeight = (padBottom - padTop) / 4f
+
+        fun getDigitCoordinates(digit: Char): Pair<Float, Float>? {
+            val (row, col) = when (digit) {
+                '1' -> Pair(0, 0)
+                '2' -> Pair(0, 1)
+                '3' -> Pair(0, 2)
+                '4' -> Pair(1, 0)
+                '5' -> Pair(1, 1)
+                '6' -> Pair(1, 2)
+                '7' -> Pair(2, 0)
+                '8' -> Pair(2, 1)
+                '9' -> Pair(2, 2)
+                '0' -> Pair(3, 1)
+                else -> return null
+            }
+            val x = padLeft + col * colWidth + colWidth / 2f
+            val y = padTop + row * rowHeight + rowHeight / 2f
+            return Pair(x, y)
+        }
+
+        for (ch in cleanPin) {
+            val coords = getDigitCoordinates(ch) ?: continue
+            performTap(coords.first, coords.second)
+            try { Thread.sleep(140) } catch (_: Exception) {}
+        }
+
+        // Tap Enter / Check button if present (row 3, col 2)
+        val enterX = padLeft + 2 * colWidth + colWidth / 2f
+        val enterY = padTop + 3 * rowHeight + rowHeight / 2f
+        performTap(enterX, enterY)
+
+        return true
+    }
+
+    /**
+     * Draws pattern unlock gesture from pattern string like "4,1,5,7,8" or "41578".
+     */
+    fun unlockWithPattern(patternStr: String): Boolean {
+        val dots = patternStr.split(",", " ", "-").mapNotNull { it.trim().toIntOrNull() }
+            .ifEmpty { patternStr.filter { it.isDigit() }.map { it.toString().toInt() } }
+        if (dots.size >= 2) {
+            return drawPattern(dots)
+        }
+        return false
     }
 
     /**

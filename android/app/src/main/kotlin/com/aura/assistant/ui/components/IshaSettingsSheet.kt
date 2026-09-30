@@ -43,7 +43,8 @@ data class IshaSettingsState(
     val selectedLanguage: String = "Auto-detect",
     val textSize: String = "Default",
     val isSoundEnabled: Boolean = true,
-    val isMessageSpeakEnabled: Boolean = true
+    val isMessageSpeakEnabled: Boolean = true,
+    val isCallAnnouncementEnabled: Boolean = true
 )
 
 typealias AuraSettingsState = IshaSettingsState
@@ -54,6 +55,7 @@ fun IshaSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
     isMessageSpeakEnabled: Boolean = true,
+    isCallAnnouncementEnabled: Boolean = true,
     userProfile: UserProfile = UserProfile(),
     selectedVoice: String = "Aoede",
     selectedLanguage: String = "Auto-detect",
@@ -62,6 +64,7 @@ fun IshaSettingsSheet(
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,
     onMessageSpeakToggle: (Boolean) -> Unit = {},
+    onCallAnnouncementToggle: (Boolean) -> Unit = {},
     onVoiceChange: (String) -> Unit = {},
     onLanguageChange: (String) -> Unit = {},
     onTextSizeChange: (String) -> Unit = {},
@@ -242,16 +245,18 @@ fun IshaSettingsSheet(
                 onCheckedChange = onSoundToggle
             )
 
+
+
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Announce Incoming Messages
+            // Call Announcement
             SettingsToggleRow(
-                icon = Icons.Default.Notifications,
-                iconTint = ChatGptAccentCyan,
-                title = "Announce Incoming Messages",
-                subtitle = if (isMessageSpeakEnabled) "Speaks WhatsApp, SMS & OTP aloud (TTS)" else "Muted (No speaking aloud on incoming msgs)",
-                checked = isMessageSpeakEnabled,
-                onCheckedChange = onMessageSpeakToggle
+                icon = Icons.Default.PhoneCallback,
+                iconTint = Color(0xFF10A37F),
+                title = "Caller Name Announcement",
+                subtitle = if (isCallAnnouncementEnabled) "Incoming call aane par caller ka naam bol kar bataye" else "Muted (Call aane par caller ka naam nahi bolegi)",
+                checked = isCallAnnouncementEnabled,
+                onCheckedChange = onCallAnnouncementToggle
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -1149,6 +1154,7 @@ fun AuraSettingsSheet(
     isWakeWordEnabled = isWakeWordEnabled,
     isShakeEnabled = isShakeEnabled,
     isMessageSpeakEnabled = isMessageSpeakEnabled,
+    isCallAnnouncementEnabled = true,
     userProfile = userProfile,
     onWakeWordToggle = onWakeWordToggle,
     onShakeToggle = onShakeToggle,

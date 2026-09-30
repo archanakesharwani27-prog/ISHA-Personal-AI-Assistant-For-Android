@@ -432,7 +432,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             viewModelScope.launch(Dispatchers.Main) {
                 delay(350)
                 _selectedAttachment.value = next.second
-                onSendTextMessage(next.first)
+                onSendTextMessage(next.first, alreadyInUi = true)
             }
         }
     }
@@ -487,22 +487,11 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun onSendTextMessage(prompt: String) {
+    fun onSendTextMessage(prompt: String, alreadyInUi: Boolean = false) {
         val trimmed = prompt.trim()
         val attached = _selectedAttachment.value
         if (trimmed.isBlank() && attached == null) return
         triggerLightHaptic()
-        if (_isGenerating.value) {
-            Log.i(TAG, "⚡ [QUEUE] Assistant busy generating, queuing command: \"$trimmed\"")
-            _selectedAttachment.value = null
-            synchronized(pendingCommandQueue) {
-                pendingCommandQueue.add(Pair(trimmed, attached))
-            }
-            return
-        }
-
-        _selectedAttachment.value = null // consume attachment
-
 
         val currentSessionId = if (_activeSessionId.value.isNotBlank()) {
             _activeSessionId.value
@@ -515,6 +504,25 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             _sessions.value = repository.getAllSessions()
             newSess.id
         }
+
+        if (_isGenerating.value) {
+            Log.i(TAG, "⚡ [QUEUE] Assistant busy generating, queuing command: \"$trimmed\"")
+            _selectedAttachment.value = null
+            // Display immediately on screen so user sees their message was received!
+            val queuedUserMsg = ChatMessage(
+                sessionId = currentSessionId,
+                role = MessageRole.USER,
+                text = trimmed.ifBlank { "Attached image" },
+                imageUri = attached?.uri?.toString()
+            )
+            _chatMessages.value = _chatMessages.value + queuedUserMsg
+            synchronized(pendingCommandQueue) {
+                pendingCommandQueue.add(Pair(trimmed, attached))
+            }
+            return
+        }
+
+        _selectedAttachment.value = null // consume attachment
 
         var promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
 
@@ -564,10 +572,12 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         )
 
         // Preserve full conversation history including Tool execution outputs for maximum contextual continuity
-        val previousHistory = _chatMessages.value
+        val previousHistory = if (alreadyInUi) _chatMessages.value.dropLast(1) else _chatMessages.value
 
         val updatedList = _chatMessages.value.toMutableList().apply {
-            add(userMsg)
+            if (!alreadyInUi) {
+                add(userMsg)
+            }
             add(assistantMsg)
         }
         _chatMessages.value = updatedList
@@ -685,14 +695,25 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             chatService.cancelCurrentGeneration()
             _isGenerating.value = false
             val current = _chatMessages.value.toMutableList()
-            val idx = current.indexOfLast { it.isStreaming }
-            if (idx != -1) {
-                current[idx] = current[idx].copy(isStreaming = false)
-                _chatMessages.value = current
+            val iterator = current.listIterator()
+            while (iterator.hasNext()) {
+                val msg = iterator.next()
+                if (msg.isStreaming) {
+                    if (msg.role == MessageRole.ASSISTANT && msg.text.isBlank()) {
+                        iterator.remove()
+                    } else {
+                        iterator.set(msg.copy(isStreaming = false))
+                    }
+                }
             }
+            _chatMessages.value = current
             saveCurrentMessages()
             processNextPendingCommand()
         }
+    }
+
+    fun setCallAnnouncementEnabled(enabled: Boolean) {
+        com.aura.assistant.ui.components.IshaSettingsManager.setCallAnnouncement(getApplication(), enabled)
     }
 
     fun regenerateLastMessage() {
