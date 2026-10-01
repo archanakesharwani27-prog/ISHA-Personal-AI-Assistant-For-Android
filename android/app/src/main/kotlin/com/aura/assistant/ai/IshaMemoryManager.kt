@@ -395,11 +395,13 @@ object IshaMemoryManager {
         }
 
         // 4. Linked Multi-Device Ecosystem
+        val myAlias = com.aura.assistant.sync.IshaDeviceRegistry.getDeviceAlias()
+        sb.appendLine("• Current Device (This phone): '$myAlias'")
         val otherDevices = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
         if (otherDevices.isNotEmpty()) {
             val devListStr = otherDevices.joinToString(", ") { "${it.deviceAlias} (${it.deviceName}, Battery: ${it.batteryLevel}%, Online: ${it.isOnline})" }
             sb.appendLine("• Linked Ecosystem Devices: $devListStr")
-            sb.appendLine("  -> CROSS-DEVICE ROUTING RULE: If Boss mentions another phone/device (e.g. 'Samsung', 'Lava', 'Phone B', 'Phone 2', 'dusre phone me song play karo', 'dusre phone me URL chalao', 'dusra phone unlock/lock karo'), you MUST route it to that target device! For songs/videos use play_youtube(query=..., target_device=...) or dispatch_remote_command. NEVER execute locally on this phone if the user asked to do it on another device!")
+            sb.appendLine("  -> CROSS-DEVICE ROUTING RULE: If Boss mentions another phone/device (e.g. 'Samsung', 'Lava', 'OnePlus', 'Pixel', 'dusre phone me song play karo', 'dusre phone me URL chalao', 'dusra phone unlock/lock karo'), you MUST route it to that target device! For songs/videos use play_youtube(query=..., target_device=...) or dispatch_remote_command. NEVER execute locally on this phone if the user asked to do it on another device!")
         }
 
         val activeDev = getActiveTargetDevice()

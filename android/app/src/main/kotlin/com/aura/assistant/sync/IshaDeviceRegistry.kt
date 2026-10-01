@@ -221,7 +221,7 @@ object IshaDeviceRegistry {
                         return@addSnapshotListener
                     }
                     if (snapshot != null) {
-                        val devicesList = snapshot.documents.mapNotNull { doc ->
+                        val rawList = snapshot.documents.mapNotNull { doc ->
                             try {
                                 val did = doc.getString("deviceId") ?: doc.id
                                 val alias = doc.getString("deviceAlias") ?: did
@@ -259,8 +259,21 @@ object IshaDeviceRegistry {
                                 null
                             }
                         }
-                        _knownDevices.value = devicesList
-                        Log.i(TAG, "Active device count: ${devicesList.size} for user $userId")
+
+                        // Auto-disambiguate identical device aliases (e.g. two phones of exact same model)
+                        val aliasCounts = rawList.groupBy { it.deviceAlias.lowercase() }
+                        val disambiguatedList = rawList.map { dev ->
+                            val count = aliasCounts[dev.deviceAlias.lowercase()]?.size ?: 0
+                            if (count > 1) {
+                                val shortId = dev.deviceId.removePrefix("dev_").take(4).ifBlank { dev.deviceId.takeLast(4) }
+                                dev.copy(deviceAlias = "${dev.deviceAlias} ($shortId)")
+                            } else {
+                                dev
+                            }
+                        }
+
+                        _knownDevices.value = disambiguatedList
+                        Log.i(TAG, "Active device count: ${disambiguatedList.size} for user $userId")
                     }
                 }
         } catch (e: Exception) {
@@ -270,7 +283,7 @@ object IshaDeviceRegistry {
 
     /**
      * Resolves target device from natural language queries like:
-     * "phone b", "phone 2", "dusra phone", "pixel", "samsung", "redmi".
+     * "phone b", "phone 2", "dusra phone", "pixel", "samsung", "redmi", "shortId (2595)", "teesra phone".
      */
     fun resolveTargetDevice(query: String): IshaDeviceInfo? {
         val clean = query.trim().lowercase()
@@ -295,22 +308,39 @@ object IshaDeviceRegistry {
         // 2. Exact alias match
         sortedOtherDevices.firstOrNull { it.deviceAlias.equals(clean, ignoreCase = true) }?.let { return it }
 
-        // 3. Dynamic Substring & Token match on alias, model, or manufacturer across ANY Android device
+        // 3. Dynamic Substring, Token, Short-ID match across ANY Android device
         val cleanTokens = clean.split(Regex("[\\s,_\\-]+")).filter { it.length >= 2 }
         sortedOtherDevices.firstOrNull { dev ->
             val devAlias = dev.deviceAlias.lowercase()
             val devModel = dev.model.lowercase()
             val devMfr = dev.manufacturer.lowercase()
             val devName = dev.deviceName.lowercase()
+            val devId = dev.deviceId.lowercase()
+            val shortId = dev.deviceId.removePrefix("dev_").take(4).lowercase()
 
             clean.contains(devAlias) || clean.contains(devModel) || clean.contains(devMfr) || clean.contains(devName) ||
             devAlias.contains(clean) || devModel.contains(clean) || devMfr.contains(clean) || devName.contains(clean) ||
+            (shortId.isNotBlank() && clean.contains(shortId)) || devId.contains(clean) ||
             cleanTokens.any { token ->
-                devAlias.contains(token) || devModel.contains(token) || devMfr.contains(token) || devName.contains(token)
+                devAlias.contains(token) || devModel.contains(token) || devMfr.contains(token) || devName.contains(token) || (shortId.isNotBlank() && token == shortId)
             }
         }?.let { return it }
 
-        // 4. Default to first available active online device, or first registered device
+        // 4. Positional/Ordinal resolution ("pehla phone", "dusra phone", "teesra phone", "first", "second", "third")
+        if (clean.contains("pehla") || clean.contains("first") || clean.contains("1st") || clean.contains("phone 1")) {
+            sortedOtherDevices.getOrNull(0)?.let { return it }
+        }
+        if (clean.contains("dusra") || clean.contains("second") || clean.contains("2nd") || clean.contains("phone 2") || clean.contains("dusre phone")) {
+            sortedOtherDevices.getOrNull(1)?.let { return it } ?: sortedOtherDevices.getOrNull(0)?.let { return it }
+        }
+        if (clean.contains("teesra") || clean.contains("third") || clean.contains("3rd") || clean.contains("phone 3")) {
+            sortedOtherDevices.getOrNull(2)?.let { return it }
+        }
+        if (clean.contains("chautha") || clean.contains("fourth") || clean.contains("4th") || clean.contains("phone 4")) {
+            sortedOtherDevices.getOrNull(3)?.let { return it }
+        }
+
+        // 5. Default to first available active online device, or first registered device
         return sortedOtherDevices.firstOrNull { it.isOnline } ?: sortedOtherDevices.firstOrNull()
     }
 
