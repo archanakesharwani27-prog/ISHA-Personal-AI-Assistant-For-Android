@@ -71,13 +71,23 @@ object IshaCallAnnouncerManager {
     private var lastAnnouncedCallTime = 0L
     @Volatile private var voiceRetryCount = 0
 
+    // Ringtone Silencing / Muting state (Truecaller-style pre-ringing announcement)
+    @Volatile private var isRingerMutedByUs = false
+    @Volatile private var savedRingVolume = -1
+    @Volatile private var isSpeakingAnnouncement = false
+    private val ringtoneRestoreLock = Any()
+
+    // 0ms contact name cache
+    private val contactNameCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()
+
     /**
      * Resolves contact name with multi-tier fallbacks:
-     * 1. Check if callerName is already an alphabetic contact name (e.g. "Mom", "Rahul", "Umesh").
-     * 2. Query ISHA persistent Contact Memory (with old number recognition).
-     * 3. Query ContactsContract.PhoneLookup with normalized number.
-     * 4. Query ContactsContract.CommonDataKinds.Phone with last 10 digits.
-     * 5. Fallback to "Unknown Caller" — NEVER returns raw digits as a name!
+     * 1. Check in-memory contactNameCache (0ms).
+     * 2. Check if callerName is already an alphabetic contact name (e.g. "Mom", "Rahul", "Umesh").
+     * 3. Query ISHA persistent Contact Memory (with old number recognition).
+     * 4. Query ContactsContract.PhoneLookup with normalized number.
+     * 5. Query ContactsContract.CommonDataKinds.Phone with last 10 digits.
+     * 6. Fallback to "Unknown Caller" — NEVER returns raw digits as a name!
      */
     fun resolveContactName(context: Context, rawNumber: String, rawCallerName: String = ""): Pair<String, Boolean> {
         val cleanNumber = rawNumber.trim()
@@ -99,10 +109,14 @@ object IshaCallAnnouncerManager {
 
         if (candidate.isBlank()) return Pair("Unknown Caller", false)
 
+        contactNameCache[candidate]?.let { return it }
+
         // 1. ISHA Contact Memory
         val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(context, candidate)
         if (memoryMatch != null) {
-            return Pair(memoryMatch.name, memoryMatch.isOldNumber)
+            val res = Pair(memoryMatch.name, memoryMatch.isOldNumber)
+            contactNameCache[candidate] = res
+            return res
         }
 
         val digitsOnly = candidate.replace(Regex("[^0-9+]"), "")
@@ -119,7 +133,11 @@ object IshaCallAnnouncerManager {
                     val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
                     if (idx >= 0) {
                         val name = cursor.getString(idx)
-                        if (!name.isNullOrBlank()) return Pair(name, false)
+                        if (!name.isNullOrBlank()) {
+                            val res = Pair(name, false)
+                            contactNameCache[candidate] = res
+                            return res
+                        }
                     }
                 }
             }
@@ -142,7 +160,11 @@ object IshaCallAnnouncerManager {
                         val idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                         if (idx >= 0) {
                             val name = cursor.getString(idx)
-                            if (!name.isNullOrBlank()) return Pair(name, false)
+                            if (!name.isNullOrBlank()) {
+                                val res = Pair(name, false)
+                                contactNameCache[candidate] = res
+                                return res
+                            }
                         }
                     }
                 }
@@ -152,7 +174,9 @@ object IshaCallAnnouncerManager {
         }
 
         // 4. Truly unknown number (never return raw digits)
-        return Pair("Unknown Caller", false)
+        val unknown = Pair("Unknown Caller", false)
+        contactNameCache[candidate] = unknown
+        return unknown
     }
 
     fun init(context: Context) {
@@ -160,13 +184,74 @@ object IshaCallAnnouncerManager {
             try {
                 nativeTts = TextToSpeech(context.applicationContext) { status ->
                     if (status == TextToSpeech.SUCCESS) {
-                        nativeTts?.language = Locale("en", "IN")
-                        nativeTts?.setSpeechRate(1.15f) // Ultra-crisp, fast announcement
+                        val result = nativeTts?.setLanguage(Locale("en", "IN"))
+                        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            nativeTts?.setLanguage(Locale.US)
+                        }
+                        nativeTts?.setSpeechRate(1.20f) // Snappy, crisp announcement
                         isTtsReady = true
+                        Log.i(TAG, "nativeTts initialized and ready for Truecaller-style announcement")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "TTS initialization error", e)
+            }
+        }
+    }
+
+    /**
+     * Temporarily mutes the cellular ringtone before ISHA announces caller details.
+     * Prevents ringtone audio from blaring over or drowning out caller announcement.
+     */
+    private fun muteRingtoneTemporarily(context: Context) {
+        synchronized(ringtoneRestoreLock) {
+            if (isRingerMutedByUs) return
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+                if (currentVol > 0) {
+                    savedRingVolume = currentVol
+                }
+                Log.i(TAG, "🔇 Muting STREAM_RING (saved volume=$savedRingVolume) before announcement...")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, 0)
+                } else {
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                }
+                isRingerMutedByUs = true
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to mute STREAM_RING: ${e.message}")
+                try {
+                    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                    audioManager?.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                    isRingerMutedByUs = true
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Restores ringtone volume immediately once announcement completes or call state changes.
+     */
+    fun restoreRingtone(context: Context) {
+        synchronized(ringtoneRestoreLock) {
+            if (!isRingerMutedByUs) return
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                Log.i(TAG, "🔊 Restoring STREAM_RING volume to $savedRingVolume...")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
+                }
+                if (savedRingVolume > 0) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, savedRingVolume, 0)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to restore STREAM_RING: ${e.message}")
+            } finally {
+                isRingerMutedByUs = false
+                savedRingVolume = -1
             }
         }
     }
@@ -202,7 +287,7 @@ object IshaCallAnnouncerManager {
         // 1. Start Hand Wave & Proximity Gesture Listener
         startProximityHandSensor(context)
 
-        // 2. Announce Caller Name via TTS (fast, crisp) and activate Mic immediately
+        // 2. Announce Caller Name via TTS (pre-ringing) and activate Mic strictly after announcement
         announceCallerWithPrompt(context, resolvedName, isOldNumber)
     }
 
@@ -215,7 +300,9 @@ object IshaCallAnnouncerManager {
         currentCallerName = ""
         currentCallerNumber = ""
         voiceRetryCount = 0
+        isSpeakingAnnouncement = false
 
+        restoreRingtone(context)
         stopProximityHandSensor(context)
         stopVoiceResponseListener()
         dismissFloatingCallHud()
@@ -224,12 +311,15 @@ object IshaCallAnnouncerManager {
         } catch (_: Exception) {}
     }
 
-    // ── 1. Caller Announcement with Voice Prompt ──────────────────────────────
+    // ── 1. Caller Announcement with Voice Prompt (Truecaller Style) ────────────
     private fun announceCallerWithPrompt(context: Context, resolvedName: String, isOldNumber: Boolean = false) {
+        // 1. Immediately mute ringtone so ringtone does NOT blare over or before TTS
+        muteRingtoneTemporarily(context)
+
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val ringMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
         if (ringMode == AudioManager.RINGER_MODE_SILENT) {
-            // In silent mode, start mic listener immediately
+            // In silent mode, start mic listener immediately without loud TTS
             startVoiceResponseListener(context)
             return
         }
@@ -239,13 +329,32 @@ object IshaCallAnnouncerManager {
         } else if (resolvedName.isNotBlank() && resolvedName != "Unknown Caller") {
             "Call from $resolvedName"
         } else {
-            "Unknown call"
+            "Call from unknown caller"
         }
 
         if (nativeTts == null) init(context)
 
+        // Play on STREAM_ALARM so announcement is loud and clear even with STREAM_RING muted!
         val params = Bundle().apply {
-            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
+            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
+        }
+
+        isSpeakingAnnouncement = true
+
+        fun finishAnnouncementAndStartListening() {
+            if (!isSpeakingAnnouncement) return
+            isSpeakingAnnouncement = false
+            Log.i(TAG, "TTS announcement finished. Restoring ringtone and activating voice mic...")
+
+            // 1. Unmute/restore ringtone now so phone rings
+            restoreRingtone(context)
+
+            // 2. Wait 250ms for audio echo/buffer to clear, then activate mic for voice commands
+            mainHandler.postDelayed({
+                if (isRinging && !isListeningVoiceResponse) {
+                    startVoiceResponseListener(context)
+                }
+            }, 250L)
         }
 
         fun doSpeak() {
@@ -255,63 +364,61 @@ object IshaCallAnnouncerManager {
                         Log.d(TAG, "TTS announcement started: '$speechText'")
                     }
                     override fun onDone(utteranceId: String?) {
-                        Log.d(TAG, "TTS announcement finished, starting mic listener...")
                         if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
                             mainHandler.post {
-                                startVoiceResponseListener(context)
+                                finishAnnouncementAndStartListening()
                             }
                         }
                     }
                     @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId, errorCode)"))
                     @Suppress("DEPRECATION")
                     override fun onError(utteranceId: String?) {
-                        if (isRinging) {
-                            mainHandler.post { startVoiceResponseListener(context) }
+                        if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
+                            mainHandler.post { finishAnnouncementAndStartListening() }
                         }
                     }
                     override fun onError(utteranceId: String?, errorCode: Int) {
-                        if (isRinging) {
-                            mainHandler.post { startVoiceResponseListener(context) }
+                        if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
+                            mainHandler.post { finishAnnouncementAndStartListening() }
                         }
                     }
                 })
 
                 val res = nativeTts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, params, UTTERANCE_CALL_ANNOUNCE)
                 if (res != TextToSpeech.SUCCESS) {
-                    Log.w(TAG, "nativeTts.speak returned $res, triggering mic directly")
-                    mainHandler.postDelayed({
-                        if (isRinging && !isListeningVoiceResponse) startVoiceResponseListener(context)
-                    }, 400L)
+                    Log.w(TAG, "nativeTts.speak returned $res, completing announcement immediately")
+                    mainHandler.postDelayed({ finishAnnouncementAndStartListening() }, 300L)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error speaking call announcement", e)
-                startVoiceResponseListener(context)
+                finishAnnouncementAndStartListening()
             }
         }
 
         if (!isTtsReady) {
+            init(context)
             mainHandler.postDelayed({
                 if (isRinging) {
                     if (isTtsReady) {
                         doSpeak()
                     } else {
-                        // Fallback: If TTS takes too long to init, don't keep user waiting 10-20s!
-                        Log.w(TAG, "TTS not ready after 350ms, starting mic listener immediately")
-                        startVoiceResponseListener(context)
+                        Log.w(TAG, "TTS not ready after 400ms fallback, starting ring & mic")
+                        finishAnnouncementAndStartListening()
                     }
                 }
-            }, 350L)
+            }, 400L)
         } else {
             doSpeak()
         }
 
-        // Guaranteed fallback: ensures mic starts listening within 1000ms regardless of TTS state
+        // Safety watchdog: ONLY fires if TTS hangs for > 4.5 seconds (never at 1000ms!)
+        // Mic will NEVER open prematurely while TTS is speaking.
         mainHandler.postDelayed({
-            if (isRinging && !isListeningVoiceResponse) {
-                Log.d(TAG, "Fallback timer starting voice response mic listener")
-                startVoiceResponseListener(context)
+            if (isRinging && isSpeakingAnnouncement) {
+                Log.w(TAG, "Watchdog timer (4500ms) fired while waiting for TTS announcement")
+                finishAnnouncementAndStartListening()
             }
-        }, 1000L)
+        }, 4500L)
     }
 
     // ── 2. Hand Gesture Mechanism (Proximity Sensor) ──────────────────────────

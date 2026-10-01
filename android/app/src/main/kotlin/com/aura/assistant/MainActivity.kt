@@ -368,6 +368,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 Log.w(TAG, "Failed to launch overlay permission screen: ${e.message}")
             }
         }
+
+        // Pre-ringing Call Screening Role for Truecaller-like 0ms interception
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val roleManager = getSystemService(android.app.role.RoleManager::class.java)
+                if (roleManager != null && roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
+                    if (!roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
+                        val roleIntent = roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING)
+                        startActivityForResult(roleIntent, 8821)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "RoleManager ROLE_CALL_SCREENING check skipped: ${e.message}")
+            }
+        }
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag", "NewApi")

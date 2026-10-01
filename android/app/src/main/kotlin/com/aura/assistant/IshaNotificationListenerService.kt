@@ -325,6 +325,7 @@ open class IshaNotificationListenerService : NotificationListenerService() {
                 putExtra("package", sbn.packageName)
             }
             sendBroadcast(callBroadcast)
+            IshaCallAnnouncerManager.onCallEnded(applicationContext)
         }
     }
 
@@ -388,7 +389,8 @@ open class IshaNotificationListenerService : NotificationListenerService() {
                 putExtra("package", pkg)
             }
             sendBroadcast(callBroadcast)
-            // Note: Single authoritative call announcement handled by MainActivity
+            // Immediately trigger IshaCallAnnouncerManager directly for instant pre-ringing announcement & voice mic
+            IshaCallAnnouncerManager.onCallRinging(applicationContext, title.ifBlank { appName }, "")
             return
         }
 

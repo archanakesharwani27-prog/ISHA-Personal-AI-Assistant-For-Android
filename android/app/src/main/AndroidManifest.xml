@@ -151,6 +151,7 @@
     </queries>
 
     <application
+        android:name=".IshaApplication"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
@@ -227,6 +228,15 @@
             <intent-filter>
                 <action android:name="com.aura.assistant.ADB_INJECT" />
                 <action android:name="com.isha.assistant.ADB_INJECT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Manifest-Registered Cellular Incoming Call Receiver ──────── -->
+        <receiver
+            android:name=".IshaCallReceiver"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.PHONE_STATE" />
             </intent-filter>
         </receiver>
 
