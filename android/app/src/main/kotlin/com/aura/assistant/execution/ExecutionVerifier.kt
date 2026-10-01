@@ -116,11 +116,44 @@ object ExecutionVerifier {
 
                 // Action / Dispatch tools (UI, intents, navigation, communication)
                 "open_app" -> verifyAppOpen(context, executionResult)
+                "play_siren" -> {
+                    val targetDevice = executionResult?.get("target_device")?.asString ?: arguments.get("target_device")?.asString
+                    val isRemote = !targetDevice.isNullOrBlank() && !targetDevice.equals("this", true) && !targetDevice.equals("current", true) && !targetDevice.equals("local", true)
+                    val isSuccess = if (isRemote) (status == null || status == "success") else com.aura.assistant.media.IshaSirenManager.isSirenPlaying
+                    VerificationEvidence(
+                        verified = isSuccess,
+                        observedState = if (isSuccess) "High-decibel emergency siren is active" else "Siren activation failed",
+                        method = "siren_state_check"
+                    )
+                }
+                "stop_siren" -> {
+                    val targetDevice = executionResult?.get("target_device")?.asString ?: arguments.get("target_device")?.asString
+                    val isRemote = !targetDevice.isNullOrBlank() && !targetDevice.equals("this", true) && !targetDevice.equals("current", true) && !targetDevice.equals("local", true)
+                    val isSuccess = if (isRemote) (status == null || status == "success") else !com.aura.assistant.media.IshaSirenManager.isSirenPlaying
+                    VerificationEvidence(
+                        verified = isSuccess,
+                        observedState = if (isSuccess) "Siren silenced and stopped" else "Failed to stop siren",
+                        method = "siren_stopped_check"
+                    )
+                }
+                "toggle_hotspot" -> {
+                    val isSuccess = status == "success" || status == "settings_opened" || status == null
+                    val stateMsg = if (status == "settings_opened") {
+                        "Hotspot settings opened on screen for user toggle"
+                    } else {
+                        "Personal Hotspot toggle action dispatched"
+                    }
+                    VerificationEvidence(
+                        verified = isSuccess,
+                        observedState = stateMsg,
+                        method = "hotspot_dispatch_check"
+                    )
+                }
                 "play_media", "play_youtube", "find_and_tap",
                 "screen_tap", "screen_scroll", "press_system_key", "send_whatsapp",
                 "send_whatsapp_media", "delete_whatsapp_media", "send_sms", "make_call",
                 "accept_call", "decline_call", "identify_caller", "open_system_settings",
-                "toggle_hotspot", "set_navigation_mode", "manage_app_storage",
+                "set_navigation_mode", "manage_app_storage",
                 "install_store_app", "toggle_dark_mode", "show_recent_media",
                 "empty_recycle_bin", "set_timer", "create_alarm", "navigate_maps",
                 "open_camera", "add_calendar_event", "send_email", "emergency_sos",

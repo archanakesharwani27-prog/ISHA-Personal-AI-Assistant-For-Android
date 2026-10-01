@@ -1270,17 +1270,28 @@ open class IshaAccessibilityService : AccessibilityService() {
             val s = findSwitchInHierarchy(node.getChild(i))
             if (s != null) return s
         }
-        val parent = node.parent
-        if (parent != null) {
+        // Search sibling hierarchies (up to 3 levels up) for Samsung OneUI & custom vendor preference rows
+        var curr: AccessibilityNodeInfo? = node
+        for (level in 0..2) {
+            val parent = curr?.parent ?: break
             for (i in 0 until parent.childCount) {
                 val child = parent.getChild(i)
-                if (child != node) {
-                    if (child?.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
-                        child?.isCheckable == true) {
+                if (child != curr && child != null) {
+                    if (child.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
+                        child.className?.toString()?.contains("CompoundButton", ignoreCase = true) == true ||
+                        child.isCheckable) {
                         return child
+                    }
+                    for (j in 0 until child.childCount) {
+                        val subChild = child.getChild(j)
+                        if (subChild?.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
+                            subChild?.isCheckable == true) {
+                            return subChild
+                        }
                     }
                 }
             }
+            curr = parent
         }
         return null
     }

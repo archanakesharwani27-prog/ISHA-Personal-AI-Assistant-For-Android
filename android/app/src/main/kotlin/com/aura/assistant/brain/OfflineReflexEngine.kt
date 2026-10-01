@@ -97,6 +97,14 @@ object OfflineReflexEngine {
                         val url = urlRegex.find(actionPrompt)?.value ?: ""
                         "play_youtube" to mapOf("query" to actionPrompt, "url" to url)
                     }
+                    actionPrompt.contains("siren") -> {
+                        val isOff = actionPrompt.contains("band") || actionPrompt.contains("off") || actionPrompt.contains("roko") || actionPrompt.contains("stop")
+                        (if (isOff) "stop_siren" else "play_siren") to emptyMap<String, Any>()
+                    }
+                    actionPrompt.contains("hotspot") -> {
+                        val isOff = actionPrompt.contains("band") || actionPrompt.contains("off")
+                        "toggle_hotspot" to mapOf("enable" to !isOff)
+                    }
                     actionPrompt.contains("unlock") || actionPrompt.contains("kholo") -> {
                         "unlock_device" to emptyMap<String, Any>()
                     }
@@ -253,6 +261,16 @@ object OfflineReflexEngine {
             val success = isSuccess(result)
             val resp = if (!isOff) "Hotspot shuru kar diya hai Boss!" else "Hotspot band kar diya hai Boss!"
             return OfflineReflexResult("toggle_hotspot", resp, success)
+        }
+
+        // 7b. Siren Control
+        if (clean.contains("siren")) {
+            val isOff = clean.contains("band") || clean.contains("off") || clean.contains("roko") || clean.contains("stop")
+            val toolName = if (isOff) "stop_siren" else "play_siren"
+            val result = if (execute) IshaToolRegistry.executeTool(context, toolName, JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val resp = if (!isOff) "Siren bajna shuru ho gaya hai Boss! 🚨" else "Siren band kar diya hai Boss! 🛑"
+            return OfflineReflexResult(toolName, resp, success)
         }
 
         // 8. Screenshot

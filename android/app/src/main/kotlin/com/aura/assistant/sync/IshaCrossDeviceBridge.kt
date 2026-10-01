@@ -237,7 +237,8 @@ object IshaCrossDeviceBridge {
             // If action requires an active unlocked screen and the device is still locked, fail explicitly!
             val requiresUnlockedScreen = when (action.lowercase()) {
                 "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
-                "battery", "battery_status", "get_battery", "set_volume", "volume", "lock_device" -> false
+                "battery", "battery_status", "get_battery", "set_volume", "volume", "lock_device",
+                "play_siren", "sound_siren", "siren", "emergency_siren", "find_phone", "stop_siren", "silence_siren" -> false
                 else -> true
             }
 
@@ -333,6 +334,41 @@ object IshaCrossDeviceBridge {
                         } catch (e: Exception) {
                             success = false
                             executionResult = "Flashlight error: ${e.message}"
+                        }
+                    }
+
+                    "play_siren", "sound_siren", "siren", "emergency_siren", "find_phone" -> {
+                        val played = com.aura.assistant.media.IshaSirenManager.startSiren(context)
+                        success = played
+                        executionResult = if (played) "High-decibel siren is now playing at max volume with strobe light 🚨" else "Could not play siren"
+                    }
+
+                    "stop_siren", "silence_siren", "stop_alarm" -> {
+                        val stopped = com.aura.assistant.media.IshaSirenManager.stopSiren(context)
+                        success = stopped
+                        executionResult = "Siren stopped successfully 🛑"
+                    }
+
+                    "toggle_hotspot", "hotspot" -> {
+                        val enable = params["enable"]?.toString()?.toBooleanStrictOrNull()
+                            ?: !(rawPrompt.contains("off") || rawPrompt.contains("band"))
+                        val a11y = IshaAccessibilityService.instance
+                        if (a11y != null) {
+                            a11y.armHotspotToggle(enable)
+                            executionResult = "Personal Hotspot ${if (enable) "ON" else "OFF"} toggle triggered 📶"
+                            success = true
+                        } else {
+                            val intent = Intent("android.settings.TETHER_SETTINGS").apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            try {
+                                context.startActivity(intent)
+                                executionResult = "Hotspot settings open kar di hai Boss"
+                                success = true
+                            } catch (_: Exception) {
+                                success = false
+                                executionResult = "Could not open hotspot settings"
+                            }
                         }
                     }
 

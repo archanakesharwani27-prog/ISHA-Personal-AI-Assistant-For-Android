@@ -444,11 +444,15 @@ object IshaToolRegistry {
         // 22. Mobile Hotspot Control
         toolsArray.add(createFunction(
             name = "toggle_hotspot",
-            desc = "Turn the mobile Personal Hotspot / Portable Wi-Fi Hotspot ON or OFF hands-free. Call ONLY when the user explicitly commands to enable or disable hotspot ('hotspot on karo', 'hotspot band karo'). NEVER call when user asks about hotspot data usage or connected devices (use get_device_connectivity_and_usage instead).",
-            params = mapOf("enable" to "boolean"),
+            desc = "Turn the mobile Personal Hotspot / Portable Wi-Fi Hotspot ON or OFF hands-free on this phone or another linked phone. Call ONLY when the user explicitly commands to enable or disable hotspot ('hotspot on karo', 'hotspot band karo', 'Samsung mein hotspot on karo').",
+            params = mapOf(
+                "enable" to "boolean",
+                "target_device" to "string"
+            ),
             required = listOf("enable"),
             paramDescriptions = mapOf(
-                "enable" to "true to turn hotspot ON, false to turn hotspot OFF"
+                "enable" to "true to turn hotspot ON, false to turn hotspot OFF",
+                "target_device" to "Optional target device name or alias (e.g. 'Samsung', 'Lava', 'Phone B'). Omit for this phone."
             )
         ))
 
@@ -823,6 +827,32 @@ object IshaToolRegistry {
             required = emptyList(),
             paramDescriptions = mapOf(
                 "target_device" to "Optional target device name (e.g. 'Samsung', 'Lava', 'Phone B'). Omit to unlock current device."
+            )
+        ))
+
+        // 44f. Play High-Decibel Siren / Alarm
+        toolsArray.add(createFunction(
+            name = "play_siren",
+            desc = "Play a high-decibel emergency siren / loud alarm sound at 100% volume with strobe flashlight flashing. Used to find a lost phone or sound an alarm (e.g. 'siren bajao', 'alarm bajao', 'siren play karo', 'Samsung phone mein siren bajao', 'find my phone'). Works even when phone is silent or locked.",
+            params = mapOf(
+                "target_device" to "string"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target_device" to "Optional target device name or alias (e.g. 'Samsung', 'Phone B', 'Pixel', 'Lava'). Omit to play siren on this phone."
+            )
+        ))
+
+        // 44g. Stop Siren
+        toolsArray.add(createFunction(
+            name = "stop_siren",
+            desc = "Stop and silence the siren or emergency alarm immediately (e.g. 'siren band karo', 'siren roko', 'stop siren', 'Samsung ka siren band karo').",
+            params = mapOf(
+                "target_device" to "string"
+            ),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "target_device" to "Optional target device name or alias. Omit to stop siren on this phone."
             )
         ))
 
@@ -3602,6 +3632,29 @@ object IshaToolRegistry {
 
                 "toggle_hotspot" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
+                    val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
+                    if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDeviceArg,
+                                action = "toggle_hotspot",
+                                params = mapOf("enable" to enable),
+                                rawPrompt = "toggle_hotspot ${if (enable) "on" else "off"}"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par hotspot ${if (enable) "ON" else "OFF"} toggle trigger kar diya hai Boss! 📶")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                        return result
+                    }
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armHotspotToggle(enable)
@@ -3614,7 +3667,7 @@ object IshaToolRegistry {
                         try {
                             context.startActivity(intent)
                             result.addProperty("status", "settings_opened")
-                            result.addProperty("message", "Hotspot settings open kar di hai Boss.")
+                            result.addProperty("message", "Hotspot settings open kar di hai Boss, switch tap karke turn on kar lijiye.")
                         } catch (_: Exception) {
                             val fallback = Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -4261,6 +4314,8 @@ object IshaToolRegistry {
                     val normAction = when {
                         actLower.contains("flashlight") || actLower.contains("torch") -> "toggle_flashlight"
                         actLower.contains("volume") -> "set_volume"
+                        actLower.contains("siren") || pmtLower.contains("siren") -> if (actLower.contains("stop") || actLower.contains("band") || pmtLower.contains("stop") || pmtLower.contains("band")) "stop_siren" else "play_siren"
+                        actLower.contains("hotspot") || pmtLower.contains("hotspot") -> "toggle_hotspot"
                         actLower.contains("lock") && !actLower.contains("unlock") && !pmtLower.contains("unlock") -> "lock_device"
                         actLower.contains("unlock") || pmtLower.contains("unlock") || actLower.contains("wake") || pmtLower.contains("wake") -> "unlock_device"
                         isAppInstall -> "install_store_app"
@@ -4442,6 +4497,79 @@ object IshaToolRegistry {
                         }
                         result.addProperty("status", "success")
                         result.addProperty("message", "Phone screen wake aur unlock kar diya hai Boss! 🔓")
+                    }
+                }
+
+                // 44f. Play High-Decibel Siren
+                "play_siren" -> {
+                    val rawTarget = args.get("target_device")?.asString ?: ""
+                    val activeDev = IshaMemoryManager.getActiveTargetDevice()
+                    val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
+                    if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
+                        // Remote siren
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Siren error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "play_siren",
+                                params = emptyMap(),
+                                rawPrompt = "play siren"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par siren bajna shuru ho gaya hai Boss! 🚨")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                    } else {
+                        // Local siren
+                        val started = com.aura.assistant.media.IshaSirenManager.startSiren(context)
+                        if (started) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Siren bajna shuru ho gaya hai Boss! 🚨 (Stop karne ke liye 'siren band karo' bole)")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("message", "Siren start karne me dikkat aayi.")
+                        }
+                    }
+                }
+
+                // 44g. Stop Siren
+                "stop_siren" -> {
+                    val rawTarget = args.get("target_device")?.asString ?: ""
+                    val activeDev = IshaMemoryManager.getActiveTargetDevice()
+                    val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
+                    if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
+                        // Remote stop siren
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Siren error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "stop_siren",
+                                params = emptyMap(),
+                                rawPrompt = "stop siren"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par siren band kar diya hai Boss! 🛑")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                    } else {
+                        // Local stop siren
+                        com.aura.assistant.media.IshaSirenManager.stopSiren(context)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Siren band kar diya hai Boss! 🛑")
                     }
                 }
 
