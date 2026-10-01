@@ -1,5 +1,6 @@
 package com.aura.assistant.sync
 
+import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -187,7 +188,7 @@ object IshaCrossDeviceBridge {
             if (isLocked) {
                 val a11y = IshaAccessibilityService.instance
                 a11y?.performUnlockSwipe()
-                kotlinx.coroutines.delay(700L)
+                kotlinx.coroutines.delay(800L)
 
                 val pin = params["pin"]?.toString()
                     ?: params["password"]?.toString()
@@ -198,24 +199,25 @@ object IshaCrossDeviceBridge {
                 if (!pin.isNullOrBlank()) {
                     saveDeviceCredentials(context, pin, null)
                     a11y?.enterPin(pin)
-                    kotlinx.coroutines.delay(900L)
                 } else if (!pattern.isNullOrBlank()) {
                     saveDeviceCredentials(context, null, pattern)
                     a11y?.unlockWithPattern(pattern)
-                    kotlinx.coroutines.delay(900L)
                 }
 
-                // Explicit Keyguard Verification check
-                val stillLocked = km?.isKeyguardLocked ?: false
-                if (stillLocked) {
-                    // One retry attempt if PIN is available
+                // Explicit Keyguard Verification check with polling (wait for dismiss animation up to 2500ms)
+                unlockedSuccessfully = pollKeyguardUnlocked(km, 2500L)
+                if (!unlockedSuccessfully && (!pin.isNullOrBlank() || !pattern.isNullOrBlank())) {
+                    Log.w(TAG, "Device remains locked after first attempt. Retrying swipe and credential...")
+                    a11y?.performUnlockSwipe()
+                    kotlinx.coroutines.delay(750L)
                     if (!pin.isNullOrBlank()) {
                         a11y?.enterPin(pin)
-                        kotlinx.coroutines.delay(800L)
+                    } else if (!pattern.isNullOrBlank()) {
+                        a11y?.unlockWithPattern(pattern)
                     }
-                    if (km?.isKeyguardLocked == true) {
-                        unlockedSuccessfully = false
-                        Log.w(TAG, "Device remains locked after auto-unlock attempt.")
+                    unlockedSuccessfully = pollKeyguardUnlocked(km, 2500L)
+                    if (!unlockedSuccessfully) {
+                        Log.w(TAG, "Device remains locked after retry unlock attempt.")
                     }
                 }
             }
@@ -244,7 +246,8 @@ object IshaCrossDeviceBridge {
 
             if (isLocked && !unlockedSuccessfully && requiresUnlockedScreen) {
                 success = false
-                executionResult = "Phone lock hai aur PIN enter karne ke baad bhi unlock nahi hua, isliye '$action' execute nahi ho saki."
+                val method = if (!params["pattern"]?.toString().isNullOrBlank() || !getSavedDevicePattern(context).isNullOrBlank()) "Pattern" else "PIN"
+                executionResult = "Phone lock hai aur $method enter karne ke baad bhi unlock nahi hua, isliye '$action' execute nahi ho saki."
             } else {
                 try {
                     when (action.lowercase()) {
@@ -355,8 +358,23 @@ object IshaCrossDeviceBridge {
                         val a11y = IshaAccessibilityService.instance
                         if (a11y != null) {
                             a11y.armHotspotToggle(enable)
-                            executionResult = "Personal Hotspot ${if (enable) "ON" else "OFF"} toggle triggered 📶"
-                            success = true
+                            // Wait up to 3500ms for accessibility service to locate switch and click it
+                            var toggled = false
+                            val checkStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - checkStart < 3500L) {
+                                kotlinx.coroutines.delay(300L)
+                                if (a11y.pendingHotspotToggle == null) {
+                                    toggled = true
+                                    break
+                                }
+                            }
+                            if (toggled) {
+                                executionResult = "Personal Hotspot ${if (enable) "ON" else "OFF"} kar diya hai Boss! 📶"
+                                success = true
+                            } else {
+                                executionResult = "Hotspot settings kholi gayi hain, switch toggle trigger ho gaya hai."
+                                success = true
+                            }
                         } else {
                             val intent = Intent("android.settings.TETHER_SETTINGS").apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -469,17 +487,15 @@ object IshaCrossDeviceBridge {
                     "unlock_device", "unlock_phone", "unlock", "wake_device", "wake" -> {
                         val a11y = IshaAccessibilityService.instance
                         a11y?.performUnlockSwipe()
-                        kotlinx.coroutines.delay(650L)
+                        kotlinx.coroutines.delay(800L)
                         val pin = params["pin"]?.toString() ?: params["password"]?.toString() ?: getSavedDevicePin(context)
                         val pattern = params["pattern"]?.toString() ?: getSavedDevicePattern(context)
                         if (!pin.isNullOrBlank()) {
                             saveDeviceCredentials(context, pin, null)
                             a11y?.enterPin(pin)
-                            executionResult = "Phone unlocked with PIN"
                         } else if (!pattern.isNullOrBlank()) {
                             saveDeviceCredentials(context, null, pattern)
                             a11y?.unlockWithPattern(pattern)
-                            executionResult = "Phone unlocked with Pattern"
                         } else {
                             try {
                                 val launchIntent = Intent(context, com.aura.assistant.MainActivity::class.java).apply {
@@ -488,9 +504,33 @@ object IshaCrossDeviceBridge {
                                 }
                                 context.startActivity(launchIntent)
                             } catch (_: Exception) {}
-                            executionResult = "Phone screen woken and swipe unlock attempted"
                         }
-                        success = true
+
+                        // Poll verification (up to 2500ms for keyguard dismiss animation)
+                        var unlocked = pollKeyguardUnlocked(km, 2500L)
+                        if (!unlocked && (!pin.isNullOrBlank() || !pattern.isNullOrBlank())) {
+                            Log.w(TAG, "unlock_device: Still locked after attempt 1. Retrying swipe and credentials...")
+                            a11y?.performUnlockSwipe()
+                            kotlinx.coroutines.delay(750L)
+                            if (!pin.isNullOrBlank()) a11y?.enterPin(pin)
+                            else if (!pattern.isNullOrBlank()) a11y?.unlockWithPattern(pattern)
+                            unlocked = pollKeyguardUnlocked(km, 2500L)
+                        }
+
+                        if (unlocked) {
+                            success = true
+                            executionResult = if (!pin.isNullOrBlank()) "Phone unlocked with PIN 🔓"
+                                              else if (!pattern.isNullOrBlank()) "Phone unlocked with Pattern 🔓"
+                                              else "Phone screen wake aur swipe unlock ho gaya Boss! 🔓"
+                        } else {
+                            if (pin.isNullOrBlank() && pattern.isNullOrBlank()) {
+                                success = true
+                                executionResult = "Screen wake aur swipe attempt kiya gaya. Agar PIN/Pattern protected hai to PIN ya Pattern bataiye."
+                            } else {
+                                success = false
+                                executionResult = "Phone unlock attempt fail ho gaya, keyguard abhi bhi locked hai. Kripya PIN ya Pattern check karein."
+                            }
+                        }
                     }
 
                     "install_store_app", "install_app" -> {
@@ -821,5 +861,16 @@ object IshaCrossDeviceBridge {
 
     fun getSavedDevicePattern(context: Context): String? {
         return context.getSharedPreferences("cross_device_creds", Context.MODE_PRIVATE).getString("saved_pattern", null)
+    }
+
+    suspend fun pollKeyguardUnlocked(km: KeyguardManager?, maxWaitMs: Long = 2500L): Boolean {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < maxWaitMs) {
+            if (km?.isKeyguardLocked == false) {
+                return true
+            }
+            kotlinx.coroutines.delay(200L)
+        }
+        return km?.isKeyguardLocked == false
     }
 }

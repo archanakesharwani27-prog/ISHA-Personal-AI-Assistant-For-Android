@@ -106,7 +106,15 @@ object OfflineReflexEngine {
                         "toggle_hotspot" to mapOf("enable" to !isOff)
                     }
                     actionPrompt.contains("unlock") || actionPrompt.contains("kholo") -> {
-                        "unlock_device" to emptyMap<String, Any>()
+                        val unlockMap = mutableMapOf<String, Any>()
+                        val patMatch = Regex("""pattern\s*([0-9,\s-]+)""", RegexOption.IGNORE_CASE).find(actionPrompt)?.groupValues?.get(1)?.trim()
+                        val pinMatch = Regex("""\b\d{4,6}\b""").find(actionPrompt)?.value
+                        if (!patMatch.isNullOrBlank()) {
+                            unlockMap["pattern"] = patMatch
+                        } else if (!pinMatch.isNullOrBlank()) {
+                            unlockMap["pin"] = pinMatch
+                        }
+                        "unlock_device" to unlockMap
                     }
                     actionPrompt.contains("lock") || actionPrompt.contains("band karo") -> {
                         "lock_device" to emptyMap<String, Any>()

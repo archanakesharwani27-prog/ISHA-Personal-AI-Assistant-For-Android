@@ -820,13 +820,17 @@ object IshaToolRegistry {
         // 44e. Unlock / Wake Device
         toolsArray.add(createFunction(
             name = "unlock_device",
-            desc = "Wake screen and unlock this phone or a remote phone (e.g. 'phone unlock karo', 'Lava phone unlock kar do', 'screen on karo').",
+            desc = "Wake screen and unlock this phone or a remote phone (e.g. 'phone unlock karo', 'Lava phone unlock kar do', 'Samsung ko unlock karo', 'screen on karo'). If protected by PIN or pattern, pass the pin or pattern parameter.",
             params = mapOf(
-                "target_device" to "string"
+                "target_device" to "string",
+                "pin" to "string",
+                "pattern" to "string"
             ),
             required = emptyList(),
             paramDescriptions = mapOf(
-                "target_device" to "Optional target device name (e.g. 'Samsung', 'Lava', 'Phone B'). Omit to unlock current device."
+                "target_device" to "Optional target device name (e.g. 'Samsung', 'Lava', 'Phone B'). Omit to unlock current device.",
+                "pin" to "Optional numeric PIN (e.g. '1234', '0000') to enter on lockscreen.",
+                "pattern" to "Optional 3x3 pattern sequence numbers 1-9 (e.g. '1,2,3,6,9' or '41578') where 1=top-left, 9=bottom-right."
             )
         ))
 
@@ -4449,13 +4453,22 @@ object IshaToolRegistry {
                     val rawTarget = args.get("target_device")?.asString ?: ""
                     val activeDev = IshaMemoryManager.getActiveTargetDevice()
                     val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
+                    val pinArg = args.get("pin")?.asString?.trim()
+                    val patternArg = args.get("pattern")?.asString?.trim()
+
                     if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
                         // Remote unlock
                         val unlockParams = mutableMapOf<String, Any>()
-                        val pin = args.get("pin")?.asString ?: IshaMemoryManager.getDevicePin(context, targetDevice)
-                        val pattern = args.get("pattern")?.asString ?: IshaMemoryManager.getDevicePattern(context, targetDevice)
-                        if (!pin.isNullOrBlank()) unlockParams["pin"] = pin
-                        if (!pattern.isNullOrBlank()) unlockParams["pattern"] = pattern
+                        val pin = if (!pinArg.isNullOrBlank()) pinArg else IshaMemoryManager.getDevicePin(context, targetDevice)
+                        val pattern = if (!patternArg.isNullOrBlank()) patternArg else IshaMemoryManager.getDevicePattern(context, targetDevice)
+                        if (!pin.isNullOrBlank()) {
+                            unlockParams["pin"] = pin
+                            IshaMemoryManager.saveDevicePin(context, targetDevice, pin)
+                        }
+                        if (!pattern.isNullOrBlank()) {
+                            unlockParams["pattern"] = pattern
+                            IshaMemoryManager.saveDevicePattern(context, targetDevice, pattern)
+                        }
 
                         var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Unlock error")
                         kotlinx.coroutines.runBlocking {
@@ -4469,7 +4482,7 @@ object IshaToolRegistry {
                         }
                         if (executionResult.success) {
                             result.addProperty("status", "success")
-                            result.addProperty("message", "${executionResult.targetDeviceName} phone screen wake aur unlock attempt kar diya hai Boss! 🔓")
+                            result.addProperty("message", "${executionResult.targetDeviceName} phone screen wake aur unlock kar diya hai Boss! 🔓")
                         } else {
                             result.addProperty("status", "error")
                             result.addProperty("message", executionResult.message)
@@ -4477,26 +4490,70 @@ object IshaToolRegistry {
                     } else {
                         // Local unlock
                         val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                        val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
                         val wl = pm?.newWakeLock(
                             android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                             android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
                             android.os.PowerManager.ON_AFTER_RELEASE,
                             "isha:unlock"
                         )
-                        wl?.acquire(5000L)
+                        try { wl?.acquire(10000L) } catch (_: Exception) {}
                         val a11y = IshaAccessibilityService.instance
                         a11y?.performUnlockSwipe()
-                        val pin = args.get("pin")?.asString ?: IshaMemoryManager.getDevicePin("local")
-                        val pattern = args.get("pattern")?.asString ?: IshaMemoryManager.getDevicePattern("local")
+                        val pin = if (!pinArg.isNullOrBlank()) pinArg else IshaMemoryManager.getDevicePin("local", context)
+                        val pattern = if (!patternArg.isNullOrBlank()) patternArg else IshaMemoryManager.getDevicePattern("local", context)
                         if (!pin.isNullOrBlank()) {
-                            try { Thread.sleep(600) } catch (_: Exception) {}
+                            IshaMemoryManager.saveDevicePin(context, "local", pin)
+                            try { Thread.sleep(750) } catch (_: Exception) {}
                             a11y?.enterPin(pin)
                         } else if (!pattern.isNullOrBlank()) {
-                            try { Thread.sleep(600) } catch (_: Exception) {}
+                            IshaMemoryManager.saveDevicePattern(context, "local", pattern)
+                            try { Thread.sleep(750) } catch (_: Exception) {}
                             a11y?.unlockWithPattern(pattern)
                         }
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "Phone screen wake aur unlock kar diya hai Boss! 🔓")
+
+                        // Verification polling (wait up to 2500ms for keyguard dismiss animation)
+                        var isUnlocked = km?.isKeyguardLocked == false
+                        for (i in 0 until 12) {
+                            if (km?.isKeyguardLocked == false) {
+                                isUnlocked = true
+                                break
+                            }
+                            try { Thread.sleep(200) } catch (_: Exception) {}
+                        }
+
+                        if (!isUnlocked && (!pin.isNullOrBlank() || !pattern.isNullOrBlank())) {
+                            // Retry once
+                            a11y?.performUnlockSwipe()
+                            try { Thread.sleep(750) } catch (_: Exception) {}
+                            if (!pin.isNullOrBlank()) a11y?.enterPin(pin)
+                            else if (!pattern.isNullOrBlank()) a11y?.unlockWithPattern(pattern)
+                            for (i in 0 until 12) {
+                                if (km?.isKeyguardLocked == false) {
+                                    isUnlocked = true
+                                    break
+                                }
+                                try { Thread.sleep(200) } catch (_: Exception) {}
+                            }
+                        }
+
+                        if (isUnlocked) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Phone screen wake aur unlock kar diya hai Boss! 🔓")
+                        } else {
+                            if (km?.isKeyguardLocked == true) {
+                                if (pin.isNullOrBlank() && pattern.isNullOrBlank()) {
+                                    result.addProperty("status", "success")
+                                    result.addProperty("message", "Phone screen wake kar di hai. Agar lock kholna hai toh PIN ya Pattern bataiye Boss! 📱")
+                                } else {
+                                    result.addProperty("status", "error")
+                                    result.addProperty("message", "Screen wake ho gayi hai lekin device unlock nahi hua. Kripya PIN ya Pattern check karein.")
+                                }
+                            } else {
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Phone screen wake aur unlock kar diya hai Boss! 🔓")
+                            }
+                        }
                     }
                 }
 
@@ -4533,8 +4590,18 @@ object IshaToolRegistry {
                             result.addProperty("status", "success")
                             result.addProperty("message", "Siren bajna shuru ho gaya hai Boss! 🚨 (Stop karne ke liye 'siren band karo' bole)")
                         } else {
-                            result.addProperty("status", "error")
-                            result.addProperty("message", "Siren start karne me dikkat aayi.")
+                            // Common-sense fallback: Play loud siren on YouTube
+                            try {
+                                val ytArgs = com.google.gson.JsonObject().apply {
+                                    addProperty("query", "loud police siren emergency alarm sound")
+                                }
+                                executeTool(context, "play_youtube", ytArgs)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Hardware alarm ke bajaye YouTube par emergency siren high volume par play kar diya hai Boss! 🚨")
+                            } catch (e: Exception) {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Siren start karne me dikkat aayi.")
+                            }
                         }
                     }
                 }

@@ -2100,10 +2100,10 @@ open class IshaAccessibilityService : AccessibilityService() {
     fun performUnlockSwipe(): Boolean {
         val dm = resources.displayMetrics
         val startX = dm.widthPixels / 2
-        val startY = (dm.heightPixels * 0.82f).toInt()
+        val startY = (dm.heightPixels * 0.85f).toInt()
         val endX = dm.widthPixels / 2
-        val endY = (dm.heightPixels * 0.20f).toInt()
-        return performSwipe(startX, startY, endX, endY, 280)
+        val endY = (dm.heightPixels * 0.15f).toInt()
+        return performSwipe(startX, startY, endX, endY, 350)
     }
 
     /**
@@ -2236,7 +2236,8 @@ open class IshaAccessibilityService : AccessibilityService() {
             if (node == null || foundPatternView) return
             val cls = node.className?.toString()?.lowercase() ?: ""
             val resId = node.viewIdResourceName?.lowercase() ?: ""
-            if (cls.contains("pattern") || resId.contains("pattern") || resId.contains("lock_pattern")) {
+            if (cls.contains("pattern") || resId.contains("pattern") || resId.contains("lock_pattern") ||
+                resId.contains("keyguard_pattern") || resId.contains("lockpatternview") || cls.contains("lockpatternview")) {
                 node.getBoundsInScreen(targetBounds)
                 if (targetBounds.width() > 200 && targetBounds.height() > 200) {
                     foundPatternView = true
@@ -2256,10 +2257,10 @@ open class IshaAccessibilityService : AccessibilityService() {
             targetBounds
         } else {
             val dm = resources.displayMetrics
-            val left = (dm.widthPixels * 0.12f).toInt()
-            val right = (dm.widthPixels * 0.88f).toInt()
-            val top = (dm.heightPixels * 0.44f).toInt()
-            val bottom = (dm.heightPixels * 0.82f).toInt()
+            val left = (dm.widthPixels * 0.10f).toInt()
+            val right = (dm.widthPixels * 0.90f).toInt()
+            val top = (dm.heightPixels * 0.45f).toInt()
+            val bottom = (dm.heightPixels * 0.83f).toInt()
             android.graphics.Rect(left, top, right, bottom)
         }
 

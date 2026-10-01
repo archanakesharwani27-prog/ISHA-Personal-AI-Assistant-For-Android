@@ -78,6 +78,19 @@ object IshaMemoryManager {
                 devicePinMap[cleanDev] = fromPrefs
                 return fromPrefs
             }
+            val allPrefs = getPrefs(context).all
+            for ((key, value) in allPrefs) {
+                if (key.startsWith("device_pin_")) {
+                    val kDev = key.removePrefix("device_pin_").lowercase()
+                    if (cleanDev.contains(kDev) || kDev.contains(cleanDev)) {
+                        val pin = value as? String
+                        if (!pin.isNullOrBlank()) {
+                            devicePinMap[cleanDev] = pin
+                            return pin
+                        }
+                    }
+                }
+            }
         }
         // Known persistent credential for Lava / Phone A
         if (cleanDev.contains("lava") || cleanDev.contains("phone a") || cleanDev.contains("864ec82595")) {
@@ -115,6 +128,19 @@ object IshaMemoryManager {
             if (!fromPrefs.isNullOrBlank()) {
                 devicePatternMap[cleanDev] = fromPrefs
                 return fromPrefs
+            }
+            val allPrefs = getPrefs(context).all
+            for ((key, value) in allPrefs) {
+                if (key.startsWith("device_pattern_")) {
+                    val kDev = key.removePrefix("device_pattern_").lowercase()
+                    if (cleanDev.contains(kDev) || kDev.contains(cleanDev)) {
+                        val pat = value as? String
+                        if (!pat.isNullOrBlank()) {
+                            devicePatternMap[cleanDev] = pat
+                            return pat
+                        }
+                    }
+                }
             }
         }
         // Known persistent pattern for Lava / Phone A
@@ -575,6 +601,14 @@ PILLAR 7 — DISAMBIGUATION (Claude Sonnet style):
   Band karo — Boss, kya band karun? Torch, WiFi, Bluetooth, ya kuch aur?
   Message bhejo — Zaroor Boss! Kise bhejun aur kya likhun?
   Vague single words — ALWAYS ask for clarification first.
+
+PILLAR 8 — COMMON SENSE AUTONOMOUS FALLBACK & CREATIVE PROBLEM SOLVING:
+  Agar kisi task ka direct/dedicated tool na ho ya fail ho jaye, toh KABHI BHI haar maan kar jhooth mat bolo ('kar diya'). Apna brain aur alternative solutions use karo:
+  * Siren / Alarm tool issue: Turant play_youtube ya media intent se emergency siren/alarm 100% volume par chalao!
+  * Phone locked: Screen ya UI automation se pehle unlock_device call karo (agar user ne PIN/Pattern bataya ho to 'pin' ya 'pattern' parameter zaroor pass karo)!
+  * Direct OS API na ho (jaise Hotspot/WiFi/Settings): toggle_hotspot ya open_system_settings khol kar Accessibility touch se switch toggle karo!
+  * App ke andar koi button dabana ho: autonomous_ui_action, find_and_tap, screen_tap, ya open_app ka use karke task execute karo!
+  * Ek sachhe human companion ki tarah common sense laga kar har mushkil kaam ko accomplish karo!
 
 FEMALE GENDER AND GRAMMAR — STRICT STREE LING (KABHI MAT TODNA)
 HAMESHA: karti hoon, kar doongi, kar deti hoon, bol rahi hoon,

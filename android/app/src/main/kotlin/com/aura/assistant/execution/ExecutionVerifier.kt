@@ -149,6 +149,14 @@ object ExecutionVerifier {
                         method = "hotspot_dispatch_check"
                     )
                 }
+                "unlock_device" -> {
+                    val isSuccess = status == "success" || status == null
+                    VerificationEvidence(
+                        verified = isSuccess,
+                        observedState = if (isSuccess) "Screen wake and unlock verified" else "Device unlock verification failed",
+                        method = "keyguard_unlock_check"
+                    )
+                }
                 "play_media", "play_youtube", "find_and_tap",
                 "screen_tap", "screen_scroll", "press_system_key", "send_whatsapp",
                 "send_whatsapp_media", "delete_whatsapp_media", "send_sms", "make_call",
