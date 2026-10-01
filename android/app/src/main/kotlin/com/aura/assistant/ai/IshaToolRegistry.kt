@@ -200,33 +200,45 @@ object IshaToolRegistry {
         // 4. Open Application
         toolsArray.add(createFunction(
             name = "open_app",
-            desc = "Launch an installed Android application by name (e.g. WhatsApp, Instagram, Calculator, Settings, Chrome, Camera). Call ONLY when the user explicitly wants to open an application UI. NEVER call for playing music or videos (use play_youtube or play_media instead), NEVER call for web search queries (use search_internet instead), and NEVER call for hardware settings toggles.",
-            params = mapOf("app_name" to "string"),
+            desc = "Launch an installed Android application by name (e.g. WhatsApp, Instagram, Calculator, Settings, Chrome, Camera) on this device or a remote linked device (e.g. 'OnePlus me Chrome open karo', 'Pixel par Settings kholo'). Call ONLY when the user explicitly wants to open an application UI. NEVER call for playing music or videos (use play_youtube or play_media instead), NEVER call for web search queries (use search_internet instead), and NEVER call for hardware settings toggles.",
+            params = mapOf(
+                "app_name" to "string",
+                "target_device" to "string"
+            ),
             required = listOf("app_name"),
             paramDescriptions = mapOf(
-                "app_name" to "Standard name of the installed app (e.g. 'whatsapp', 'instagram', 'calculator', 'chrome', 'camera', 'settings')"
+                "app_name" to "Standard name of the installed app (e.g. 'whatsapp', 'instagram', 'calculator', 'chrome', 'camera', 'settings')",
+                "target_device" to "Optional target device name or alias (e.g. 'OnePlus', 'Pixel', 'Samsung', 'Lava', 'Tablet', 'Other phone'). Omit to open on current device."
             )
         ))
 
         // 5. Flashlight / Torch
         toolsArray.add(createFunction(
             name = "toggle_flashlight",
-            desc = "Turn the phone camera flashlight/torch on or off. Call ONLY when the user explicitly requests to turn the torch on or off (e.g. 'torch on karo', 'flashlight band karo'). NEVER call when the user reports a problem, damage, or complaint about their torch (e.g. 'mera torch kharab hai').",
-            params = mapOf("enable" to "boolean"),
+            desc = "Turn the phone camera flashlight/torch on or off on this device or a remote linked device (e.g. 'torch on karo', 'Pixel phone me flashlight jalao'). Call ONLY when the user explicitly requests to turn the torch on or off. NEVER call when the user reports a problem, damage, or complaint about their torch.",
+            params = mapOf(
+                "enable" to "boolean",
+                "target_device" to "string"
+            ),
             required = listOf("enable"),
             paramDescriptions = mapOf(
-                "enable" to "true to turn flashlight ON, false to turn flashlight OFF"
+                "enable" to "true to turn flashlight ON, false to turn flashlight OFF",
+                "target_device" to "Optional target device name or alias. Omit for current device."
             )
         ))
 
         // 6. Volume Control
         toolsArray.add(createFunction(
             name = "set_volume",
-            desc = "Set phone media and system volume percentage (0 to 100). Call when user asks to adjust sound, volume, or audio level (e.g. 'awaaz 50% kar do', 'volume badhao'). NEVER call for display brightness (use set_brightness instead).",
-            params = mapOf("level_percent" to "integer"),
+            desc = "Set phone media and system volume percentage (0 to 100) on this device or a remote linked device (e.g. 'awaaz 50% kar do', 'OnePlus me volume badhao'). Call when user asks to adjust sound, volume, or audio level. NEVER call for display brightness.",
+            params = mapOf(
+                "level_percent" to "integer",
+                "target_device" to "string"
+            ),
             required = listOf("level_percent"),
             paramDescriptions = mapOf(
-                "level_percent" to "Target volume level from 0 (silent/mute) to 100 (maximum volume)"
+                "level_percent" to "Target volume level from 0 (silent/mute) to 100 (maximum volume)",
+                "target_device" to "Optional target device name or alias. Omit for current device."
             )
         ))
 
@@ -3054,8 +3066,61 @@ object IshaToolRegistry {
                 }
 
                 "open_app" -> {
-                    val appName = args.get("app_name")?.asString ?: ""
-                    val clean = appName.lowercase().trim()
+                    val rawAppName = args.get("app_name")?.asString ?: ""
+                    val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
+                    val clean = rawAppName.lowercase().trim()
+
+                    // Check if target device is explicitly passed or mentioned in app name
+                    val targetDevice = if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
+                        targetDeviceArg
+                    } else {
+                        val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+                        otherDevs.firstOrNull { dev ->
+                            clean.contains(dev.deviceAlias.lowercase()) ||
+                            clean.contains(dev.manufacturer.lowercase()) ||
+                            clean.contains(dev.model.lowercase())
+                        }?.deviceAlias ?: ""
+                    }
+
+                    if (targetDevice.isNotBlank()) {
+                        // Remote execution on target phone (e.g. OnePlus, Pixel, Tablet, Lava, Samsung)
+                        val cleanAppName = rawAppName
+                            .replace(targetDevice, "", ignoreCase = true)
+                            .replace(Regex("(?i)\\b(in|on|me|mein|par|pe|phone|device)\\b"), "")
+                            .trim().ifBlank { rawAppName }
+
+                        val params = mutableMapOf<String, Any>(
+                            "app_name" to cleanAppName,
+                            "action" to "open_app"
+                        )
+                        val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
+                        if (searchQ.isNotBlank()) params["query"] = searchQ
+
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Remote execution error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDevice,
+                                action = "open_app",
+                                params = params,
+                                rawPrompt = rawAppName
+                            )
+                        }
+
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par '$cleanAppName' open kar diya hai Boss! 📱")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                        return result
+                    }
+
+                    // Local execution on this device
+                    val appName = rawAppName
                     var intent: Intent? = resolveAppIntent(context, appName)
 
                     val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
@@ -3094,6 +3159,29 @@ object IshaToolRegistry {
 
                 "toggle_flashlight" -> {
                     val enable = args.get("enable")?.asBoolean ?: true
+                    val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
+                    if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDeviceArg,
+                                action = "toggle_flashlight",
+                                params = mapOf("state" to if (enable) "on" else "off"),
+                                rawPrompt = "toggle_flashlight"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par flashlight ${if (enable) "ON" else "OFF"} kar di hai Boss! 🔦")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                        return result
+                    }
                     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
                     val cameraId = cameraManager.cameraIdList.firstOrNull() ?: "0"
                     cameraManager.setTorchMode(cameraId, enable)
@@ -3103,6 +3191,29 @@ object IshaToolRegistry {
 
                 "set_volume" -> {
                     val level = extractPercent(args, "level_percent", "level", "volume", "value", "percent")
+                    val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
+                    if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
+                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
+                        kotlinx.coroutines.runBlocking {
+                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                                context = context,
+                                targetDeviceQuery = targetDeviceArg,
+                                action = "set_volume",
+                                params = mapOf("level" to level),
+                                rawPrompt = "set_volume $level"
+                            )
+                        }
+                        if (executionResult.success) {
+                            result.addProperty("status", "success")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", "${executionResult.targetDeviceName} par volume $level% set kar diya hai Boss! 🔊")
+                        } else {
+                            result.addProperty("status", "error")
+                            result.addProperty("target_device", executionResult.targetDeviceName)
+                            result.addProperty("message", executionResult.message)
+                        }
+                        return result
+                    }
                     val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                     val maxMusic = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                     val targetMusic = (maxMusic * (level / 100.0f)).toInt().coerceIn(0, maxMusic)
@@ -3404,26 +3515,40 @@ object IshaToolRegistry {
 
                     // Infer target device from query or prompt if not explicitly passed
                     val qLower = query.lowercase()
+                    val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+                    val matchedDev = otherDevs.firstOrNull { dev ->
+                        val devAlias = dev.deviceAlias.lowercase()
+                        val devModel = dev.model.lowercase()
+                        val devMfr = dev.manufacturer.lowercase()
+                        qLower.contains(devAlias) || qLower.contains(devModel) || (devMfr.length >= 3 && qLower.contains(devMfr))
+                    }
                     val targetDevice = if (rawTarget.isNotBlank()) rawTarget else when {
-                        qLower.contains("samsung") || qLower.contains("phone b") || qLower.contains("phone 2") -> "Phone B"
-                        qLower.contains("lava") || qLower.contains("phone a") || qLower.contains("phone 1") -> "Phone A"
+                        matchedDev != null -> matchedDev.deviceAlias
                         qLower.contains("dusre phone") || qLower.contains("dusra phone") || qLower.contains("other phone") -> "other"
                         else -> ""
                     }
 
                     if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
-                        val cleanQuery = query
-                            .replace("samsung", "", ignoreCase = true)
-                            .replace("lava", "", ignoreCase = true)
-                            .replace("phone b", "", ignoreCase = true)
-                            .replace("phone a", "", ignoreCase = true)
-                            .replace("dusre phone me", "", ignoreCase = true)
+                        var cleanQuery = query
+                        matchedDev?.let { dev ->
+                            cleanQuery = cleanQuery
+                                .replace(dev.deviceAlias, "", ignoreCase = true)
+                                .replace(dev.model, "", ignoreCase = true)
+                                .replace(dev.manufacturer, "", ignoreCase = true)
+                        }
+                        cleanQuery = cleanQuery
+                            .replace(targetDevice, "", ignoreCase = true)
                             .replace("dusre phone mein", "", ignoreCase = true)
+                            .replace("dusre phone me", "", ignoreCase = true)
                             .replace("dusre phone par", "", ignoreCase = true)
                             .replace("dusre phone pr", "", ignoreCase = true)
                             .replace("dusre phone", "", ignoreCase = true)
+                            .replace("dusra phone", "", ignoreCase = true)
+                            .replace("other phone", "", ignoreCase = true)
                             .replace("phone mein", "", ignoreCase = true)
                             .replace("phone me", "", ignoreCase = true)
+                            .replace("phone par", "", ignoreCase = true)
+                            .replace("phone pr", "", ignoreCase = true)
                             .trim()
 
                         val params = mutableMapOf<String, Any>(

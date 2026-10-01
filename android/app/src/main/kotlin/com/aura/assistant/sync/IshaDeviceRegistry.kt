@@ -146,16 +146,16 @@ object IshaDeviceRegistry {
     }
 
     private fun getDefaultDeviceAlias(): String {
-        val model = Build.MODEL ?: "Phone"
-        val mfr = Build.MANUFACTURER ?: "Android"
-        val lowerMfr = mfr.lowercase()
-        val lowerMdl = model.lowercase()
-        if (lowerMfr.contains("lava") || lowerMdl.contains("lex")) {
-            return "Phone A (Lava)"
-        } else if (lowerMfr.contains("samsung") || lowerMdl.contains("a14") || lowerMdl.contains("sm-")) {
-            return "Phone B (Samsung)"
+        val rawModel = Build.MODEL?.trim() ?: "Android Phone"
+        val rawMfr = Build.MANUFACTURER?.trim() ?: ""
+        val mfr = if (rawMfr.isNotBlank()) rawMfr.replaceFirstChar { it.uppercase() } else ""
+        return if (rawModel.contains(mfr, ignoreCase = true)) {
+            rawModel
+        } else if (mfr.isNotBlank()) {
+            "$mfr $rawModel"
+        } else {
+            rawModel
         }
-        return "$mfr $model".trim()
     }
 
     /**
@@ -293,21 +293,25 @@ object IshaDeviceRegistry {
         }
 
         // 2. Exact alias match
-        sortedOtherDevices.firstOrNull { it.deviceAlias.lowercase() == clean }?.let { return it }
+        sortedOtherDevices.firstOrNull { it.deviceAlias.equals(clean, ignoreCase = true) }?.let { return it }
 
-        // 3. Substring match on alias, model, or manufacturer
-        sortedOtherDevices.firstOrNull {
-            clean.contains(it.deviceAlias.lowercase()) ||
-            clean.contains(it.model.lowercase()) ||
-            clean.contains(it.manufacturer.lowercase()) ||
-            (clean.contains("lava") && (it.deviceAlias.lowercase().contains("lava") || it.manufacturer.lowercase().contains("lava") || it.model.lowercase().contains("lex"))) ||
-            (clean.contains("samsung") && (it.deviceAlias.lowercase().contains("samsung") || it.manufacturer.lowercase().contains("samsung") || it.model.lowercase().contains("a14"))) ||
-            ((clean.contains("phone a") || clean.contains("phone 1")) && (it.deviceAlias.contains("A", ignoreCase = true) || it.manufacturer.contains("lava", ignoreCase = true))) ||
-            ((clean.contains("phone b") || clean.contains("phone 2")) && (it.deviceAlias.contains("B", ignoreCase = true) || it.manufacturer.contains("samsung", ignoreCase = true)))
+        // 3. Dynamic Substring & Token match on alias, model, or manufacturer across ANY Android device
+        val cleanTokens = clean.split(Regex("[\\s,_\\-]+")).filter { it.length >= 2 }
+        sortedOtherDevices.firstOrNull { dev ->
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            val devName = dev.deviceName.lowercase()
+
+            clean.contains(devAlias) || clean.contains(devModel) || clean.contains(devMfr) || clean.contains(devName) ||
+            devAlias.contains(clean) || devModel.contains(clean) || devMfr.contains(clean) || devName.contains(clean) ||
+            cleanTokens.any { token ->
+                devAlias.contains(token) || devModel.contains(token) || devMfr.contains(token) || devName.contains(token)
+            }
         }?.let { return it }
 
-        // 4. Default to first available other device
-        return sortedOtherDevices.firstOrNull()
+        // 4. Default to first available active online device, or first registered device
+        return sortedOtherDevices.firstOrNull { it.isOnline } ?: sortedOtherDevices.firstOrNull()
     }
 
     /**

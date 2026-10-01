@@ -427,16 +427,15 @@ object IshaMemoryManager {
         val clean = text.trim()
         val lowerClean = clean.lowercase()
 
-        // Auto-detect target device mention
-        if (lowerClean.contains("lava")) {
-            setActiveTargetDevice("Lava")
-        } else {
-            val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
-            for (dev in otherDevs) {
-                if (lowerClean.contains(dev.deviceAlias.lowercase()) || lowerClean.contains(dev.deviceName.lowercase())) {
-                    setActiveTargetDevice(dev.deviceAlias)
-                    break
-                }
+        // Auto-detect target device mention across all linked ecosystem devices
+        val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+        for (dev in otherDevs) {
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            if (lowerClean.contains(devAlias) || lowerClean.contains(devModel) || (devMfr.length >= 3 && lowerClean.contains(devMfr))) {
+                setActiveTargetDevice(dev.deviceAlias)
+                break
             }
         }
 

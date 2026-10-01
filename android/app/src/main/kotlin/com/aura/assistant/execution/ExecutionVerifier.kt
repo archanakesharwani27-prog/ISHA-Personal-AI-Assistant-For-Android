@@ -1,5 +1,6 @@
 package com.aura.assistant.execution
 
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
@@ -114,7 +115,8 @@ object ExecutionVerifier {
                 }
 
                 // Action / Dispatch tools (UI, intents, navigation, communication)
-                "open_app", "play_media", "play_youtube", "find_and_tap",
+                "open_app" -> verifyAppOpen(context, executionResult)
+                "play_media", "play_youtube", "find_and_tap",
                 "screen_tap", "screen_scroll", "press_system_key", "send_whatsapp",
                 "send_whatsapp_media", "delete_whatsapp_media", "send_sms", "make_call",
                 "accept_call", "decline_call", "identify_caller", "open_system_settings",
@@ -259,6 +261,39 @@ object ExecutionVerifier {
             verified = isEnabled == enable,
             observedState = if (isEnabled) "WiFi is ON" else "WiFi is OFF",
             method = "WifiManager.isWifiEnabled"
+        )
+    }
+
+    private fun verifyAppOpen(context: Context, executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString ?: "App could not be opened"
+            return VerificationEvidence(verified = false, observedState = msg, method = "open_app_check")
+        }
+
+        val targetDevice = executionResult?.get("target_device")?.asString
+        if (!targetDevice.isNullOrBlank() && !targetDevice.equals("this", true) && !targetDevice.equals("current", true) && !targetDevice.equals("local", true)) {
+            val isSuccess = status == null || status == "success"
+            return VerificationEvidence(
+                verified = isSuccess,
+                observedState = if (isSuccess) "App opened successfully on $targetDevice" else "Failed to open app on $targetDevice",
+                method = "remote_app_open_verified"
+            )
+        }
+
+        val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (km?.isKeyguardLocked == true) {
+            return VerificationEvidence(
+                verified = false,
+                observedState = "Device screen is locked; app launched in background but cannot be displayed until phone is unlocked",
+                method = "keyguard_lock_check"
+            )
+        }
+
+        return VerificationEvidence(
+            verified = true,
+            observedState = "App opened and foregrounded successfully",
+            method = "open_app_verified"
         )
     }
 }

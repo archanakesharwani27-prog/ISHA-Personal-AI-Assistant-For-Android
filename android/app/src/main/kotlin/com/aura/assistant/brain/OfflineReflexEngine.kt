@@ -34,30 +34,51 @@ object OfflineReflexEngine {
                                    clean.contains("kya hua") || clean.contains("kyu")
         if (isNegativeOrComplaint) return null
 
-        // 0. Cross-Device Command Interceptor (e.g. "Phone A par torch jalao", "Phone B par WhatsApp open karo")
-        val isCrossDevice = clean.contains("phone a") || clean.contains("phone b") ||
-                            clean.contains("phone 1") || clean.contains("phone 2") ||
-                            clean.contains("lava") || clean.contains("samsung") ||
-                            clean.contains("dusre phone") || clean.contains("dusra phone") ||
+        // 0. Cross-Device Command Interceptor (e.g. "Pixel par torch jalao", "OnePlus par WhatsApp open karo", "Phone B par volume 80 karo")
+        val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+        val matchedDev = otherDevs.firstOrNull { dev ->
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            clean.contains(devAlias) || clean.contains(devModel) || (devMfr.length >= 3 && clean.contains(devMfr))
+        }
+
+        val isGenericCross = clean.contains("dusre phone") || clean.contains("dusra phone") ||
                             clean.contains("other phone") || clean.contains("second phone") ||
-                            clean.contains("first phone")
+                            clean.contains("phone a") || clean.contains("phone b") ||
+                            clean.contains("phone 1") || clean.contains("phone 2") ||
+                            clean.contains("lava") || clean.contains("samsung")
+
+        val isCrossDevice = matchedDev != null || isGenericCross
         if (isCrossDevice) {
-            val targetQuery = when {
-                clean.contains("phone a") || clean.contains("phone 1") || clean.contains("lava") -> "Phone A"
-                clean.contains("phone b") || clean.contains("phone 2") || clean.contains("samsung") -> "Phone B"
-                else -> "other"
-            }
+            val targetQuery = matchedDev?.deviceAlias
+                ?: com.aura.assistant.sync.IshaDeviceRegistry.resolveTargetDevice(clean)?.deviceAlias
+                ?: when {
+                    clean.contains("phone a") || clean.contains("phone 1") || clean.contains("lava") -> "Phone A"
+                    clean.contains("phone b") || clean.contains("phone 2") || clean.contains("samsung") -> "Phone B"
+                    else -> "other"
+                }
             val actionPrompt = when {
                 clean.contains("par ") -> clean.substringAfterLast("par ").trim()
                 clean.contains("pr ") -> clean.substringAfterLast("pr ").trim()
                 clean.contains("pe ") -> clean.substringAfterLast("pe ").trim()
                 clean.contains("on ") -> clean.substringAfterLast("on ").trim()
-                else -> clean.replace("phone a", "").replace("phone b", "")
-                    .replace("phone 1", "").replace("phone 2", "")
-                    .replace("lava", "").replace("samsung", "")
-                    .replace("dusre phone", "").replace("dusra phone", "")
-                    .replace("wale phone", "").replace("wala phone", "")
-                    .replace("yaani", "").trim()
+                clean.contains("mein ") -> clean.substringAfterLast("mein ").trim()
+                clean.contains("me ") -> clean.substringAfterLast("me ").trim()
+                else -> {
+                    var s = clean
+                    matchedDev?.let { dev ->
+                        s = s.replace(dev.deviceAlias.lowercase(), "")
+                             .replace(dev.model.lowercase(), "")
+                             .replace(dev.manufacturer.lowercase(), "")
+                    }
+                    s.replace("phone a", "").replace("phone b", "")
+                     .replace("phone 1", "").replace("phone 2", "")
+                     .replace("lava", "").replace("samsung", "")
+                     .replace("dusre phone", "").replace("dusra phone", "")
+                     .replace("wale phone", "").replace("wala phone", "")
+                     .replace("yaani", "").trim()
+                }
             }
 
             if (execute) {
