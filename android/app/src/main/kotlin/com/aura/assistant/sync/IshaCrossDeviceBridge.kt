@@ -73,6 +73,7 @@ object IshaCrossDeviceBridge {
         }
     )
     private var isListening = false
+    @Volatile private var isInitialized = false
 
     val ACTIONS_EXEMPT_FROM_UNLOCK: Set<String> = setOf(
         "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
@@ -85,6 +86,8 @@ object IshaCrossDeviceBridge {
      * Initializes the bridge and starts listening for commands sent to THIS device.
      */
     fun init(context: Context) {
+        if (isInitialized) return
+        isInitialized = true
         val app = context.applicationContext
         IshaAuthManager.init(app)
         IshaDeviceRegistry.init(app)
