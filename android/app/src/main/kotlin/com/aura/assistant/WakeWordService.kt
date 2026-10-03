@@ -19,9 +19,11 @@ import kotlin.math.sqrt
 import com.rementia.openwakeword.lib.WakeWordEngine
 import com.rementia.openwakeword.lib.model.WakeWordModel
 import com.rementia.openwakeword.lib.model.DetectionMode
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -83,10 +85,10 @@ class WakeWordService : Service(), SensorEventListener {
 
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
         // A score spike from a single noise/clap frame is NOT a wake word.
-        // Score must stay above MIN_SCORE for CONFIRM_FRAMES consecutive frames
-        // (~240ms @ 80ms/chunk) before we fire. This prevents random voice false triggers.
-        private const val MIN_SCORE      = 0.60f  // Robust acoustic keyword threshold (prevents random noise triggers)
-        private const val CONFIRM_FRAMES = 3       // 3 consecutive frames required for confirmation
+        // Dual trigger: High confidence single peak (>= 0.62f) OR 2 consecutive frames (>= 0.48f).
+        private const val MIN_SCORE              = 0.48f  // Calibrated keyword score threshold
+        private const val HIGH_CONFIDENCE_SCORE  = 0.62f  // Single-frame immediate confirmation threshold
+        private const val CONFIRM_FRAMES         = 2      // 2 consecutive frames (~160ms) required for mid-range score
 
         // AURA Calibrated Double Quick-Shake Config
         private const val SHAKE_THRESHOLD       = 3.25f // Calibrated shake peak (3.25g)
@@ -113,7 +115,9 @@ class WakeWordService : Service(), SensorEventListener {
 
     // openWakeWord ONNX acoustic keyword engine
     private var wakeWordEngine: WakeWordEngine? = null
-    private val serviceScope = CoroutineScope(Dispatchers.Default)
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + CoroutineExceptionHandler { _, t ->
+        Log.e(TAG, "WakeWord serviceScope caught uncaught exception: ${t.message}", t)
+    })
     private var detectionJob: Job? = null
 
     // AURA Quick Shake state
@@ -247,17 +251,32 @@ class WakeWordService : Service(), SensorEventListener {
             ACTION_PAUSE -> { isPaused = true; pauseWakeEngine(); return START_STICKY }
             ACTION_RESUME -> {
                 isPaused = false
-                if (isRunning && wakeEnabled) startWakeEngine()
+                isRunning = true
+                if (wakeEnabled) startWakeEngine()
                 return START_STICKY
             }
             ACTION_CONFIG -> {
                 wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
                 shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
+                isRunning = true
                 updateForegroundNotification()
-                if (!wakeEnabled || isPaused) pauseWakeEngine()
-                else if (isRunning) startWakeEngine()
-                if (!shakeEnabled) stopShakeSensor()
-                else startShakeSensor()
+                if (!wakeEnabled || isPaused) {
+                    pauseWakeEngine()
+                } else {
+                    startWakeEngine()
+                }
+                if (!shakeEnabled) {
+                    stopShakeSensor()
+                } else {
+                    startShakeSensor()
+                }
+                return START_STICKY
+            }
+            ACTION_START -> {
+                wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
+                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
+                updateForegroundNotification()
+                startListening()
                 return START_STICKY
             }
             else -> {
@@ -491,13 +510,13 @@ class WakeWordService : Service(), SensorEventListener {
             } else {
                 "wakeword/hey_mira.onnx"
             }
-            val phraseName = if (hasAura) "Hey Aura" else "Hey Mira"
+            val phraseName = if (hasAura) "Hey Aura" else "Hey ISHA"
             models.add(
                 WakeWordModel(
                     name = phraseName,
                     modelPath = phrasePath,
-                    // Calibrated threshold for acoustic chunk evaluation to prevent noise false triggers
-                    threshold = 0.55f
+                    // Calibrated threshold for acoustic chunk evaluation
+                    threshold = 0.48f
                 )
             )
 
@@ -505,7 +524,8 @@ class WakeWordService : Service(), SensorEventListener {
                 context = applicationContext,
                 models = models,
                 detectionMode = DetectionMode.SINGLE_BEST,
-                detectionCooldownMs = 0L // 0ms cooldown so engine.scores streams continuously without library throttling
+                detectionCooldownMs = 0L,
+                scope = serviceScope
             )
             wakeWordEngine = engine
 
@@ -517,7 +537,7 @@ class WakeWordService : Service(), SensorEventListener {
                         val now   = System.currentTimeMillis()
 
                         // ── Continuous N-Consecutive-Frames Confirmation ──────
-                        // Only count frames that are above calibrated MIN_SCORE.
+                        // Count frames that are above calibrated MIN_SCORE.
                         if (score >= MIN_SCORE) {
                             consecutiveFramesAboveThreshold++
                             Log.d(TAG, "KWS hit frame ${consecutiveFramesAboveThreshold}/$CONFIRM_FRAMES — score=$score model=${scoreItem.model.name}")
@@ -529,12 +549,12 @@ class WakeWordService : Service(), SensorEventListener {
                             consecutiveFramesAboveThreshold = 0
                         }
 
-                        // ── Fire only after CONFIRM_FRAMES consecutive hits ──
-                        if (consecutiveFramesAboveThreshold >= CONFIRM_FRAMES &&
-                            now - lastTriggerTime > COOLDOWN_MS) {
+                        // ── Dual Trigger: High confidence single peak OR sustained 2-frames ──
+                        val isTriggered = (score >= HIGH_CONFIDENCE_SCORE || consecutiveFramesAboveThreshold >= CONFIRM_FRAMES)
+                        if (isTriggered && (now - lastTriggerTime > COOLDOWN_MS)) {
                             consecutiveFramesAboveThreshold = 0  // Reset for next detection
                             lastTriggerTime = now
-                            Log.i(TAG, "Wake word CONFIRMED after $CONFIRM_FRAMES frames — '${scoreItem.model.name}' (score: $score) — triggering")
+                            Log.i(TAG, "Wake word CONFIRMED! '${scoreItem.model.name}' (score=$score) — triggering")
                             handler.post {
                                 pauseWakeEngine()
                                 onTriggerDetected("wake", score, scoreItem.model.name)
@@ -546,12 +566,15 @@ class WakeWordService : Service(), SensorEventListener {
 
             try {
                 engine.start()
+                IshaDiagnostics.updateWake { it.copy(inferenceRunning = true) }
                 Log.i(TAG, "OpenWakeWord engine initialized and started successfully for ${models.map { it.name }}")
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to start OpenWakeWord engine at runtime", e)
             }
         } catch (e: Throwable) {
-            Log.e(TAG, "Failed to initialize OpenWakeWord engine", e)
+            Log.e(TAG, "Failed to initialize OpenWakeWord engine safely", e)
+            MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+            IshaDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
         }
     }
 

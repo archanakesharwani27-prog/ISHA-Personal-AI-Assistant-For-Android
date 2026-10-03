@@ -903,6 +903,10 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         prefs.edit().putBoolean("wake_word_enabled", enabled).apply()
         val app = getApplication<Application>()
         try {
+            app.getSharedPreferences("isha_app_settings", Context.MODE_PRIVATE)
+                .edit().putBoolean("wake_word_enabled", enabled).apply()
+        } catch (_: Exception) {}
+        try {
             val serviceIntent = Intent(app, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_CONFIG
                 putExtra(WakeWordService.EXTRA_WAKE_ENABLED, enabled)
