@@ -106,7 +106,7 @@ object ExecutionVerifier {
                 "get_screen_context", "find_elements_on_screen", "list_installed_apps",
                 "get_weather", "get_unread_notifications", "get_call_logs",
                 "read_recent_sms", "get_calendar_events", "read_notes", "calculate",
-                "web_search", "query_contact", "read_notifications" -> {
+                "web_search", "search_internet", "query_contact", "read_notifications" -> {
                     VerificationEvidence(
                         verified = true,
                         observedState = "Query executed and data retrieved",

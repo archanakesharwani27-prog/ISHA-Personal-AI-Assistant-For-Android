@@ -6267,23 +6267,36 @@ object IshaToolRegistry {
         try {
             val encoded = URLEncoder.encode(query, "UTF-8")
 
-            // 1. Live Web Search via DuckDuckGo HTML Search (Extracts real-time web result snippets like Mandi rates, prices, scores)
+            // 1. Primary: DuckDuckGo Lite Search (Lightweight, reliable mobile search with real-time snippets)
             try {
-                val ddgHtmlUrl = "https://html.duckduckgo.com/html/?q=$encoded"
-                val htmlReq = Request.Builder()
-                    .url(ddgHtmlUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                val liteUrl = "https://lite.duckduckgo.com/lite/"
+                val formBody = okhttp3.FormBody.Builder()
+                    .add("q", query)
+                    .build()
+                val liteReq = Request.Builder()
+                    .url(liteUrl)
+                    .post(formBody)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
                     .build()
-                val htmlResp = httpClient.newCall(htmlReq).execute()
-                if (htmlResp.isSuccessful) {
-                    val html = htmlResp.body?.string() ?: ""
-                    val snippetRegex = Regex("""<a[^>]*class=["']result__snippet["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                val liteResp = httpClient.newCall(liteReq).execute()
+                if (liteResp.isSuccessful) {
+                    val html = liteResp.body?.string() ?: ""
+                    val snippetRegex = Regex("""<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>""", RegexOption.DOT_MATCHES_ALL)
                     val matches = snippetRegex.findAll(html)
                     for (m in matches.take(5)) {
                         val rawSnippet = m.groupValues[1]
-                        val cleanSnippet = android.text.Html.fromHtml(rawSnippet, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+                        val cleanSnippet = rawSnippet
+                            .replace(Regex("<[^>]*>"), "")
+                            .replace("&quot;", "\"")
+                            .replace("&#x27;", "'")
+                            .replace("&#039;", "'")
+                            .replace("&amp;", "&")
+                            .replace("&lt;", "<")
+                            .replace("&gt;", ">")
+                            .replace("&nbsp;", " ")
+                            .trim()
                         if (cleanSnippet.length >= 25 && !cleanSnippet.contains("DuckDuckGo")) {
                             snippets.add(JsonObject().apply {
                                 addProperty("title", "Web Result")
@@ -6294,8 +6307,51 @@ object IshaToolRegistry {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Live HTML web search error: ${e.message}")
+                Log.w(TAG, "DDG Lite web search error: ${e.message}")
             }
+
+            // 2. Fallback: DuckDuckGo HTML Search
+            if (snippets.size() == 0) {
+                try {
+                    val ddgHtmlUrl = "https://html.duckduckgo.com/html/?q=$encoded"
+                    val htmlReq = Request.Builder()
+                        .url(ddgHtmlUrl)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                        .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+                        .build()
+                    val htmlResp = httpClient.newCall(htmlReq).execute()
+                    if (htmlResp.isSuccessful) {
+                        val html = htmlResp.body?.string() ?: ""
+                        val snippetRegex = Regex("""<a[^>]*class=["']result__snippet["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                        val matches = snippetRegex.findAll(html)
+                        for (m in matches.take(5)) {
+                            val rawSnippet = m.groupValues[1]
+                            val cleanSnippet = rawSnippet
+                                .replace(Regex("<[^>]*>"), "")
+                                .replace("&quot;", "\"")
+                                .replace("&#x27;", "'")
+                                .replace("&#039;", "'")
+                                .replace("&amp;", "&")
+                                .replace("&lt;", "<")
+                                .replace("&gt;", ">")
+                                .replace("&nbsp;", " ")
+                                .trim()
+                            if (cleanSnippet.length >= 25 && !cleanSnippet.contains("DuckDuckGo")) {
+                                snippets.add(JsonObject().apply {
+                                    addProperty("title", "Web Result")
+                                    addProperty("summary", cleanSnippet)
+                                    addProperty("source", "Web Search")
+                                })
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Live HTML web search error: ${e.message}")
+                }
+            }
+
+            Log.i(TAG, "Web search completed for \"$query\": extracted ${snippets.size()} snippets")
 
             // 2. DuckDuckGo Instant Answer API (Entity facts, definitions)
             if (snippets.size() < 2) {
