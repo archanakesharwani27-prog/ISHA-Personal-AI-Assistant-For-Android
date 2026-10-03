@@ -424,8 +424,77 @@ open class IshaAccessibilityService : AccessibilityService() {
             A11yStep(clickHint = "type a message", delayMs = 1200),
             A11yStep(clickHint = "message", delayMs = 1000),
             A11yStep(typeText  = message, delayMs = 900),
-            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent"),
+            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent")
         ))
+    }
+
+    fun isWhatsappActive(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        return pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ || pkg.contains("whatsapp")
+    }
+
+    fun isWhatsappChatOpen(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
+
+        val inputHints = listOf(
+            "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry",
+            "type a message", "message", "संदेश लिखें", "संदेश"
+        )
+        return findNode(root, inputHints) != null || findFocusedEditText(root) != null
+    }
+
+    fun getWhatsappActiveContactTitle(): String? {
+        val root = rootInActiveWindow ?: return null
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return null
+
+        val titleHints = listOf(
+            "com.whatsapp:id/conversation_contact_name",
+            "com.whatsapp:id/conversation_title",
+            "com.whatsapp.w4b:id/conversation_contact_name",
+            "com.whatsapp:id/toolbar"
+        )
+        val node = findNode(root, titleHints)
+        if (node != null && !node.text.isNullOrBlank()) {
+            return node.text.toString().trim()
+        }
+        return null
+    }
+
+    /**
+     * Instantly sends a message if WhatsApp is ALREADY open in the active chat.
+     * Bypasses app launch, deep-links, and contact search entirely!
+     * Executes in ~200-300ms.
+     */
+    fun armWhatsappInstantInChatSend(message: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
+
+        val inputHints = listOf(
+            "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry",
+            "type a message", "message", "संदेश लिखें", "संदेश"
+        )
+        val inputNode = findNode(root, inputHints) ?: findFocusedEditText(root)
+        if (inputNode != null) {
+            inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            typeIntoNode(inputNode, message)
+
+            stepHandler.postDelayed({
+                val updatedRoot = rootInActiveWindow ?: return@postDelayed
+                val sendHints = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "send message")
+                if (!clickFirstMatch(updatedRoot, sendHints)) {
+                    val dm = resources.displayMetrics
+                    performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
+                }
+                Log.i(TAG, "armWhatsappInstantInChatSend: fast-sent message in ~200ms")
+            }, 200L)
+            return true
+        }
+        return false
     }
 
     /**
@@ -853,7 +922,8 @@ open class IshaAccessibilityService : AccessibilityService() {
                 if (pendingYouTubeAutoPlay) {
                     val root = rootInActiveWindow
                     if (root != null) {
-                        if (clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal)) {
+                        // From attempt 2 (2800ms) onwards, enable top-result fallback click so fuzzy/mispronounced songs auto-play without 5.5s delay
+                        if (clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal || index >= 2)) {
                             pendingYouTubeAutoPlay = false
                             Log.i(TAG, "YouTube video auto-play clicked at ${delay}ms")
                         }

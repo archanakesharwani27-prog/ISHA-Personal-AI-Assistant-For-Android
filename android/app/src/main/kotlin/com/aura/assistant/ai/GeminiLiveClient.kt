@@ -545,6 +545,16 @@ class GeminiLiveClient(private val context: Context) {
                 } catch (e: Throwable) {
                     Log.w(TAG, "AutomaticGainControl attach skipped: ${e.message}")
                 }
+                try {
+                    if (NoiseSuppressor.isAvailable()) {
+                        NoiseSuppressor.create(record.audioSessionId)?.apply {
+                            enabled = true
+                            Log.i(TAG, "Hardware NoiseSuppressor enabled on session ${record.audioSessionId}")
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "NoiseSuppressor attach skipped: ${e.message}")
+                }
 
                 record.startRecording()
                 Log.i(TAG, "✅ Microphone recording started. recordingState=${record.recordingState}")
@@ -617,14 +627,15 @@ class GeminiLiveClient(private val context: Context) {
                             continue
                         }
 
-                        // ── 2. Adaptive Far-Field Audio Gain (30-100 cm natural distance) ──
-                        // Dynamically boost quiet/distant speech by up to 3.5x so user never needs
-                        // to put lips to the microphone hole, while gently tapering loud speech to prevent clipping.
+                        // ── 2. Adaptive Far-Field Audio Gain with Smart Ambient Floor Gate ──
+                        // Does NOT amplify low ambient noise floors (fans, horns, background radio),
+                        // while intelligently boosting conversational speech at natural desk/arm distance.
                         val adaptiveGain = when {
-                            rms < 0.020 -> 3.5f  // Distant or whisper level (desk / arm distance)
-                            rms < 0.050 -> 2.6f  // Normal conversational speech
+                            rms < 0.005 -> 1.0f  // Background noise floor / silence - do not amplify ambient noise
+                            rms < 0.020 -> if (vadResult.isSpeech) 3.2f else 1.2f  // Soft human speech
+                            rms < 0.050 -> 2.5f  // Normal conversational speech
                             rms < 0.100 -> 1.8f  // Close / elevated speech
-                            else -> 1.3f         // Very loud / near mic
+                            else -> 1.2f         // Very loud / near mic
                         }
                         for (i in 0 until readShorts) {
                             val sample = (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)

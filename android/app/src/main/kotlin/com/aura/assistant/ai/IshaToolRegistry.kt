@@ -1598,6 +1598,7 @@ object IshaToolRegistry {
                 }
 
                 "send_whatsapp" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val contact = args.get("contact_name")?.asString
                         ?: args.get("contact")?.asString
                         ?: args.get("to")?.asString
@@ -1628,8 +1629,30 @@ object IshaToolRegistry {
                     }
 
                     val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-                    val resolvedPhone = resolveContactNumber(context, if (cleanContact.isNotBlank()) cleanContact else contact)
                     val a11y = IshaAccessibilityService.instance
+
+                    // ── In-Chat Instant Fast-Send Check ──
+                    // If WhatsApp is already open in a chat conversation (e.g. follow-up turn "ye bhi bhej do",
+                    // replying right after chat_on_whatsapp, or user is already chatting):
+                    if (a11y != null && a11y.isWhatsappChatOpen()) {
+                        val activeTitle = a11y.getWhatsappActiveContactTitle()?.lowercase() ?: ""
+                        val cLower = cleanContact.lowercase()
+                        val isSameChat = cleanContact.isBlank() ||
+                                cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
+                                (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle)))
+
+                        if (isSameChat) {
+                            val sent = a11y.armWhatsappInstantInChatSend(msg)
+                            if (sent) {
+                                result.addProperty("status", "success")
+                                result.addProperty("contact", if (activeTitle.isNotBlank()) activeTitle else contact)
+                                result.addProperty("message", "WhatsApp open chat me turant message bhej diya: \"$msg\"")
+                                return result
+                            }
+                        }
+                    }
+
+                    val resolvedPhone = resolveContactNumber(context, if (cleanContact.isNotBlank()) cleanContact else contact)
                     val waPkg = try {
                         context.packageManager.getPackageInfo("com.whatsapp", 0)
                         "com.whatsapp"
@@ -1677,6 +1700,7 @@ object IshaToolRegistry {
                 }
 
                 "type_message", "type_text" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val text = args.get("text")?.asString
                         ?: args.get("message")?.asString
                         ?: ""
@@ -1698,22 +1722,32 @@ object IshaToolRegistry {
                         }
 
                         val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-                        val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
 
-                        if (!resolvedPhone.isNullOrBlank()) {
-                            val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
-                            val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
-                            val uri = Uri.parse("https://wa.me/$waNumber")
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage(waPkg)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            context.startActivity(intent)
-                        } else {
-                            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                            if (intent != null) {
-                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        // If already in active WhatsApp chat with same person or generic follow-up, avoid reloading
+                        val isChatOpen = a11y?.isWhatsappChatOpen() == true
+                        val activeTitle = a11y?.getWhatsappActiveContactTitle()?.lowercase() ?: ""
+                        val cLower = cleanContact.lowercase()
+                        val isSameChat = isChatOpen && (cleanContact.isBlank() ||
+                                cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
+                                (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle))))
+
+                        if (!isSameChat) {
+                            val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+                            if (!resolvedPhone.isNullOrBlank()) {
+                                val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+                                val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                                val uri = Uri.parse("https://wa.me/$waNumber")
+                                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                    setPackage(waPkg)
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
                                 context.startActivity(intent)
+                            } else {
+                                val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                                if (intent != null) {
+                                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    context.startActivity(intent)
+                                }
                             }
                         }
 
@@ -1744,6 +1778,7 @@ object IshaToolRegistry {
                 }
 
                 "chat_on_whatsapp" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val contact = args.get("contact_name")?.asString
                         ?: args.get("contact")?.asString
                         ?: ""
@@ -1797,6 +1832,7 @@ object IshaToolRegistry {
                 }
 
                 "send_whatsapp_media" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val contact = args.get("contact_name")?.asString
                         ?: args.get("contact")?.asString
                         ?: args.get("to")?.asString
@@ -3374,6 +3410,7 @@ object IshaToolRegistry {
                 }
 
                 "screen_tap" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val targetText = args.get("target_text")?.asString ?: args.get("target")?.asString ?: ""
                     val x = args.get("x")?.asFloat
                     val y = args.get("y")?.asFloat
@@ -5887,14 +5924,23 @@ object IshaToolRegistry {
                     "isha:auto_wake_unlock"
                 )
                 try {
-                    wl?.acquire(5000L)
+                    wl?.acquire(10000L)
                 } catch (_: Exception) {}
 
                 if (isLocked) {
-                    IshaAccessibilityService.instance?.performUnlockSwipe()
+                    val a11y = IshaAccessibilityService.instance
+                    a11y?.performUnlockSwipe()
                     try {
-                        Thread.sleep(350L)
+                        Thread.sleep(400L)
                     } catch (_: Exception) {}
+
+                    val pin = IshaMemoryManager.getDevicePin("local", context)
+                    val pattern = IshaMemoryManager.getDevicePattern("local", context)
+                    if (!pin.isNullOrBlank()) {
+                        a11y?.enterPin(pin)
+                    } else if (!pattern.isNullOrBlank()) {
+                        a11y?.unlockWithPattern(pattern)
+                    }
                 }
             }
         } catch (e: Exception) {
