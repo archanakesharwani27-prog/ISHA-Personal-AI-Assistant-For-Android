@@ -3049,6 +3049,36 @@ object IshaToolRegistry {
                         }
                         result.addProperty("status", "success")
                         result.addProperty("message", "Website \"$fixedUrl\" browser me open kar di hai Boss! 🌐")
+                    } else if (action == "search" && queryOrUrl.isNotBlank()) {
+                        val searchUri = Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(queryOrUrl, "UTF-8")}")
+                        val intent = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                            setPackage("com.android.chrome")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            val alt = Intent(Intent.ACTION_VIEW, searchUri).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(alt)
+                        }
+
+                        // Fetch real-time web search snippets so Gemini can answer Boss's question!
+                        val searchData = performDirectWebSearch(queryOrUrl)
+                        val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
+                        val summaryList = mutableListOf<String>()
+                        for (i in 0 until searchResults.size()) {
+                            val sObj = searchResults.get(i).asJsonObject
+                            val sum = sObj.get("summary")?.asString ?: ""
+                            if (sum.isNotBlank()) summaryList.add(sum)
+                        }
+                        val liveInfo = if (summaryList.isNotEmpty()) {
+                            "\n\nLive Search Findings:\n• " + summaryList.take(3).joinToString("\n• ")
+                        } else ""
+
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Chrome me \"$queryOrUrl\" search kar diya hai Boss!$liveInfo")
                     } else {
                         val launchIntent = context.packageManager.getLaunchIntentForPackage("com.android.chrome")
                         if (launchIntent != null) {
@@ -4005,32 +4035,34 @@ object IshaToolRegistry {
                 "web_search", "search_internet" -> {
                     val query = args.get("query")?.asString ?: ""
                     val openBrowser = args.get("open_browser")?.asBoolean ?: false
+
+                    val searchData = performDirectWebSearch(query)
+                    val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
+                    result.addProperty("status", "success")
+                    result.addProperty("query", query)
+                    result.add("search_results", searchResults)
+
+                    val summaryList = mutableListOf<String>()
+                    for (i in 0 until searchResults.size()) {
+                        val sObj = searchResults.get(i).asJsonObject
+                        val sum = sObj.get("summary")?.asString ?: ""
+                        if (sum.isNotBlank()) summaryList.add(sum)
+                    }
+
                     if (openBrowser) {
                         val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(query, "UTF-8")}")).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
-                        context.startActivity(browserIntent)
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "\"$query\" browser me open kar diya hai Boss! 🌐")
-                    } else {
-                        val searchData = performDirectWebSearch(query)
-                        result.addProperty("status", searchData.get("status")?.asString ?: "success")
-                        result.addProperty("query", query)
-                        val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
-                        result.add("search_results", searchResults)
-
-                        val topSnippet = if (searchResults.size() > 0) {
-                            val first = searchResults.get(0).asJsonObject
-                            first.get("summary")?.asString ?: first.get("title")?.asString ?: ""
-                        } else ""
-
-                        val searchMsg = if (topSnippet.isNotBlank()) {
-                            "Search result: $topSnippet"
-                        } else {
-                            "Internet search results mil gaye hain Boss."
-                        }
-                        result.addProperty("message", searchMsg)
+                        try { context.startActivity(browserIntent) } catch (_: Exception) {}
                     }
+
+                    val searchMsg = if (summaryList.isNotEmpty()) {
+                        "Search results for '$query':\n• " + summaryList.take(4).joinToString("\n• ") +
+                        (if (openBrowser) "\n\n(Google search results Chrome browser me bhi open kar diye hain Boss)" else "")
+                    } else {
+                        "Internet search complete for '$query', lekin specific results nahi mile."
+                    }
+                    result.addProperty("message", searchMsg)
                 }
 
                 // 36b. Live News Feed
@@ -5299,19 +5331,6 @@ object IshaToolRegistry {
                 }
 
 
-                "search_internet", "web_search" -> {
-                    val query = args.get("query")?.asString ?: ""
-                    if (query.isBlank()) {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "Search query missing hai.")
-                    } else {
-                        val searchSnippet = performFastWebSearch(query)
-                        result.addProperty("status", "success")
-                        result.addProperty("query", query)
-                        result.addProperty("results", searchSnippet)
-                        result.addProperty("message", "Search results for '$query': $searchSnippet")
-                    }
-                }
 
                 // 85. Dismiss Screen Popups / Interrupting Ads (Visual Reflection Agent)
                 "dismiss_screen_popups" -> {
@@ -6240,76 +6259,118 @@ object IshaToolRegistry {
     }
 
     /**
-     * Searches web in real-time using DuckDuckGo Instant Answers + Wikipedia for live facts.
+     * Searches web in real-time using live web search snippets + DuckDuckGo Instant Answers + Wikipedia.
      */
     fun performDirectWebSearch(query: String): JsonObject {
         val result = JsonObject()
         val snippets = JsonArray()
         try {
-            // 1. DuckDuckGo Instant Answer API
-            val ddgUrl = "https://api.duckduckgo.com/?q=${URLEncoder.encode(query, "UTF-8")}&format=json&no_html=1&skip_disambig=1"
-            val ddgReq = Request.Builder().url(ddgUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
-            val ddgResp = httpClient.newCall(ddgReq).execute()
-            if (ddgResp.isSuccessful) {
-                val ddgJsonStr = ddgResp.body?.string() ?: ""
-                if (ddgJsonStr.isNotBlank()) {
-                    val parsed = com.google.gson.JsonParser.parseString(ddgJsonStr).asJsonObject
-                    val abstractText = parsed.get("AbstractText")?.asString ?: ""
-                    val heading = parsed.get("Heading")?.asString ?: ""
-                    val entity = parsed.get("Entity")?.asString ?: ""
-                    if (abstractText.isNotBlank()) {
-                        val snip = JsonObject().apply {
-                            addProperty("title", heading.ifBlank { query })
-                            addProperty("summary", abstractText)
-                            if (entity.isNotBlank()) addProperty("entity_type", entity)
+            val encoded = URLEncoder.encode(query, "UTF-8")
+
+            // 1. Live Web Search via DuckDuckGo HTML Search (Extracts real-time web result snippets like Mandi rates, prices, scores)
+            try {
+                val ddgHtmlUrl = "https://html.duckduckgo.com/html/?q=$encoded"
+                val htmlReq = Request.Builder()
+                    .url(ddgHtmlUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+                    .build()
+                val htmlResp = httpClient.newCall(htmlReq).execute()
+                if (htmlResp.isSuccessful) {
+                    val html = htmlResp.body?.string() ?: ""
+                    val snippetRegex = Regex("""<a[^>]*class=["']result__snippet["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                    val matches = snippetRegex.findAll(html)
+                    for (m in matches.take(5)) {
+                        val rawSnippet = m.groupValues[1]
+                        val cleanSnippet = android.text.Html.fromHtml(rawSnippet, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+                        if (cleanSnippet.length >= 25 && !cleanSnippet.contains("DuckDuckGo")) {
+                            snippets.add(JsonObject().apply {
+                                addProperty("title", "Web Result")
+                                addProperty("summary", cleanSnippet)
+                                addProperty("source", "Web Search")
+                            })
                         }
-                        snippets.add(snip)
                     }
-                    val related = parsed.getAsJsonArray("RelatedTopics")
-                    if (related != null && related.size() > 0) {
-                        for (r in 0 until minOf(3, related.size())) {
-                            val rObj = related.get(r)
-                            if (rObj.isJsonObject && rObj.asJsonObject.has("Text")) {
-                                val relText = rObj.asJsonObject.get("Text").asString
-                                if (relText.isNotBlank()) {
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Live HTML web search error: ${e.message}")
+            }
+
+            // 2. DuckDuckGo Instant Answer API (Entity facts, definitions)
+            if (snippets.size() < 2) {
+                try {
+                    val ddgUrl = "https://api.duckduckgo.com/?q=$encoded&format=json&no_html=1&skip_disambig=1"
+                    val ddgReq = Request.Builder().url(ddgUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
+                    val ddgResp = httpClient.newCall(ddgReq).execute()
+                    if (ddgResp.isSuccessful) {
+                        val ddgJsonStr = ddgResp.body?.string() ?: ""
+                        if (ddgJsonStr.isNotBlank()) {
+                            val parsed = com.google.gson.JsonParser.parseString(ddgJsonStr).asJsonObject
+                            val abstractText = parsed.get("AbstractText")?.asString ?: ""
+                            val heading = parsed.get("Heading")?.asString ?: ""
+                            val entity = parsed.get("Entity")?.asString ?: ""
+                            if (abstractText.isNotBlank()) {
+                                val snip = JsonObject().apply {
+                                    addProperty("title", heading.ifBlank { query })
+                                    addProperty("summary", abstractText)
+                                    if (entity.isNotBlank()) addProperty("entity_type", entity)
+                                }
+                                snippets.add(snip)
+                            }
+                            val related = parsed.getAsJsonArray("RelatedTopics")
+                            if (related != null && related.size() > 0) {
+                                for (r in 0 until minOf(3, related.size())) {
+                                    val rObj = related.get(r)
+                                    if (rObj.isJsonObject && rObj.asJsonObject.has("Text")) {
+                                        val relText = rObj.asJsonObject.get("Text").asString
+                                        if (relText.isNotBlank()) {
+                                            snippets.add(JsonObject().apply {
+                                                addProperty("title", "Related Info")
+                                                addProperty("summary", relText)
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "DDG API search error: ${e.message}")
+                }
+            }
+
+            // 3. Wikipedia Search API as rich factual complement
+            if (snippets.size() < 2) {
+                try {
+                    val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encoded&utf8=&format=json"
+                    val wikiReq = Request.Builder().url(wikiUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
+                    val wikiResp = httpClient.newCall(wikiReq).execute()
+                    if (wikiResp.isSuccessful) {
+                        val wikiJson = wikiResp.body?.string() ?: ""
+                        val parsedWiki = com.google.gson.JsonParser.parseString(wikiJson).asJsonObject
+                        val searchArr = parsedWiki.getAsJsonObject("query")?.getAsJsonArray("search")
+                        if (searchArr != null) {
+                            for (s in 0 until minOf(2, searchArr.size())) {
+                                val item = searchArr.get(s).asJsonObject
+                                val wTitle = item.get("title")?.asString ?: ""
+                                val wSnippet = item.get("snippet")?.asString
+                                    ?.replace(Regex("<[^>]*>"), "")
+                                    ?.replace("&quot;", "\"")
+                                    ?.replace("&#039;", "'")
+                                    ?.replace("&amp;", "&") ?: ""
+                                if (wSnippet.isNotBlank()) {
                                     snippets.add(JsonObject().apply {
-                                        addProperty("title", "Related Info")
-                                        addProperty("summary", relText)
+                                        addProperty("title", wTitle)
+                                        addProperty("summary", wSnippet)
+                                        addProperty("source", "Wikipedia")
                                     })
                                 }
                             }
                         }
                     }
-                }
-            }
-
-            // 2. Wikipedia Search API as rich factual complement
-            if (snippets.size() < 2) {
-                val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${URLEncoder.encode(query, "UTF-8")}&utf8=&format=json"
-                val wikiReq = Request.Builder().url(wikiUrl).header("User-Agent", "AURA-Android-Assistant/5.0").build()
-                val wikiResp = httpClient.newCall(wikiReq).execute()
-                if (wikiResp.isSuccessful) {
-                    val wikiJson = wikiResp.body?.string() ?: ""
-                    val parsedWiki = com.google.gson.JsonParser.parseString(wikiJson).asJsonObject
-                    val searchArr = parsedWiki.getAsJsonObject("query")?.getAsJsonArray("search")
-                    if (searchArr != null) {
-                        for (s in 0 until minOf(2, searchArr.size())) {
-                            val item = searchArr.get(s).asJsonObject
-                            val wTitle = item.get("title")?.asString ?: ""
-                            val wSnippet = item.get("snippet")?.asString
-                                ?.replace(Regex("<[^>]*>"), "")
-                                ?.replace("&quot;", "\"")
-                                ?.replace("&#039;", "'")
-                                ?.replace("&amp;", "&") ?: ""
-                            if (wSnippet.isNotBlank()) {
-                                snippets.add(JsonObject().apply {
-                                    addProperty("title", wTitle)
-                                    addProperty("summary", wSnippet)
-                                    addProperty("source", "Wikipedia")
-                                })
-                            }
-                        }
-                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Wiki search error: ${e.message}")
                 }
             }
 
