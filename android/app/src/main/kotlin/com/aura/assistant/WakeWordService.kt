@@ -85,9 +85,9 @@ class WakeWordService : Service(), SensorEventListener {
 
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
         // A score spike from a single noise/clap frame is NOT a wake word.
-        // Dual trigger: High confidence single peak (>= 0.62f) OR 2 consecutive frames (>= 0.48f).
-        private const val MIN_SCORE              = 0.48f  // Calibrated keyword score threshold
-        private const val HIGH_CONFIDENCE_SCORE  = 0.62f  // Single-frame immediate confirmation threshold
+        // Dual trigger: High confidence single peak (>= 0.42f) OR 2 consecutive frames (>= 0.28f).
+        private const val MIN_SCORE              = 0.28f  // Mobile calibrated keyword score threshold
+        private const val HIGH_CONFIDENCE_SCORE  = 0.42f  // Single-frame immediate confirmation threshold
         private const val CONFIRM_FRAMES         = 2      // 2 consecutive frames (~160ms) required for mid-range score
 
         // AURA Calibrated Double Quick-Shake Config
@@ -135,12 +135,12 @@ class WakeWordService : Service(), SensorEventListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
-                    Log.i(TAG, "Screen turned OFF — pausing mic (privacy + battery)")
-                    pauseWakeEngine()
+                    Log.i(TAG, "Screen turned OFF — wake word continues listening in background")
+                    // Do NOT pause wake engine here; hands-free wake word must listen while phone is locked/resting!
                 }
                 Intent.ACTION_SCREEN_ON -> {
-                    Log.i(TAG, "Screen turned ON — resuming wake word mic if enabled")
-                    if (isRunning && wakeEnabled && !isPaused) {
+                    Log.i(TAG, "Screen turned ON")
+                    if (isRunning && wakeEnabled && !isPaused && wakeWordEngine == null) {
                         startWakeEngine()
                     }
                 }
@@ -515,8 +515,8 @@ class WakeWordService : Service(), SensorEventListener {
                 WakeWordModel(
                     name = phraseName,
                     modelPath = phrasePath,
-                    // Calibrated threshold for acoustic chunk evaluation
-                    threshold = 0.48f
+                    // Mobile calibrated threshold for acoustic chunk evaluation
+                    threshold = 0.28f
                 )
             )
 
@@ -528,6 +528,7 @@ class WakeWordService : Service(), SensorEventListener {
                 scope = serviceScope
             )
             wakeWordEngine = engine
+            IshaDiagnostics.updateWake { it.copy(modelLoaded = true) }
 
             detectionJob?.cancel()
             detectionJob = serviceScope.launch {
@@ -535,6 +536,10 @@ class WakeWordService : Service(), SensorEventListener {
                     .onEach { scoreItem ->
                         val score = scoreItem.score
                         val now   = System.currentTimeMillis()
+
+                        if (score >= 0.15f) {
+                            Log.d(TAG, "KWS score=$score for ${scoreItem.model.name} (min=$MIN_SCORE, peak=$HIGH_CONFIDENCE_SCORE)")
+                        }
 
                         // ── Continuous N-Consecutive-Frames Confirmation ──────
                         // Count frames that are above calibrated MIN_SCORE.
@@ -566,7 +571,7 @@ class WakeWordService : Service(), SensorEventListener {
 
             try {
                 engine.start()
-                IshaDiagnostics.updateWake { it.copy(inferenceRunning = true) }
+                IshaDiagnostics.updateWake { it.copy(inferenceRunning = true, modelLoaded = true) }
                 Log.i(TAG, "OpenWakeWord engine initialized and started successfully for ${models.map { it.name }}")
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to start OpenWakeWord engine at runtime", e)
@@ -608,10 +613,16 @@ class WakeWordService : Service(), SensorEventListener {
             IshaDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
             detectionJob?.cancel()
             detectionJob = null
-            wakeWordEngine?.stop()
-            wakeWordEngine?.release()
+            val engine = wakeWordEngine
             wakeWordEngine = null
-            Log.i(TAG, "OpenWakeWord engine stopped and released (mic closed, zero green dot)")
+            if (engine != null) {
+                engine.stop()
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(120L)
+                    runCatching { engine.release() }
+                }
+            }
+            Log.i(TAG, "OpenWakeWord engine stopped cleanly (mic closed)")
         } catch (e: Throwable) {
             Log.e(TAG, "Error pausing OpenWakeWord engine", e)
         }
