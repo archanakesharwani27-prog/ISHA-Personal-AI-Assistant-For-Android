@@ -667,7 +667,7 @@ object IshaToolRegistry {
         // 37. Open Camera
         toolsArray.add(createFunction(
             name = "open_camera",
-            desc = "Open the phone Camera app to take a photo, record video, or take a selfie ('photo', 'video', 'selfie'). ALWAYS call when user says 'camera kholo', 'photo kheecho', 'selfie lo'.",
+            desc = "Open the phone Camera app to take a photo, click picture, record video, or take a selfie ('photo', 'video', 'selfie'). ALWAYS call when user says 'take photo', 'take a photo', 'photo lo', 'camera kholo', 'photo kheecho', 'click photo', 'capture photo', 'selfie lo', 'record video'.",
             params = mapOf("mode" to "string"),
             required = emptyList(),
             paramDescriptions = mapOf(
@@ -1441,6 +1441,12 @@ object IshaToolRegistry {
      */
     fun resolveAppIntent(context: Context, appName: String): Intent? {
         val clean = appName.lowercase().trim()
+        // Universal Camera Intent (Works across Samsung, Lava, Xiaomi, Pixel, Motorola, OnePlus)
+        if (clean == "camera" || clean == "cam" || clean.contains("camera")) {
+            return Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
         val pm = context.packageManager
         val knownPackages = mapOf(
             "chrome" to "com.android.chrome",
@@ -4151,20 +4157,42 @@ object IshaToolRegistry {
                     }
                 }
 
-                // 37. Open Camera
-                "open_camera" -> {
+                // 37. Open Camera / Take Photo
+                "open_camera", "take_photo" -> {
                     val mode = args.get("mode")?.asString?.lowercase() ?: "photo"
                     val action = if (mode == "video") MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
                     val intent = Intent(action).apply {
                         if (mode == "selfie") {
                             putExtra("android.intent.extras.CAMERA_FACING", 1)
                             putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+                            putExtra("com.google.assistant.extra.USE_FRONT_CAMERA", true)
                         }
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                     }
-                    context.startActivity(intent)
-                    result.addProperty("status", "success")
-                    result.addProperty("message", "Camera open kar diya hai Boss! 📷")
+                    try {
+                        context.startActivity(intent)
+                        result.addProperty("status", "success")
+                        result.addProperty("message", if (mode == "selfie") "Selfie camera open kar diya hai Boss! 🤳" else "Camera open kar diya hai Boss! 📷")
+                    } catch (e: Exception) {
+                        try {
+                            val capIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(capIntent)
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Camera open kar diya hai Boss! 📷")
+                        } catch (e2: Exception) {
+                            val camIntent = resolveAppIntent(context, "camera")
+                            if (camIntent != null) {
+                                context.startActivity(camIntent)
+                                result.addProperty("status", "success")
+                                result.addProperty("message", "Camera app open kar diya hai Boss! 📷")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("message", "Camera open nahi ho saka: ${e.message}")
+                            }
+                        }
+                    }
                 }
 
                 // 38. Screen Brightness

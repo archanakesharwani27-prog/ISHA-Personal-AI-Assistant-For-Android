@@ -353,6 +353,30 @@ object OfflineReflexEngine {
             }
         }
 
+        // 10b. Take Photo / Open Camera / Selfie / Video Recording
+        val isCameraPhotoCmd = clean.contains("take photo") || clean.contains("take a photo") ||
+                clean.contains("photo le") || clean.contains("photo lo") || clean.contains("photo kheencho") ||
+                clean.contains("photo kheecho") || clean.contains("click photo") || clean.contains("capture photo") ||
+                clean.contains("take picture") || clean.contains("take a picture") || clean.contains("picture lo") ||
+                clean.contains("selfie") || clean.contains("video record") || clean.contains("record video") ||
+                clean == "camera" || clean == "camera open" || clean == "open camera" || clean == "camera kholo"
+        if (isCameraPhotoCmd) {
+            val mode = when {
+                clean.contains("selfie") -> "selfie"
+                clean.contains("video") -> "video"
+                else -> "photo"
+            }
+            val args = JsonObject().apply { addProperty("mode", mode) }
+            val result = if (execute) IshaToolRegistry.executeTool(context, "open_camera", args) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val resp = when (mode) {
+                "selfie" -> "Front camera open kar diya hai Boss, badhiya selfie lijiye! 🤳"
+                "video" -> "Video recording camera open kar diya hai Boss! 🎥"
+                else -> "Camera open kar diya hai Boss, photo kheench lijiye! 📷"
+            }
+            return OfflineReflexResult("open_camera", resp, success)
+        }
+
         // 11. Open Quick Apps (Camera, Settings, YouTube, WhatsApp, Chrome, Gallery)
         val isOpenAppCmd = clean.startsWith("open ") || clean.startsWith("kholo ") || 
                            clean.endsWith(" kholo") || clean.endsWith(" open karo") ||
