@@ -3064,7 +3064,10 @@ object IshaToolRegistry {
                             context.startActivity(alt)
                         }
 
-                        // Fetch real-time web search snippets so Gemini can answer Boss's question!
+                        // Smart Browser-to-Chat: Read screen after page loads, return to AURA chat
+                        val browserText = readBrowserScreenAndReturn(context, delayMs = 2500L)
+
+                        // Also fetch via our own search pipeline as backup
                         val searchData = performDirectWebSearch(queryOrUrl)
                         val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
                         val summaryList = mutableListOf<String>()
@@ -3073,12 +3076,19 @@ object IshaToolRegistry {
                             val sum = sObj.get("summary")?.asString ?: ""
                             if (sum.isNotBlank()) summaryList.add(sum)
                         }
-                        val liveInfo = if (summaryList.isNotEmpty()) {
-                            "\n\nLive Search Findings:\n• " + summaryList.take(3).joinToString("\n• ")
+                        val ownSearchInfo = if (summaryList.isNotEmpty()) {
+                            "\nSearch findings:\n• " + summaryList.take(3).joinToString("\n• ")
                         } else ""
 
+                        val combinedInfo = buildString {
+                            if (browserText.isNotBlank()) {
+                                append("\n\n[Screen se pada gaya \"$queryOrUrl\" ke liye]:\n$browserText")
+                            }
+                            if (ownSearchInfo.isNotBlank()) append(ownSearchInfo)
+                        }
+
                         result.addProperty("status", "success")
-                        result.addProperty("message", "Chrome me \"$queryOrUrl\" search kar diya hai Boss!$liveInfo")
+                        result.addProperty("message", "Chrome me \"$queryOrUrl\" search karke wapas aa gayi hoon Boss!$combinedInfo")
                     } else {
                         val launchIntent = context.packageManager.getLaunchIntentForPackage("com.android.chrome")
                         if (launchIntent != null) {
@@ -3260,18 +3270,38 @@ object IshaToolRegistry {
                         }
                         try {
                             context.startActivity(searchIntent)
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Chrome me \"$searchQ\" search kar diya hai Boss! 🌐")
-                            return result
                         } catch (_: Exception) {
                             val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${URLEncoder.encode(searchQ, "UTF-8")}")).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             context.startActivity(fallback)
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Browser me \"$searchQ\" search kar diya hai Boss! 🌐")
-                            return result
                         }
+                        // Smart Browser-to-Chat: read screen after page renders, return to AURA
+                        val browserExtract = readBrowserScreenAndReturn(context, delayMs = 3000L)
+
+                        // Backup search findings in case accessibility tree was partial
+                        val searchData = performDirectWebSearch(searchQ)
+                        val searchResults = searchData.getAsJsonArray("results") ?: JsonArray()
+                        val summaryList = mutableListOf<String>()
+                        for (i in 0 until searchResults.size()) {
+                            val sObj = searchResults.get(i).asJsonObject
+                            val sum = sObj.get("summary")?.asString ?: ""
+                            if (sum.isNotBlank()) summaryList.add(sum)
+                        }
+                        val backupInfo = if (summaryList.isNotEmpty()) {
+                            "\nSearch findings:\n• " + summaryList.take(3).joinToString("\n• ")
+                        } else ""
+
+                        val combinedMsg = buildString {
+                            if (browserExtract.isNotBlank()) {
+                                append("\n\n[Chrome screen se:\n$browserExtract]")
+                            }
+                            if (backupInfo.isNotBlank()) append(backupInfo)
+                        }
+
+                        result.addProperty("status", "success")
+                        result.addProperty("message", "Chrome me \"$searchQ\" search karke wapas aa gayi hoon Boss!$combinedMsg")
+                        return result
                     }
 
                     if (intent != null) {
@@ -6771,6 +6801,88 @@ object IshaToolRegistry {
             }
         }
         return headlines
+    }
+
+    /**
+     * After a browser search is launched, this function:
+     * 1. Waits up to [delayMs] milliseconds while polling for page render via IshaAccessibilityService.
+     * 2. Uses IshaAccessibilityService to read visible text from the Chrome screen.
+     * 3. Uses GLOBAL_ACTION_BACK to instantly dismiss Chrome and bring AURA's MainActivity back to front.
+     * Returns the extracted screen text (trimmed to ~600 chars so it fits in a message).
+     */
+    private fun readBrowserScreenAndReturn(context: android.content.Context, delayMs: Long = 3000L): String {
+        return try {
+            val a11y = IshaAccessibilityService.instance
+            var meaningful = ""
+            val startTime = System.currentTimeMillis()
+
+            while (System.currentTimeMillis() - startTime < delayMs) {
+                Thread.sleep(700L)
+                val rawScreen = a11y?.getScreenTextHierarchy() ?: ""
+                val lines = rawScreen
+                    .lines()
+                    .map { it.replace(Regex("^[🔘📄]\\s*"), "").trim() }
+                    .filter { line ->
+                        line.length > 15 &&
+                        !line.contains("DuckDuckGo", ignoreCase = true) &&
+                        !line.equals("Search or type URL", ignoreCase = true) &&
+                        !line.equals("Search or type web address", ignoreCase = true) &&
+                        !line.contains("Tab switcher", ignoreCase = true) &&
+                        !line.contains("New tab", ignoreCase = true) &&
+                        !line.contains("More options", ignoreCase = true) &&
+                        !line.contains("Screen is empty", ignoreCase = true)
+                    }
+                if (lines.isNotEmpty()) {
+                    meaningful = lines.take(8).joinToString(" | ").take(650).trim()
+                    break
+                }
+            }
+
+            // Bring AURA MainActivity back to the foreground:
+            // 1. First attempt: AccessibilityService GLOBAL_ACTION_BACK instantly dismisses Chrome and reveals AURA!
+            val wentBack = a11y?.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK) ?: false
+            Log.i(TAG, "readBrowserScreenAndReturn: GLOBAL_ACTION_BACK executed = $wentBack")
+
+            // 2. Second attempt: Direct intent to MainActivity
+            try {
+                val act = com.aura.assistant.MainActivity.instance
+                if (act != null) {
+                    val bringIntent = android.content.Intent(act, com.aura.assistant.MainActivity::class.java).apply {
+                        flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    }
+                    act.startActivity(bringIntent)
+                } else {
+                    val appIntent = android.content.Intent(context, com.aura.assistant.MainActivity::class.java).apply {
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    }
+                    context.startActivity(appIntent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "readBrowserScreenAndReturn direct intent: ${e.message}")
+            }
+
+            // 3. Third attempt: via serviceContext launch intent
+            try {
+                val serviceCtx = a11y ?: context
+                val returnIntent = serviceCtx.packageManager
+                    .getLaunchIntentForPackage(serviceCtx.packageName)
+                    ?.apply {
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    }
+                if (returnIntent != null) serviceCtx.startActivity(returnIntent)
+            } catch (e: Exception) {
+                Log.w(TAG, "readBrowserScreenAndReturn launchIntent: ${e.message}")
+            }
+
+            meaningful
+        } catch (e: Exception) {
+            Log.w(TAG, "readBrowserScreenAndReturn error: ${e.message}")
+            ""
+        }
     }
 }
 
