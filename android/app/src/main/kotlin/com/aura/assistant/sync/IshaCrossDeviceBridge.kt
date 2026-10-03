@@ -15,8 +15,10 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -64,8 +66,20 @@ object IshaCrossDeviceBridge {
 
     private const val TAG = "IshaCrossDeviceBridge"
     private var inboxListener: ListenerRegistration? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() +
+        CoroutineExceptionHandler { _, e ->
+            Log.e(TAG, "Unhandled error in cross-device coroutine — scope remains alive", e)
+        }
+    )
     private var isListening = false
+
+    val ACTIONS_EXEMPT_FROM_UNLOCK: Set<String> = setOf(
+        "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
+        "battery", "battery_status", "get_battery", "get_battery_status", "set_volume", "volume", "lock_device",
+        "play_siren", "sound_siren", "siren", "emergency_siren", "find_phone", "stop_siren", "silence_siren",
+        "get_current_time", "time", "clock"
+    )
 
     /**
      * Initializes the bridge and starts listening for commands sent to THIS device.
@@ -237,12 +251,7 @@ object IshaCrossDeviceBridge {
             var success = true
 
             // If action requires an active unlocked screen and the device is still locked, fail explicitly!
-            val requiresUnlockedScreen = when (action.lowercase()) {
-                "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
-                "battery", "battery_status", "get_battery", "set_volume", "volume", "lock_device",
-                "play_siren", "sound_siren", "siren", "emergency_siren", "find_phone", "stop_siren", "silence_siren" -> false
-                else -> true
-            }
+            val requiresUnlockedScreen = !ACTIONS_EXEMPT_FROM_UNLOCK.contains(action.lowercase())
 
             if (isLocked && !unlockedSuccessfully && requiresUnlockedScreen) {
                 success = false
@@ -652,7 +661,7 @@ object IshaCrossDeviceBridge {
                             if (rawPrompt.isNotBlank() && !jsonArgs.has("prompt")) {
                                 jsonArgs.addProperty("prompt", rawPrompt)
                             }
-                            val localRes = com.aura.assistant.ai.IshaToolRegistry.executeTool(context, action, jsonArgs)
+                            val localRes = com.aura.assistant.execution.ExecutionEngine.executeTool(context, action, jsonArgs)
                             val st = localRes.get("status")?.asString ?: "success"
                             val msg = localRes.get("message")?.asString ?: localRes.toString()
                             success = (st != "error" && st != "failed")

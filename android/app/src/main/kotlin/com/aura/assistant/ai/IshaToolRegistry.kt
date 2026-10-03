@@ -40,8 +40,12 @@ import java.io.StringReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /**
  * Registry of all 40+ ISHA OS automation tools in official Google Gemini Live schema.
@@ -1550,10 +1554,19 @@ object IshaToolRegistry {
     }
 
     /**
+     * Synchronous blocking execution helper for legacy non-coroutine callers.
+     */
+    @JvmStatic
+    fun executeToolBlocking(context: Context, name: String, args: JsonObject): JsonObject =
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            executeTool(context, name, args)
+        }
+
+    /**
      * Executes a tool call requested by Gemini and returns the structured result.
      */
     @SuppressLint("MissingPermission")
-    fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
+    suspend fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
         val toolStartTime = System.currentTimeMillis()
         Log.i(TAG, "Executing tool: $name with args: $args")
         val result = JsonObject()
@@ -1573,13 +1586,13 @@ object IshaToolRegistry {
                 "send_sms" -> {
                     val phone = args.get("phone_number")?.asString ?: ""
                     val msg = args.get("message")?.asString ?: ""
-                    val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val smsManager = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         context.getSystemService(SmsManager::class.java)
                     } else {
                         @Suppress("DEPRECATION")
                         SmsManager.getDefault()
-                    }
-                    smsManager.sendTextMessage(phone, null, msg, null, null)
+                    }) ?: @Suppress("DEPRECATION") SmsManager.getDefault()
+                    smsManager?.sendTextMessage(phone, null, msg, null, null)
                     result.addProperty("status", "success")
                     result.addProperty("message", "SMS sent to $phone")
                 }
@@ -1796,14 +1809,20 @@ object IshaToolRegistry {
 
                     if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
                         if (a11y != null) {
-                            val latch = CountDownLatch(1)
-                            a11y.takeScreenCapture { bytes ->
-                                if (bytes != null) {
-                                    imageUri = saveBytesToGallery(context, bytes)
+                            var capturedBytes: ByteArray? = null
+                            try {
+                                withTimeoutOrNull(2000L) {
+                                    suspendCancellableCoroutine<Unit> { cont ->
+                                        a11y.takeScreenCapture { bytes ->
+                                            capturedBytes = bytes
+                                            if (cont.isActive) cont.resume(Unit)
+                                        }
+                                    }
                                 }
-                                latch.countDown()
+                            } catch (_: Exception) {}
+                            if (capturedBytes != null) {
+                                imageUri = saveBytesToGallery(context, capturedBytes!!)
                             }
-                            try { latch.await(2000, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
                         }
                         if (imageUri == null) {
                             a11y?.performGlobalActionByKey("screenshot")
@@ -1900,14 +1919,21 @@ object IshaToolRegistry {
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         var savedUri: Uri? = null
-                        val latch = CountDownLatch(1)
-                        a11y.takeScreenCapture { bytes ->
-                            if (bytes != null) {
-                                savedUri = saveBytesToGallery(context, bytes)
+                        var capturedBytes: ByteArray? = null
+                        try {
+                            withTimeoutOrNull(2500L) {
+                                suspendCancellableCoroutine<Unit> { cont ->
+                                    a11y.takeScreenCapture { bytes ->
+                                        capturedBytes = bytes
+                                        if (cont.isActive) cont.resume(Unit)
+                                    }
+                                }
                             }
-                            latch.countDown()
+                        } catch (_: Exception) {}
+
+                        if (capturedBytes != null) {
+                            savedUri = saveBytesToGallery(context, capturedBytes!!)
                         }
-                        try { latch.await(2500, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
 
                         if (savedUri != null) {
                             result.addProperty("status", "success")
@@ -1932,14 +1958,20 @@ object IshaToolRegistry {
                     val a11y = IshaAccessibilityService.instance
                     var imageUri = getLatestScreenshotOrImageUri(context)
                     if (imageUri == null && a11y != null) {
-                        val latch = CountDownLatch(1)
-                        a11y.takeScreenCapture { bytes ->
-                            if (bytes != null) {
-                                imageUri = saveBytesToGallery(context, bytes)
+                        var capturedBytes: ByteArray? = null
+                        try {
+                            withTimeoutOrNull(2000L) {
+                                suspendCancellableCoroutine<Unit> { cont ->
+                                    a11y.takeScreenCapture { bytes ->
+                                        capturedBytes = bytes
+                                        if (cont.isActive) cont.resume(Unit)
+                                    }
+                                }
                             }
-                            latch.countDown()
+                        } catch (_: Exception) {}
+                        if (capturedBytes != null) {
+                            imageUri = saveBytesToGallery(context, capturedBytes!!)
                         }
-                        try { latch.await(2000, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
                     }
 
                     if (imageUri == null) {
@@ -3130,16 +3162,13 @@ object IshaToolRegistry {
                         val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
                         if (searchQ.isNotBlank()) params["query"] = searchQ
 
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Remote execution error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "open_app",
-                                params = params,
-                                rawPrompt = rawAppName
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "open_app",
+                            params = params,
+                            rawPrompt = rawAppName
+                        )
 
                         if (executionResult.success) {
                             result.addProperty("status", "success")
@@ -3195,16 +3224,13 @@ object IshaToolRegistry {
                     val enable = args.get("enable")?.asBoolean ?: true
                     val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
                     if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDeviceArg,
-                                action = "toggle_flashlight",
-                                params = mapOf("state" to if (enable) "on" else "off"),
-                                rawPrompt = "toggle_flashlight"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDeviceArg,
+                            action = "toggle_flashlight",
+                            params = mapOf("state" to if (enable) "on" else "off"),
+                            rawPrompt = "toggle_flashlight"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("target_device", executionResult.targetDeviceName)
@@ -3227,16 +3253,13 @@ object IshaToolRegistry {
                     val level = extractPercent(args, "level_percent", "level", "volume", "value", "percent")
                     val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
                     if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDeviceArg,
-                                action = "set_volume",
-                                params = mapOf("level" to level),
-                                rawPrompt = "set_volume $level"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDeviceArg,
+                            action = "set_volume",
+                            params = mapOf("level" to level),
+                            rawPrompt = "set_volume $level"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("target_device", executionResult.targetDeviceName)
@@ -3591,16 +3614,13 @@ object IshaToolRegistry {
                         )
                         if (effectiveUrl.isNotBlank()) params["url"] = effectiveUrl
 
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Remote error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "play_youtube",
-                                params = params,
-                                rawPrompt = query
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "play_youtube",
+                            params = params,
+                            rawPrompt = query
+                        )
 
                         if (executionResult.success) {
                             result.addProperty("status", "success")
@@ -3638,16 +3658,13 @@ object IshaToolRegistry {
                     val enable = args.get("enable")?.asBoolean ?: true
                     val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
                     if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDeviceArg, "Remote execution error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDeviceArg,
-                                action = "toggle_hotspot",
-                                params = mapOf("enable" to enable),
-                                rawPrompt = "toggle_hotspot ${if (enable) "on" else "off"}"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDeviceArg,
+                            action = "toggle_hotspot",
+                            params = mapOf("enable" to enable),
+                            rawPrompt = "toggle_hotspot ${if (enable) "on" else "off"}"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("target_device", executionResult.targetDeviceName)
@@ -4385,16 +4402,13 @@ object IshaToolRegistry {
                         else if (params["url"] == null && prompt.isNotBlank()) params["query"] = prompt
                     }
 
-                    var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Execution error")
-                    kotlinx.coroutines.runBlocking {
-                        executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                            context = context,
-                            targetDeviceQuery = targetDevice,
-                            action = normAction,
-                            params = params,
-                            rawPrompt = prompt
-                        )
-                    }
+                    val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                        context = context,
+                        targetDeviceQuery = targetDevice,
+                        action = normAction,
+                        params = params,
+                        rawPrompt = prompt
+                    )
 
                     if (executionResult.success) {
                         result.addProperty("status", "success")
@@ -4412,16 +4426,13 @@ object IshaToolRegistry {
                     val targetDevice = args.get("target_device")?.asString ?: ""
                     if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
                         // Remote lock
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Lock error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "lock_device",
-                                params = emptyMap(),
-                                rawPrompt = "lock device"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "lock_device",
+                            params = emptyMap(),
+                            rawPrompt = "lock device"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("message", "${executionResult.targetDeviceName} phone lock kar diya hai Boss! 🔒")
@@ -4470,16 +4481,13 @@ object IshaToolRegistry {
                             IshaMemoryManager.saveDevicePattern(context, targetDevice, pattern)
                         }
 
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Unlock error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "unlock_device",
-                                params = unlockParams,
-                                rawPrompt = "unlock device"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "unlock_device",
+                            params = unlockParams,
+                            rawPrompt = "unlock device"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("message", "${executionResult.targetDeviceName} phone screen wake aur unlock kar diya hai Boss! 🔓")
@@ -4564,16 +4572,13 @@ object IshaToolRegistry {
                     val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
                     if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
                         // Remote siren
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Siren error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "play_siren",
-                                params = emptyMap(),
-                                rawPrompt = "play siren"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "play_siren",
+                            params = emptyMap(),
+                            rawPrompt = "play siren"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("target_device", executionResult.targetDeviceName)
@@ -4613,16 +4618,13 @@ object IshaToolRegistry {
                     val targetDevice = if (rawTarget.isNotBlank()) rawTarget else (activeDev ?: "")
                     if (targetDevice.isNotBlank() && !targetDevice.equals("this", ignoreCase = true) && !targetDevice.equals("current", ignoreCase = true) && !targetDevice.equals("local", ignoreCase = true)) {
                         // Remote stop siren
-                        var executionResult = com.aura.assistant.sync.RemoteExecutionResult(false, targetDevice, "Siren error")
-                        kotlinx.coroutines.runBlocking {
-                            executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                                context = context,
-                                targetDeviceQuery = targetDevice,
-                                action = "stop_siren",
-                                params = emptyMap(),
-                                rawPrompt = "stop siren"
-                            )
-                        }
+                        val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                            context = context,
+                            targetDeviceQuery = targetDevice,
+                            action = "stop_siren",
+                            params = emptyMap(),
+                            rawPrompt = "stop siren"
+                        )
                         if (executionResult.success) {
                             result.addProperty("status", "success")
                             result.addProperty("target_device", executionResult.targetDeviceName)
@@ -4651,13 +4653,13 @@ object IshaToolRegistry {
 
                     if (emergencyNumber != "112" && emergencyNumber != "911" && emergencyNumber != "100") {
                         try {
-                            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            val smsManager = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                                 context.getSystemService(SmsManager::class.java)
                             } else {
                                 @Suppress("DEPRECATION")
                                 SmsManager.getDefault()
-                            }
-                            smsManager.sendTextMessage(emergencyNumber, null, msg, null, null)
+                            }) ?: @Suppress("DEPRECATION") SmsManager.getDefault()
+                            smsManager?.sendTextMessage(emergencyNumber, null, msg, null, null)
                         } catch (_: Exception) {}
                     }
 
@@ -5205,7 +5207,8 @@ object IshaToolRegistry {
                         var isBtOn = false
                         val btConnectedList = mutableListOf<String>()
                         try {
-                            val btAdapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                            val bm = context.getSystemService(android.bluetooth.BluetoothManager::class.java)
+                            val btAdapter = bm?.adapter ?: @Suppress("DEPRECATION") android.bluetooth.BluetoothAdapter.getDefaultAdapter()
                             if (btAdapter != null) {
                                 isBtOn = btAdapter.isEnabled
                                 if (isBtOn) {

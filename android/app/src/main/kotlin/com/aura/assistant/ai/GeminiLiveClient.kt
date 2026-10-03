@@ -16,6 +16,7 @@ import com.aura.assistant.audio.AuraVadDetector
 import com.aura.assistant.audio.MicOwnershipManager
 import com.aura.assistant.audio.MicOwner
 import com.aura.assistant.config.Secrets
+import com.aura.assistant.vision.ScreenFrameSampler
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -165,6 +166,12 @@ class GeminiLiveClient(private val context: Context) {
     private val vadDetector = AuraVadDetector()
     private var micJob: Job? = null
     @Volatile private var isMicRecordingActive = false
+
+    // ScreenFrameSampler: adaptive change-detection gating for screen/camera frames.
+    // Drops visually identical or too-frequent frames to save Gemini Live token cost.
+    private val screenFrameSampler = ScreenFrameSampler { jpegBytes ->
+        sendImageChunk(jpegBytes)
+    }
 
     // Adaptive noise floor for speaker barge-in
     private var noiseFloor = 0.02
@@ -776,6 +783,34 @@ class GeminiLiveClient(private val context: Context) {
     }
 
     /**
+     * Streams a raw [Bitmap] screen/camera frame through [ScreenFrameSampler] before sending
+     * to Gemini Live. The sampler drops identical frames and throttles to ≤2fps automatically.
+     *
+     * @param bitmap The current screen or camera frame.
+     * @param forceSend If true, bypasses change-detection (use on session start or scene changes).
+     */
+    fun sendScreenBitmap(bitmap: android.graphics.Bitmap, forceSend: Boolean = false) {
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+        screenFrameSampler.processBitmap(bitmap, forceSend)
+    }
+
+    /**
+     * Streams pre-compressed JPEG screen bytes through [ScreenFrameSampler] before sending
+     * to Gemini Live. Use this when the frame is already JPEG-encoded (e.g. from
+     * [AuraAccessibilityService.takeOptimizedScreenCapture]) to avoid redundant decode+re-encode.
+     *
+     * The sampler hashes frame content to drop visually identical frames and throttles to ≤2fps.
+     *
+     * @param jpegBytes  JPEG-encoded screen frame.
+     * @param forceSend  Bypass change-detection (use on session start or after major UI change).
+     */
+    fun sendScreenJpeg(jpegBytes: ByteArray, forceSend: Boolean = false) {
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+        screenFrameSampler.processJpeg(jpegBytes, forceSend)
+    }
+
+
+    /**
      * Streams raw 16kHz mono PCM audio to Gemini Live.
      */
     fun sendAudioChunk(pcmBytes: ByteArray, length: Int = pcmBytes.size) {
@@ -962,7 +997,7 @@ class GeminiLiveClient(private val context: Context) {
                         val name = call.get("name").asString
                         val id = call.get("id").asString
                         val args = call.getAsJsonObject("args") ?: JsonObject()
-                        val result = IshaToolRegistry.executeTool(context, name, args)
+                        val result = com.aura.assistant.execution.ExecutionEngine.executeTool(context, name, args, scope)
                         val fnResp = JsonObject().apply {
                             addProperty("id", id)
                             addProperty("name", name)

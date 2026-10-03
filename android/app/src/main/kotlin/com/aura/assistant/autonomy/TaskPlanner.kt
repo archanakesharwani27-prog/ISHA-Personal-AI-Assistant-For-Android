@@ -12,6 +12,15 @@ import com.aura.assistant.tools.VerificationStatus
 import com.google.gson.JsonObject
 import java.util.UUID
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FUTURE SCAFFOLDING — Architecturally complete but not yet wired to execution.
+// TaskPlanner is the intended replacement for ad-hoc multi-step tool chaining in
+// GeminiChatService.executeFunctionCalls(). Integration steps:
+//   1. Wire IshaAssistantViewModel to call TaskPlanner.createPlan() on complex prompts
+//   2. Execute each PlanStep via ExecutionEngine.executeTool()
+//   3. Use ExecutionVerifier to gate step transitions (VERIFIED_SUCCESS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── DAG Plan Data Model ─────────────────────────────────────────────────
 
 enum class PlanStatus {
@@ -255,5 +264,50 @@ object TaskPlanner {
         }
 
         return plan
+    }
+
+    /**
+     * Autonomous DAG execution orchestrator.
+     * Sequentially or concurrently executes steps respecting dependencies and verification.
+     */
+    suspend fun executePlan(
+        plan: ExecutionPlan,
+        context: android.content.Context,
+        scope: kotlinx.coroutines.CoroutineScope
+    ): Map<String, ToolResult> {
+        plan.status = PlanStatus.EXECUTING
+        val results = mutableMapOf<String, ToolResult>()
+
+        for (step in plan.steps) {
+            val depsSatisfied = step.dependencies.all { depId ->
+                results[depId]?.status == com.aura.assistant.tools.ToolStatus.SUCCESS
+            }
+            if (!depsSatisfied) {
+                Log.w(TAG, "Skipping step ${step.stepId} because dependencies were not satisfied.")
+                step.status = StepStatus.SKIPPED
+                continue
+            }
+
+            step.status = StepStatus.RUNNING
+            val tool = ToolRegistry.getTool(step.toolName) ?: ToolRegistry.createDynamicTool(step.toolName)
+            val result = com.aura.assistant.execution.ExecutionEngine.execute(
+                tool = tool,
+                arguments = step.arguments,
+                context = context,
+                scope = scope,
+                callId = step.stepId
+            )
+            step.result = result
+            step.status = if (result.status == com.aura.assistant.tools.ToolStatus.SUCCESS) {
+                if (result.evidence?.verified == true) StepStatus.VERIFIED_SUCCESS else StepStatus.UNVERIFIED_SUCCESS
+            } else {
+                StepStatus.FAILED
+            }
+            results[step.stepId] = result
+        }
+
+        val allSuccess = plan.steps.all { it.status == StepStatus.VERIFIED_SUCCESS || it.status == StepStatus.UNVERIFIED_SUCCESS }
+        plan.status = if (allSuccess) PlanStatus.COMPLETED else PlanStatus.FAILED
+        return results
     }
 }

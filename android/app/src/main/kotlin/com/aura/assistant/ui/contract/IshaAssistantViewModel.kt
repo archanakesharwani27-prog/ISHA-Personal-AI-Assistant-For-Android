@@ -561,6 +561,19 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             imageUri = attached?.uri?.toString()
         )
 
+        // ⚡ Tier 0: Zero-Latency On-Device Reflex Engine (<20ms hardware & system actions)
+        if (attached == null && trimmed.isNotBlank()) {
+            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecuteSync(getApplication(), trimmed)
+            if (reflex != null) {
+                if (!alreadyInUi) {
+                    val currentWithUser = _chatMessages.value.toMutableList().apply { add(userMsg) }
+                    _chatMessages.value = currentWithUser
+                }
+                executeOfflineReflexTurn(currentSessionId, reflex)
+                return
+            }
+        }
+
         // 2. Prepare streaming Assistant Message
         val assistantMsgId = UUID.randomUUID().toString()
         val assistantMsg = ChatMessage(
@@ -825,7 +838,8 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                     }
                     val bytes = withTimeoutOrNull(2500L) { frameDeferred.await() }
                     if (bytes != null && bytes.isNotEmpty() && _isLiveScreenSharing.value) {
-                        liveClient.sendImageChunk(bytes)
+                        // Route through ScreenFrameSampler: drops identical frames, throttles to ≤2fps
+                        liveClient.sendScreenJpeg(bytes)
                     }
                 }
                 delay(1600L) // Continuous live stream at ~1.6s interval matching Gemini Live
@@ -991,6 +1005,65 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
         }
+    }
+
+    // ── Offline Reflex & Speech Execution ──────────────────────────────────────
+
+    private fun executeOfflineReflexTurn(sessionId: String, reflex: com.aura.assistant.brain.OfflineReflexResult) {
+        val toolMsg = ChatMessage(
+            sessionId = sessionId,
+            role = MessageRole.TOOL,
+            text = getFriendlyToolLabel(reflex.toolName),
+            toolName = reflex.toolName,
+            toolResult = if (reflex.success) "success" else "failed",
+            isStreaming = false
+        )
+        val assistantMsg = ChatMessage(
+            sessionId = sessionId,
+            role = MessageRole.ASSISTANT,
+            text = reflex.naturalResponse,
+            isStreaming = false
+        )
+        val updated = _chatMessages.value.toMutableList().apply {
+            add(toolMsg)
+            add(assistantMsg)
+        }
+        _chatMessages.value = updated
+        repository.saveMessages(sessionId, updated)
+        _sessions.value = repository.getAllSessions()
+
+        if (_isMessageSpeakEnabled.value) {
+            speakResponse(reflex.naturalResponse)
+        }
+        triggerLightHaptic()
+    }
+
+    fun speakResponse(text: String) {
+        if (!isTtsReady || tts == null || text.isBlank()) return
+        try {
+            val clean = text.replace(Regex("[*#_`>]"), "").trim()
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "reflex_${System.currentTimeMillis()}")
+        } catch (e: Exception) {
+            Log.w(TAG, "TTS speak failed: ${e.message}")
+        }
+    }
+
+    // ── Security Governance (ConfirmationEngine) ───────────────────────────────
+
+    val pendingConfirmation = com.aura.assistant.security.ConfirmationEngine.pending
+
+    fun confirmPendingAction() {
+        com.aura.assistant.security.ConfirmationEngine.confirm()
+    }
+
+    fun cancelPendingAction() {
+        com.aura.assistant.security.ConfirmationEngine.cancel()
+    }
+
+    // ── Routine Engine ─────────────────────────────────────────────────────────
+
+    fun evaluateActiveRoutines(): List<com.aura.assistant.autonomy.RoutineEngine.RoutineType> {
+        return com.aura.assistant.autonomy.RoutineEngine.evaluateRoutines(getApplication())
     }
 
     override fun onCleared() {

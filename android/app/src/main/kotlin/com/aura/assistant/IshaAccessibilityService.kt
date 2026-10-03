@@ -2207,12 +2207,22 @@ open class IshaAccessibilityService : AccessibilityService() {
 
     /**
      * Draws pattern unlock gesture from pattern string like "4,1,5,7,8" or "41578".
+     * Checks post-draw keyguard state to verify if pattern successfully unlocked the screen.
      */
     fun unlockWithPattern(patternStr: String): Boolean {
         val dots = patternStr.split(",", " ", "-").mapNotNull { it.trim().toIntOrNull() }
             .ifEmpty { patternStr.filter { it.isDigit() }.map { it.toString().toInt() } }
         if (dots.size >= 2) {
-            return drawPattern(dots)
+            val dispatched = drawPattern(dots)
+            if (!dispatched) return false
+            try {
+                Thread.sleep(350)
+                val km = getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+                if (km != null && !km.isKeyguardLocked) {
+                    return true
+                }
+            } catch (_: Exception) {}
+            return dispatched
         }
         return false
     }

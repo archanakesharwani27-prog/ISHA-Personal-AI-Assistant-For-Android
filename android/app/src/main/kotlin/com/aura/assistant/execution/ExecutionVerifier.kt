@@ -94,7 +94,7 @@ object ExecutionVerifier {
                 "set_volume" -> verifyVolume(context, arguments)
                 "set_brightness" -> verifyBrightness(context, arguments)
                 "set_dnd" -> verifyDnd(context, arguments)
-                "toggle_bluetooth" -> verifyBluetooth(arguments)
+                "toggle_bluetooth" -> verifyBluetooth(context, arguments)
                 "manage_contacts" -> verifyContact(context, arguments)
                 "toggle_flashlight" -> verifyFlashlight(arguments)
                 "toggle_wifi" -> verifyWifi(context, arguments)
@@ -247,15 +247,16 @@ object ExecutionVerifier {
         )
     }
 
-    private fun verifyBluetooth(args: JsonObject): VerificationEvidence {
-        val adapter = BluetoothAdapter.getDefaultAdapter()
+    private fun verifyBluetooth(context: Context, args: JsonObject): VerificationEvidence {
+        val bm = context.getSystemService(android.bluetooth.BluetoothManager::class.java)
+        val adapter = bm?.adapter
             ?: return VerificationEvidence(verified = false, method = "bluetooth_unsupported")
         val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
         val isEnabled = adapter.isEnabled
         return VerificationEvidence(
             verified = isEnabled == enable,
             observedState = if (isEnabled) "Bluetooth is ON" else "Bluetooth is OFF",
-            method = "BluetoothAdapter.isEnabled"
+            method = "BluetoothManager.adapter.isEnabled"
         )
     }
 

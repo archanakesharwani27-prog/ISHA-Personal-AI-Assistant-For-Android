@@ -11,6 +11,8 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -60,6 +62,8 @@ class GeminiChatService(private val context: Context) {
 
     @Volatile private var cachedSystemInstruction: JsonObject? = null
     @Volatile private var lastSystemInstructionTime: Long = 0L
+    @Volatile private var lastPromptText: String? = null
+    @Volatile private var lastPromptTime: Long = 0L
 
     private val SCREEN_INTERACTIVE_TOOLS = setOf(
         "find_and_tap",
@@ -89,6 +93,14 @@ class GeminiChatService(private val context: Context) {
         imageBytes: ByteArray? = null,
         callback: ChatStreamCallback
     ) {
+        val now = System.currentTimeMillis()
+        if (newPrompt.isNotBlank() && newPrompt == lastPromptText && (now - lastPromptTime) < 350L && imageBytes == null) {
+            Log.w(TAG, "Debounced duplicate prompt request within 350ms: '$newPrompt'")
+            return
+        }
+        lastPromptText = newPrompt
+        lastPromptTime = now
+
         cancelCurrentGeneration()
 
         serviceScope.launch {
@@ -549,10 +561,15 @@ class GeminiChatService(private val context: Context) {
         return if (isActionIntent) 0.2 else 0.7
     }
 
+    fun invalidateSystemInstructionCache() {
+        cachedSystemInstruction = null
+        lastSystemInstructionTime = 0L
+    }
+
     private fun createSystemInstruction(): JsonObject {
         val now = System.currentTimeMillis()
         val cached = cachedSystemInstruction
-        if (cached != null && (now - lastSystemInstructionTime) < 45_000L) {
+        if (cached != null && (now - lastSystemInstructionTime) < 10_000L) {
             return cached
         }
         val newInstruction = JsonObject().apply {
@@ -587,8 +604,10 @@ class GeminiChatService(private val context: Context) {
             val results = mutableListOf<Triple<String, JsonObject, JsonObject>>()
             for ((fnName, fnArgs) in validCalls) {
                 Log.i(TAG, "Executing tool sequentially: $fnName with args: $fnArgs")
-                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
-                val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
+                withContext(Dispatchers.Main) {
+                    callback.onToolStart(toolName = fnName, args = fnArgs.toString())
+                }
+                val toolResult = com.aura.assistant.execution.ExecutionEngine.executeTool(context, fnName, fnArgs, this)
                 val status = toolResult.get("status")?.asString ?: "success"
                 val rawMsg = toolResult.get("message")?.asString ?: status
                 val resultSummary = if ((status == "error" || status == "failed") && !rawMsg.startsWith("Failed", ignoreCase = true) && !rawMsg.startsWith("Error", ignoreCase = true)) {
@@ -596,16 +615,50 @@ class GeminiChatService(private val context: Context) {
                 } else {
                     rawMsg
                 }
-                callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                withContext(Dispatchers.Main) {
+                    callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                }
+
+                // Verify and record to Experience Database
+                try {
+                    val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
+                    val record = com.aura.assistant.memory.ExperienceRecord(
+                        id = java.util.UUID.randomUUID().toString(),
+                        taskId = "turn_" + System.currentTimeMillis(),
+                        normalizedIntent = fnName,
+                        userInput = fnArgs.toString(),
+                        entities = fnArgs.toString(),
+                        deviceProfile = android.os.Build.MODEL,
+                        appPackage = context.packageName,
+                        screenContext = null,
+                        strategy = "sequential_gemini_call",
+                        tool = fnName,
+                        arguments = fnArgs.toString(),
+                        executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
+                        verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
+                        failureReason = if (!evidence.verified) evidence.observedState else null,
+                        recoveryAction = null,
+                        latencyMs = 0L,
+                        userFeedback = null,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    AuraExperienceDatabase.getInstance(context).recordExecution(record)
+                } catch (_: Exception) {}
+
                 results.add(Triple(fnName, fnArgs, toolResult))
             }
             results
         } else {
             Log.i(TAG, "Executing ${validCalls.size} independent tools in parallel!")
+            val callbackMutex = Mutex()
             validCalls.map { (fnName, fnArgs) ->
-                callback.onToolStart(toolName = fnName, args = fnArgs.toString())
                 async(Dispatchers.IO) {
-                    val toolResult = IshaToolRegistry.executeTool(context, fnName, fnArgs)
+                    callbackMutex.withLock {
+                        withContext(Dispatchers.Main) {
+                            callback.onToolStart(toolName = fnName, args = fnArgs.toString())
+                        }
+                    }
+                    val toolResult = com.aura.assistant.execution.ExecutionEngine.executeTool(context, fnName, fnArgs, this)
                     val status = toolResult.get("status")?.asString ?: "success"
                     val rawMsg = toolResult.get("message")?.asString ?: status
                     val resultSummary = if ((status == "error" || status == "failed") && !rawMsg.startsWith("Failed", ignoreCase = true) && !rawMsg.startsWith("Error", ignoreCase = true)) {
@@ -613,7 +666,38 @@ class GeminiChatService(private val context: Context) {
                     } else {
                         rawMsg
                     }
-                    callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                    callbackMutex.withLock {
+                        withContext(Dispatchers.Main) {
+                            callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
+                        }
+                    }
+
+                    // Verify and record to Experience Database
+                    try {
+                        val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
+                        val record = com.aura.assistant.memory.ExperienceRecord(
+                            id = java.util.UUID.randomUUID().toString(),
+                            taskId = "turn_" + System.currentTimeMillis(),
+                            normalizedIntent = fnName,
+                            userInput = fnArgs.toString(),
+                            entities = fnArgs.toString(),
+                            deviceProfile = android.os.Build.MODEL,
+                            appPackage = context.packageName,
+                            screenContext = null,
+                            strategy = "parallel_gemini_call",
+                            tool = fnName,
+                            arguments = fnArgs.toString(),
+                            executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
+                            verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
+                            failureReason = if (!evidence.verified) evidence.observedState else null,
+                            recoveryAction = null,
+                            latencyMs = 0L,
+                            userFeedback = null,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        AuraExperienceDatabase.getInstance(context).recordExecution(record)
+                    } catch (_: Exception) {}
+
                     Triple(fnName, fnArgs, toolResult)
                 }
             }.awaitAll()
@@ -622,13 +706,18 @@ class GeminiChatService(private val context: Context) {
 
     private fun createHistoryContents(history: List<ChatMessage>): JsonArray {
         val contents = JsonArray()
-        // Include recent USER, ASSISTANT, and TOOL messages (up to 20 items) for maximum context without payload bloat
+        // Include recent USER, ASSISTANT, and TOOL messages (smart retention: first 3 context turns + last 20)
         val cleanHistory = history.filter {
             it.text.isNotBlank() && !it.isStreaming
-        }.takeLast(20)
+        }
+        val historyToSend = if (cleanHistory.size > 23) {
+            cleanHistory.take(3) + cleanHistory.takeLast(20)
+        } else {
+            cleanHistory
+        }
 
         var lastRole: String? = null
-        for (msg in cleanHistory) {
+        for (msg in historyToSend) {
             val role = if (msg.role == MessageRole.USER) "user" else "model"
             val messageText = when {
                 msg.role == MessageRole.TOOL -> {
@@ -643,11 +732,12 @@ class GeminiChatService(private val context: Context) {
             }
 
             if (role == lastRole) {
-                // If consecutive messages of same role exist, append to previous turn
+                // If consecutive messages of same role exist, append to previous turn with size guard
                 if (contents.size() > 0) {
                     val lastTurn = contents.get(contents.size() - 1).asJsonObject
                     val parts = lastTurn.getAsJsonArray("parts")
-                    val part = JsonObject().apply { addProperty("text", messageText) }
+                    val trimmed = if (messageText.length > 400) messageText.take(400) + "... [truncated]" else messageText
+                    val part = JsonObject().apply { addProperty("text", trimmed) }
                     parts.add(part)
                 }
                 continue

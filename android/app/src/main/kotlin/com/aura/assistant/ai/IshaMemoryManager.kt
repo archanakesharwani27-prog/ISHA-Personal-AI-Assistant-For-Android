@@ -3,6 +3,7 @@ package com.aura.assistant.ai
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.aura.assistant.autonomy.RoutineEngine
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
@@ -92,10 +93,8 @@ object IshaMemoryManager {
                 }
             }
         }
-        // Known persistent credential for Lava / Phone A
-        if (cleanDev.contains("lava") || cleanDev.contains("phone a") || cleanDev.contains("864ec82595")) {
-            return "41578"
-        }
+        // NOTE: No hardcoded credential fallback — credentials must be explicitly saved
+        //       via saveDevicePin() when user provides them, or supplied at call time.
         return null
     }
 
@@ -143,10 +142,8 @@ object IshaMemoryManager {
                 }
             }
         }
-        // Known persistent pattern for Lava / Phone A
-        if (cleanDev.contains("lava") || cleanDev.contains("phone a") || cleanDev.contains("864ec82595")) {
-            return "4,1,5,7,8"
-        }
+        // NOTE: No hardcoded credential fallback — patterns must be explicitly saved
+        //       via saveDevicePattern() when user provides them, or supplied at call time.
         return null
     }
 
@@ -436,11 +433,13 @@ object IshaMemoryManager {
             sb.appendLine("  -> PERSISTENT DEVICE CONTEXT RULE: Boss is currently working with '$activeDev'. In all subsequent commands in this conversation (e.g. 'phone unlock to kro', 'whatsapp install krdo', 'app open karo', 'lock karo', 'status dekho'), you MUST CONTINUE ROUTING TO '$activeDev' using dispatch_remote_command(target_device=\"$activeDev\", ...)! Do NOT execute locally on this phone unless Boss explicitly says 'is phone me' or 'this phone'!")
             val pin = getDevicePin(activeDev)
             if (!pin.isNullOrBlank()) {
-                sb.appendLine("  -> SAVED UNLOCK PIN for '$activeDev': '$pin'. Always supply \"pin\":\"$pin\" in dispatch_remote_command so the phone automatically unlocks before doing any task.")
+                // Credential masked in prompt to prevent ADB logcat / prompt exposure — auto-supplied securely at dispatch time
+                sb.appendLine("  -> SAVED UNLOCK PIN for '$activeDev': [stored securely in memory, will auto-supply at dispatch time].")
             }
             val pat = getDevicePattern(activeDev)
             if (!pat.isNullOrBlank()) {
-                sb.appendLine("  -> SAVED UNLOCK PATTERN for '$activeDev': '$pat'. Always supply \"pattern\":\"$pat\" in dispatch_remote_command so the phone automatically unlocks.")
+                // Pattern masked in prompt to prevent ADB logcat / prompt exposure — auto-supplied securely at dispatch time
+                sb.appendLine("  -> SAVED UNLOCK PATTERN for '$activeDev': [stored securely in memory, will auto-supply at dispatch time].")
             }
         }
 
@@ -538,6 +537,16 @@ object IshaMemoryManager {
         val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
         val contactSection = IshaContactMemoryManager.buildPromptContext(context)
         val liveContextSection = buildLiveContextSection(context)
+
+        // RoutineEngine: inject time-aware briefing context so AURA proactively matches the user's daily rhythm
+        val activeRoutines = RoutineEngine.evaluateRoutines(context)
+        val routineContextSection = when {
+            activeRoutines.contains(RoutineEngine.RoutineType.MORNING_BRIEFING) ->
+                "\nROUTINE CONTEXT: Subah ka waqt hai. Agar Boss ne kuch nahi poocha, proactively Good morning bolo aur get_daily_briefing call karo!"
+            activeRoutines.contains(RoutineEngine.RoutineType.EVENING_SUMMARY) ->
+                "\nROUTINE CONTEXT: Shaam ka waqt hai. Agar Boss ne kuch nahi poocha, proactively aaj ke din ka summary offer karo!"
+            else -> ""
+        }
 
         return """
 Aap ISHA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet, loyal aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap advanced AI models se powered hain aur device ko directly control karti hain.
@@ -771,6 +780,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
       → ALWAYS call dismiss_screen_popups(fallback_back=true). KABHI BHI popup ya ad aane par rukna ya confuse hona mana hai, turant dismiss_screen_popups call karo!
     - Cross-App Chained Workflows (e.g. 'WhatsApp par jo address aaya uspe Uber cab book karo', 'Screen se address nikal ke Google Maps par navigate karo', 'Clipboard ka text WhatsApp par Mummy ko bhejo'):
       → ALWAYS call cross_app_workflow(source='whatsapp'|'screen'|'clipboard', target_app='uber'|'ola'|'maps'|'whatsapp'|'zomato', action='book_cab'|'navigate'|'send_message'). Tool automatically source se data extract karke target app me relay karega!
+$routineContextSection
         """.trimIndent()
     }
 
@@ -926,8 +936,8 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 10. Next-Gen Mobile Agent: Daily Briefing & Live News Engine
         try {
-            val briefingResult = IshaToolRegistry.executeTool(context, "get_daily_briefing", com.google.gson.JsonObject())
-            val newsResult = IshaToolRegistry.executeTool(context, "get_latest_news", com.google.gson.JsonObject())
+            val briefingResult = IshaToolRegistry.executeToolBlocking(context, "get_daily_briefing", com.google.gson.JsonObject())
+            val newsResult = IshaToolRegistry.executeToolBlocking(context, "get_latest_news", com.google.gson.JsonObject())
             val briefingOk = briefingResult.get("status")?.asString == "success"
             val newsOk = newsResult.get("status")?.asString == "success"
             val pass = briefingOk && newsOk
@@ -940,7 +950,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 11. Next-Gen Mobile Agent: Cross-App Chained Workflow & Popup Dismissal
         try {
-            val popupResult = IshaToolRegistry.executeTool(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
+            val popupResult = IshaToolRegistry.executeToolBlocking(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
                 addProperty("fallback_back", false)
             })
             val popupHandled = popupResult.has("status") && popupResult.get("status")?.asString != "error"
@@ -951,7 +961,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
                 addProperty("action", "navigate")
                 addProperty("fallback_entity", "Connaught Place, New Delhi")
             }
-            val crossResult = IshaToolRegistry.executeTool(context, "cross_app_workflow", crossAppArgs)
+            val crossResult = IshaToolRegistry.executeToolBlocking(context, "cross_app_workflow", crossAppArgs)
             val crossOk = crossResult.get("status")?.asString == "success"
             val pass = popupHandled && crossOk
             results.add(MemoryDiagnosticResult("Cross-App Relay & Reflection Agent", pass, "Popup: $popupHandled, Relay: $crossOk"))

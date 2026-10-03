@@ -325,11 +325,11 @@ object IshaCallAnnouncerManager {
         }
 
         val speechText = if (isOldNumber) {
-            "Call from $resolvedName, purana number"
+            "Incoming call from $resolvedName, purana number, identified by Isha."
         } else if (resolvedName.isNotBlank() && resolvedName != "Unknown Caller") {
-            "Call from $resolvedName"
+            "Incoming call from $resolvedName, identified by Isha."
         } else {
-            "Call from unknown caller"
+            "Incoming call from an unknown number, identified by Isha."
         }
 
         if (nativeTts == null) init(context)

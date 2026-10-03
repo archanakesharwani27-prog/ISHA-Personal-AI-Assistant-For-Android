@@ -3,6 +3,7 @@ package com.aura.assistant
 import android.app.Application
 import android.util.Log
 import com.aura.assistant.auth.IshaAuthManager
+import com.aura.assistant.compat.DeviceCompatibilityHelper
 import com.aura.assistant.sync.IshaCrossDeviceBridge
 import com.aura.assistant.sync.IshaDeviceRegistry
 
@@ -24,6 +25,11 @@ class IshaApplication : Application() {
             IshaAuthManager.init(this)
             IshaDeviceRegistry.init(this)
             IshaCrossDeviceBridge.init(this)
+
+            // 3. OEM Compatibility: prevent aggressive battery managers (MIUI, ColorOS, Vivo, Samsung)
+            //    from killing WakeWordService, GeminiLiveClient, and background automations.
+            DeviceCompatibilityHelper.requestIgnoreBatteryOptimization(this)
+            Log.i("IshaApplication", "OEM compat initialized (${DeviceCompatibilityHelper.manufacturer}/${DeviceCompatibilityHelper.model})")
         } catch (e: Exception) {
             Log.e("IshaApplication", "Error during IshaApplication initialization", e)
         }

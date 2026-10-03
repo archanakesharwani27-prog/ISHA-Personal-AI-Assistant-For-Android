@@ -34,4 +34,12 @@ object RoutineEngine {
     fun buildMorningBriefingPrompt(userName: String): String {
         return "Good morning $userName! Aaj ke important reminders aur schedule ready hai. Kya aap sunna chahenge?"
     }
+
+    fun buildEveningSummaryPrompt(userName: String): String {
+        return "Good evening $userName! Aaj ka din kaisa raha? Kya aap aaj ka summary aur kal ke tasks dekhna chahte hain?"
+    }
+
+    fun buildBatterySaverPrompt(userName: String): String {
+        return "Boss, battery low ho rahi hai. Kya main battery saver mode on kar doon?"
+    }
 }

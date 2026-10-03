@@ -292,6 +292,42 @@ fun IshaMainScreen(
                     onBack = { viewModel.hideApiKeyScreen() }
                 )
             }
+
+            // ── Security Governance Confirmation Dialog ───────────────────────
+            val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
+            pendingConfirmation?.let { conf ->
+                AlertDialog(
+                    onDismissRequest = { viewModel.cancelPendingAction() },
+                    title = {
+                        Text(
+                            text = "Security Confirmation",
+                            color = androidx.compose.ui.graphics.Color.White,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = conf.promptText,
+                            color = androidx.compose.ui.graphics.Color.LightGray
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { viewModel.confirmPendingAction() }
+                        ) {
+                            Text("Confirm", color = androidx.compose.ui.graphics.Color(0xFF10A37F))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { viewModel.cancelPendingAction() }
+                        ) {
+                            Text("Cancel", color = androidx.compose.ui.graphics.Color.Gray)
+                        }
+                    },
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF202123)
+                )
+            }
         }
     }
 }

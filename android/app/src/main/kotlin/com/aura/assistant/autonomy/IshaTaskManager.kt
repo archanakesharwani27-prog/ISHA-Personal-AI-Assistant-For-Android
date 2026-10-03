@@ -28,6 +28,12 @@ typealias AuraTask = IshaTask
 
 /**
  * Manages background long-running tasks and reminders without maintaining persistent WebSocket connections.
+ *
+ * FUTURE SCAFFOLDING — Architecturally complete but not yet wired to active execution.
+ * Integration steps:
+ *   1. Wire IshaAssistantViewModel to call scheduleTask() when Gemini requests deferred execution
+ *   2. Create a WorkManager-backed IshaTaskWorker that polls getTasks() and dispatches via ExecutionEngine
+ *   3. Call updateTaskState() with COMPLETED/FAILED after each worker execution
  */
 object IshaTaskManager {
     private const val TAG = "IshaTaskManager"

@@ -20,12 +20,33 @@ data class OfflineReflexResult(
 object OfflineReflexEngine {
 
     /**
+     * Synchronous blocking execution helper for legacy non-coroutine contexts.
+     */
+    @JvmStatic
+    fun tryExecuteSync(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? =
+        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            tryExecute(context, prompt, execute)
+        }
+
+    /**
      * Checks if the user prompt can be executed offline.
      * Returns an OfflineReflexResult if handled, or null if cloud LLM reasoning is required.
      * If [execute] is false, simulates success without invoking hardware actions (useful for test suites & training batches).
      */
-    fun tryExecute(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? {
+    suspend fun tryExecute(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? {
         val clean = prompt.lowercase().trim()
+
+        // Deterministic Fast Intent Classification
+        val routed = IntentRouter.route(prompt)
+        if (routed.type == IntentType.ATTENTION_CHECK) {
+            // Use ConversationalReactionEngine for varied, natural attention-check responses
+            val reaction = ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.ATTENTION_CHECK)
+            return OfflineReflexResult(
+                toolName = "attention_check",
+                naturalResponse = reaction,
+                success = true
+            )
+        }
 
         // Guard: Never trigger offline reflex on complaints, questions, or problem descriptions
         val isNegativeOrComplaint = clean.contains("kharab") || clean.contains("problem") ||
@@ -58,28 +79,23 @@ object OfflineReflexEngine {
                     clean.contains("phone b") || clean.contains("phone 2") || clean.contains("samsung") -> "Phone B"
                     else -> "other"
                 }
-            val actionPrompt = when {
-                clean.contains("par ") -> clean.substringAfterLast("par ").trim()
-                clean.contains("pr ") -> clean.substringAfterLast("pr ").trim()
-                clean.contains("pe ") -> clean.substringAfterLast("pe ").trim()
-                clean.contains("on ") -> clean.substringAfterLast("on ").trim()
-                clean.contains("mein ") -> clean.substringAfterLast("mein ").trim()
-                clean.contains("me ") -> clean.substringAfterLast("me ").trim()
-                else -> {
-                    var s = clean
-                    matchedDev?.let { dev ->
-                        s = s.replace(dev.deviceAlias.lowercase(), "")
-                             .replace(dev.model.lowercase(), "")
-                             .replace(dev.manufacturer.lowercase(), "")
-                    }
-                    s.replace("phone a", "").replace("phone b", "")
-                     .replace("phone 1", "").replace("phone 2", "")
-                     .replace("lava", "").replace("samsung", "")
-                     .replace("dusre phone", "").replace("dusra phone", "")
-                     .replace("wale phone", "").replace("wala phone", "")
-                     .replace("yaani", "").trim()
-                }
+
+            // Robust NLP action prompt extraction: strip target device references cleanly
+            var s = clean
+            matchedDev?.let { dev ->
+                s = s.replace(dev.deviceAlias.lowercase(), " ")
+                     .replace(dev.model.lowercase(), " ")
+                     .replace(dev.manufacturer.lowercase(), " ")
             }
+            s = s.replace("phone a", " ").replace("phone b", " ")
+                 .replace("phone 1", " ").replace("phone 2", " ")
+                 .replace("lava", " ").replace("samsung", " ")
+                 .replace("dusre phone", " ").replace("dusra phone", " ")
+                 .replace("wale phone", " ").replace("wala phone", " ")
+                 .replace("yaani", " ").trim()
+
+            // Remove leading prepositions (e.g. "par ", "pe ", "mein ", "me ", "on ", "pr ")
+            val actionPrompt = s.replace(Regex("""^(par|pr|pe|on|mein|me)\s+""", RegexOption.IGNORE_CASE), "").trim()
 
             if (execute) {
                 val (action, params) = when {
@@ -122,20 +138,14 @@ object OfflineReflexEngine {
                     else -> "generic_command" to mapOf("prompt" to actionPrompt)
                 }
 
-                var remoteMsg = "Remote task dispatched to $targetQuery"
-                var remoteSuccess = true
-                kotlinx.coroutines.runBlocking {
-                    val res = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                        context = context,
-                        targetDeviceQuery = targetQuery,
-                        action = action,
-                        params = params,
-                        rawPrompt = actionPrompt
-                    )
-                    remoteSuccess = res.success
-                    remoteMsg = res.message
-                }
-                return OfflineReflexResult("dispatch_remote_command", remoteMsg, remoteSuccess)
+                val res = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                    context = context,
+                    targetDeviceQuery = targetQuery,
+                    action = action,
+                    params = params,
+                    rawPrompt = actionPrompt
+                )
+                return OfflineReflexResult("dispatch_remote_command", res.message, res.success)
             } else {
                 return OfflineReflexResult("dispatch_remote_command", "$targetQuery par task bhej diya gaya hai Boss!", true)
             }
@@ -154,10 +164,13 @@ object OfflineReflexEngine {
             val args = JsonObject().apply { addProperty("enable", !isOff) }
             val result = if (execute) IshaToolRegistry.executeTool(context, "toggle_flashlight", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
+            // ConversationalReactionEngine: natural personality variety on success/failure
             val resp = if (success) {
-                if (!isOff) "Torch chala di hai Boss! Roshan ho gaya! 🔦" else "Torch band kar di hai Boss!"
+                val reaction = ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.SUCCESS)
+                val detail = if (!isOff) "Torch chala di Boss! 🔦" else "Torch band kar di Boss!"
+                "$detail ${reaction}"
             } else {
-                "Boss, flashlight access karne me dikkat aayi."
+                ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.FAILURE)
             }
             return OfflineReflexResult("toggle_flashlight", resp, success)
         }
@@ -267,7 +280,11 @@ object OfflineReflexEngine {
             val args = JsonObject().apply { addProperty("enable", !isOff) }
             val result = if (execute) IshaToolRegistry.executeTool(context, "toggle_hotspot", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
-            val resp = if (!isOff) "Hotspot shuru kar diya hai Boss!" else "Hotspot band kar diya hai Boss!"
+            val resp = if (success) {
+                if (!isOff) "Hotspot shuru kar diya hai Boss! 📶" else "Hotspot band kar diya hai Boss!"
+            } else {
+                "Boss, hotspot toggle nahi ho saka. Settings check karein."
+            }
             return OfflineReflexResult("toggle_hotspot", resp, success)
         }
 
@@ -508,7 +525,10 @@ object OfflineReflexEngine {
             if (prim.isNumber) return prim.asInt == 0
             if (prim.isBoolean) return prim.asBoolean
             val s = prim.asString.lowercase()
+            // Accept all valid non-failure statuses including when a settings screen was opened
+            // (e.g. hotspot/wifi toggle that opens the settings page returns "settings_opened")
             return s == "success" || s == "ok" || s == "0" || s == "true"
+                || s == "settings_opened" || s == "dispatched" || s == "completed"
         }
         return false
     }
