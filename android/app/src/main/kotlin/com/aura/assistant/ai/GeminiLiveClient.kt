@@ -383,50 +383,49 @@ class GeminiLiveClient(private val context: Context) {
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
         AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
-        val key = Secrets.getActiveGeminiKey(context)
-        val (url, extraHeaders) = IshaGatewayConfig.getLiveWsEndpoint(context, key)
-        val reqBuilder = Request.Builder().url(url)
-        for ((k, v) in extraHeaders) {
-            reqBuilder.addHeader(k, v)
+
+        scope.launch {
+            val key = Secrets.getActiveGeminiKey(context)
+            val url = IshaGatewayConfig.getLiveWsUrlAsync(context, key)
+            val request = Request.Builder().url(url).build()
+
+            Log.i(TAG, "Connecting to Gemini Live WS with model: $activeModel (url=${url.take(55)}...)")
+
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
+                    _liveState.value = AuraLiveState.CONNECTED
+                    AuraDiagnostics.updateLive { it.copy(wsConnected = true, sessionState = AuraLiveState.CONNECTED) }
+                    sendSetupMessage()
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    Log.d(TAG, "WS text message received: ${text.take(80)}")
+                    handleServerMessage(text)
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    val text = bytes.utf8()
+                    Log.d(TAG, "WS binary message received (${bytes.size} bytes): ${text.take(80)}")
+                    handleServerMessage(text)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.i(TAG, "WebSocket closing: $code / $reason")
+                    _liveState.value = AuraLiveState.IDLE
+                    AuraDiagnostics.updateLive { it.copy(wsConnected = false, sessionState = AuraLiveState.IDLE) }
+                    stopMicRecording()
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    val code = response?.code
+                    Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
+                    stopMicRecording()
+                    _liveState.value = AuraLiveState.ERROR
+                    AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
+                }
+            })
         }
-        val request = reqBuilder.build()
-
-        Log.i(TAG, "Connecting to Gemini Live WS with model: $activeModel")
-
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
-                _liveState.value = AuraLiveState.CONNECTED
-                AuraDiagnostics.updateLive { it.copy(wsConnected = true, sessionState = AuraLiveState.CONNECTED) }
-                sendSetupMessage()
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d(TAG, "WS text message received: ${text.take(80)}")
-                handleServerMessage(text)
-            }
-
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                val text = bytes.utf8()
-                Log.d(TAG, "WS binary message received (${bytes.size} bytes): ${text.take(80)}")
-                handleServerMessage(text)
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                Log.i(TAG, "WebSocket closing: $code / $reason")
-                _liveState.value = AuraLiveState.IDLE
-                AuraDiagnostics.updateLive { it.copy(wsConnected = false, sessionState = AuraLiveState.IDLE) }
-                stopMicRecording()
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                val code = response?.code
-                Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
-                stopMicRecording()
-                _liveState.value = AuraLiveState.ERROR
-                AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
-            }
-        })
     }
 
     private fun sendSetupMessage() {
