@@ -97,13 +97,21 @@ object IshaGatewayConfig {
     }
 
     /**
-     * Retrieves or refreshes an ephemeral token from the Cloudflare Gateway.
-     * Caches in-memory for 25 minutes.
+     * Invalidate any cached ephemeral token (e.g. on disconnect or WebSocket close).
      */
-    suspend fun getOrFetchEphemeralToken(context: Context): String? = withContext(Dispatchers.IO) {
+    fun invalidateEphemeralToken() {
+        cachedEphemeralToken = null
+        tokenExpiryTime = 0L
+    }
+
+    /**
+     * Retrieves or refreshes an ephemeral token from the Cloudflare Gateway.
+     * When forceRefresh is true, mints a fresh single-use token from the gateway.
+     */
+    suspend fun getOrFetchEphemeralToken(context: Context, forceRefresh: Boolean = true): String? = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val cached = cachedEphemeralToken
-        if (!cached.isNullOrBlank() && now < tokenExpiryTime) {
+        if (!forceRefresh && !cached.isNullOrBlank() && now < tokenExpiryTime) {
             return@withContext cached
         }
 
@@ -125,8 +133,8 @@ object IshaGatewayConfig {
                 val cleanToken = if (tokenName.contains("/")) tokenName.substringAfterLast("/") else tokenName
                 if (cleanToken.isNotBlank()) {
                     cachedEphemeralToken = cleanToken
-                    tokenExpiryTime = now + (25 * 60 * 1000L) // 25 minutes cache
-                    Log.i(TAG, "Minted and cached Gemini Live Ephemeral Token: ${cleanToken.take(10)}...")
+                    tokenExpiryTime = now + (15 * 60 * 1000L)
+                    Log.i(TAG, "Minted fresh Gemini Live Ephemeral Token: ${cleanToken.take(10)}...")
                     return@withContext cleanToken
                 }
             } else {
@@ -140,7 +148,7 @@ object IshaGatewayConfig {
 
     /**
      * Resolves the WebSocket URL for Gemini Live native audio duplex.
-     * Uses Ephemeral Tokens for zero-proxy latency and direct Google WebSocket connections.
+     * Always mints a fresh Ephemeral Token to prevent 'Token has been used too many times' 1011 close.
      */
     suspend fun getLiveWsUrlAsync(context: Context, customKey: String): String {
         // If user configured a custom key in Settings and gateway is not forced, use key directly
@@ -148,8 +156,8 @@ object IshaGatewayConfig {
             return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$customKey"
         }
 
-        // Zero-Key Mode: Fetch / use cached Ephemeral Token
-        val token = getOrFetchEphemeralToken(context)
+        // Zero-Key Mode: Always fetch a fresh single-use Ephemeral Token
+        val token = getOrFetchEphemeralToken(context, forceRefresh = true)
         if (!token.isNullOrBlank()) {
             return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=$token"
         }

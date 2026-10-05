@@ -412,6 +412,7 @@ class GeminiLiveClient(private val context: Context) {
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                     Log.i(TAG, "WebSocket closing: $code / $reason")
+                    IshaGatewayConfig.invalidateEphemeralToken()
                     _liveState.value = AuraLiveState.IDLE
                     AuraDiagnostics.updateLive { it.copy(wsConnected = false, sessionState = AuraLiveState.IDLE) }
                     stopMicRecording()
@@ -420,6 +421,7 @@ class GeminiLiveClient(private val context: Context) {
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val code = response?.code
                     Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
+                    IshaGatewayConfig.invalidateEphemeralToken()
                     stopMicRecording()
                     _liveState.value = AuraLiveState.ERROR
                     AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
@@ -701,9 +703,11 @@ class GeminiLiveClient(private val context: Context) {
                         }
 
                         // ── 2. Adaptive Far-Field Audio Gain with Clean Silence Gating ──
-                        // Does NOT amplify low ambient noise floors (fans, horns, background radio),
-                        // while intelligently boosting conversational speech at natural desk/arm distance.
+                        // When user stops speaking, immediately stream digital silence (zeroes)
+                        // so Google's server-side VAD detects silence in <300ms without waiting for 2s timeout.
+                        val isPostSpeechSilence = hasSpokenInTurn && consecutiveSilenceFrames >= 6
                         val adaptiveGain = when {
+                            isPostSpeechSilence -> 0.0f
                             rms < 0.005 -> 0.2f  // Silence floor - attenuate so server VAD detects silence immediately
                             rms < 0.020 -> if (vadResult.isSpeech) 3.2f else 0.2f  // Soft speech boosted, ambient noise floor attenuated!
                             rms < 0.050 -> 2.5f  // Normal conversational speech
@@ -711,7 +715,7 @@ class GeminiLiveClient(private val context: Context) {
                             else -> 1.2f         // Very loud / near mic
                         }
                         for (i in 0 until readShorts) {
-                            val sample = (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)
+                            val sample = if (isPostSpeechSilence) 0 else (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)
                             byteBuf[i * 2] = (sample and 0xFF).toByte()
                             byteBuf[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
                         }
@@ -1153,6 +1157,7 @@ class GeminiLiveClient(private val context: Context) {
             turnBuffer.clear()
             currentUserTurnAccumulator.clear()
             currentAssistantTurnAccumulator.clear()
+            IshaGatewayConfig.invalidateEphemeralToken()
             webSocket?.close(1000, "User disconnected")
             webSocket = null
             _liveState.value = AuraLiveState.IDLE

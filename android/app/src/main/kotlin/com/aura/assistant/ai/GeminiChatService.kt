@@ -213,10 +213,8 @@ class GeminiChatService(private val context: Context) {
                     errBody.contains("update your code", ignoreCase = true)
                 )
                 if (response.code == 503 || response.code == 429) {
-                    // Server overloaded — wait before trying next model to avoid hammering
-                    val delayMs = if (response.code == 503) 1500L else 2000L
-                    Log.w(TAG, "HTTP ${response.code} from $model, waiting ${delayMs}ms before fallback...")
-                    delay(delayMs)
+                    // Fast fallback: immediately try next candidate model without artificial sleep delay
+                    Log.w(TAG, "HTTP ${response.code} from $model, falling back immediately to next candidate...")
                     continue
                 }
                 if (response.code == 404 || response.code > 500 || isUnsupportedModel) {
@@ -411,11 +409,15 @@ class GeminiChatService(private val context: Context) {
             }
             add("tool_config", toolConfig)
 
-            // Generation Config: Low temperature (0.25) after tool completion ensures crisp, accurate spoken confirmation
+            // Generation Config: Low temperature (0.25) & zero thinking delay for instant spoken confirmation
             val genConfig = JsonObject().apply {
                 addProperty("temperature", 0.25)
                 addProperty("topP", 0.95)
                 addProperty("maxOutputTokens", 4096)
+                val thinking = JsonObject().apply {
+                    addProperty("thinkingBudget", 0)
+                }
+                add("thinkingConfig", thinking)
             }
             add("generationConfig", genConfig)
         }
@@ -451,7 +453,7 @@ class GeminiChatService(private val context: Context) {
                 val errBody = response.body?.string() ?: ""
                 Log.w(TAG, "Tool response model $candidateModel failed with HTTP ${response.code}: $errBody")
                 if (response.code == 503 || response.code == 429) {
-                    delay(if (response.code == 503) 1500L else 2000L)
+                    Log.w(TAG, "Tool response model $candidateModel HTTP ${response.code}, falling back immediately...")
                     continue
                 }
                 if (response.code == 404 || response.code >= 400) {
@@ -570,32 +572,55 @@ class GeminiChatService(private val context: Context) {
 
         Log.i(TAG, "buildRequestBody: prompt='$newPrompt', historySize=${history.size}, totalTurns=${contents.size()}")
 
-        // 3. Tools (Function Declarations) - Full comprehensive catalog
-        val tools = JsonArray().apply {
-            val toolHolder = JsonObject()
-            toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
-            add(toolHolder)
-        }
-        root.add("tools", tools)
-
-        // tool_config: enforce AUTO function calling mode
-        val toolConfig = JsonObject().apply {
-            val fnCallingConfig = JsonObject().apply {
-                addProperty("mode", "AUTO")
+        // 3. Smart Tool Pruning: Only attach 104 tool declarations (70KB) when action intent or image is present.
+        // Pure conversational queries ("Hi", "Kaise ho", "Explain X") run lean (<2KB payload) for sub-second TTFT!
+        val needsTools = imageBytes != null || isDeviceActionIntent(newPrompt) || history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
+        if (needsTools) {
+            val tools = JsonArray().apply {
+                val toolHolder = JsonObject()
+                toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
+                add(toolHolder)
             }
-            add("function_calling_config", fnCallingConfig)
-        }
-        root.add("tool_config", toolConfig)
+            root.add("tools", tools)
 
-        // 4. Generation Config: Fast dynamic temperature (0.2 for device actions, 0.7 for conversational chat)
+            val toolConfig = JsonObject().apply {
+                val fnCallingConfig = JsonObject().apply {
+                    addProperty("mode", "AUTO")
+                }
+                add("function_calling_config", fnCallingConfig)
+            }
+            root.add("tool_config", toolConfig)
+        }
+
+        // 4. Generation Config: Fast dynamic temperature & zero thinking delay for sub-second response
         val genConfig = JsonObject().apply {
             addProperty("temperature", getDynamicTemperature(newPrompt))
             addProperty("topP", 0.95)
             addProperty("maxOutputTokens", 4096)
+            val thinking = JsonObject().apply {
+                addProperty("thinkingBudget", 0)
+            }
+            add("thinkingConfig", thinking)
         }
         root.add("generationConfig", genConfig)
 
         return root
+    }
+
+    private fun isDeviceActionIntent(prompt: String): Boolean {
+        val lower = prompt.lowercase().trim()
+        val actionKeywords = listOf(
+            "khol", "open", "band", "close", "on kar", "off kar", "toggle", "chalu",
+            "bhejo", "send", "call", "phone", "dial", "lagao", "set", "alarm",
+            "timer", "volume", "brightness", "torch", "flashlight", "wifi",
+            "bluetooth", "hotspot", "screenshot", "camera", "photo", "whatsapp",
+            "message", "sms", "navigate", "location", "battery", "storage",
+            "clean", "clear", "type", "likho", "tap", "click", "search", "dhoondo",
+            "play", "chalao", "sunao", "youtube", "music", "song", "insta", "instagram",
+            "dialer", "contact", "read", "screen", "padh", "padho", "kya likha",
+            "dekh", "dekho", "dekho screen", "batao battery", "percentage"
+        )
+        return actionKeywords.any { lower.contains(it) }
     }
 
     private fun getDynamicTemperature(prompt: String): Double {

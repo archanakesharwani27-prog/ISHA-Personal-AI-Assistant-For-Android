@@ -220,7 +220,7 @@ fun IshaMainScreen(
                     liveTranscript = liveTranscript,
                     onCloseVoiceMode = { viewModel.stopVoiceMode() },
                     onToggleMute = { muted -> viewModel.setVoiceMuted(muted) },
-                    onStartListening = { viewModel.startVoiceMode() },
+                    onStartListening = { viewModel.retryConnection() },
                     onSendCameraImage = { bytes ->
                         viewModel.sendImageToLive(bytes, "Analyze what is in this camera frame")
                     },

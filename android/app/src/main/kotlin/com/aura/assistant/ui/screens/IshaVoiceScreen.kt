@@ -215,20 +215,34 @@ fun IshaVoiceScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Cosmic Energy Orb (Image 2)
-            CosmicEnergyOrb(
-                liveState = liveState,
-                amplitude = amplitude,
-                isMuted = isMuted,
-                orbSize = 280.dp
-            )
+            // Cosmic Energy Orb - Tap to reconnect or start listening when idle/error
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(enabled = liveState == AuraLiveState.IDLE || liveState == AuraLiveState.ERROR) {
+                        onStartListening()
+                    }
+            ) {
+                CosmicEnergyOrb(
+                    liveState = liveState,
+                    amplitude = amplitude,
+                    isMuted = isMuted,
+                    orbSize = 280.dp
+                )
+            }
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Status label with live state dot
+            // Status label with live state dot - clickable to reconnect
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = liveState == AuraLiveState.IDLE || liveState == AuraLiveState.ERROR) {
+                        onStartListening()
+                    }
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 val dotColor = when {
                     isMuted -> Color(0xFFFF5252)
