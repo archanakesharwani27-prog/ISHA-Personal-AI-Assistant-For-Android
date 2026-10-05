@@ -467,8 +467,8 @@ object OfflineReflexEngine {
             return OfflineReflexResult("dismiss_screen_popups", msg, true)
         }
 
-        // 16. Daily Briefing (Reflex)
-        if (clean.contains("briefing") || clean == "good morning" || clean == "morning update" || clean.contains("aaj ka din kaisa hai")) {
+        // 16. Daily Briefing (Reflex) - ONLY when user explicitly asks for briefing
+        if (clean.contains("briefing") || clean == "morning update" || clean.contains("aaj ka briefing") || clean.contains("daily briefing")) {
             val result = if (execute) IshaToolRegistry.executeTool(context, "get_daily_briefing", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
             val msg = result.get("message")?.asString ?: "Good morning Boss! Aaj ka briefing ready hai."
             return OfflineReflexResult("get_daily_briefing", msg, true)

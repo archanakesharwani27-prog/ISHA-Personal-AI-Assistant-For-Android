@@ -161,6 +161,10 @@ class GeminiLiveClient(private val context: Context) {
     @Volatile
     private var interruptedContext: InterruptedContext? = null
 
+    // Fast barge-in state: when user interrupts, suppress residual incoming server audio chunks
+    @Volatile
+    private var isBargeInActive = false
+
     // Rolling buffer of completed turns for in-session context continuity
     private val turnBuffer = ConversationTurnBuffer(maxTurns = 6)
 
@@ -623,6 +627,9 @@ class GeminiLiveClient(private val context: Context) {
                 var hasSpokenInTurn = false
                 var consecutiveSilenceFrames = 0
 
+                // Pre-barge-in audio buffer to ensure the very first word spoken by the user is streamed to server
+                val preBargeInBuffer = ArrayDeque<ByteArray>(3)
+
                 while (isActive && isMicRecordingActive && webSocket != null) {
                     val readShorts = record.read(shortBuf, 0, shortBuf.size)
                     if (readShorts > 0) {
@@ -641,20 +648,33 @@ class GeminiLiveClient(private val context: Context) {
                         // Process VAD for human speech classification and UI visualizer
                         val vadResult = vadDetector.process(shortBuf, readShorts)
 
-                        // ── 1. Acoustic Echo Gate & Intentional Barge-In ─────────────────
-                        val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 350L)
+                        // ── 1. Acoustic Echo Gate & Fast Sub-100ms Barge-In ───────────
+                        val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 250L)
                         if (isActivelyPlayingAudio) {
                             hasSpokenInTurn = false
                             consecutiveSilenceFrames = 0
-                            // Phone speaker output easily reaches RMS 0.08 - 0.25 at the mic.
-                            // To prevent speaker echo from falsely interrupting Aura, require deliberate user speech (RMS > 0.38)
-                            // and sustained energy over at least 8 frames (~320ms).
-                            if ((vadResult.isSpeech && rms > 0.38) || rms > 0.48) {
+
+                            // Instant user speech barge-in detection (user speech over phone speaker)
+                            val isUserSpeechIntent = (vadResult.isSpeech && rms >= 0.08) || rms >= 0.16
+                            if (isUserSpeechIntent) {
                                 bargeInConsecutiveFrames++
-                                if (bargeInConsecutiveFrames >= 8) {
-                                    Log.i(TAG, "Real user barge-in detected (RMS=$rms). Flushing playback & preserving context.")
+                                val frameCopy = ByteArray(readShorts * 2)
+                                for (j in 0 until readShorts) {
+                                    val s = shortBuf[j]
+                                    frameCopy[j * 2] = (s.toInt() and 0xFF).toByte()
+                                    frameCopy[j * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
+                                }
+                                if (preBargeInBuffer.size >= 2) preBargeInBuffer.removeFirst()
+                                preBargeInBuffer.addLast(frameCopy)
+
+                                if (bargeInConsecutiveFrames >= 2) { // 2 frames (~80ms) = instant speech cutoff!
+                                    Log.i(TAG, "Instant user barge-in detected (RMS=$rms, isSpeech=${vadResult.isSpeech}). Stopping playback immediately!")
                                     flushAudioPlayback()
                                     playbackEndTime = 0L
+                                    isBargeInActive = true
+                                    bargeInConsecutiveFrames = 0
+                                    _liveState.value = AuraLiveState.LISTENING
+
                                     val partialUser = currentUserTurnAccumulator.toString().trim()
                                     val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
                                     if (partialUser.isNotBlank() && partialAssistant.length >= 25) {
@@ -662,7 +682,6 @@ class GeminiLiveClient(private val context: Context) {
                                             userSaid = partialUser,
                                             assistantWasSaying = partialAssistant
                                         )
-                                        Log.i(TAG, "Client barge-in saved interrupted context: user='${partialUser.take(40)}', aura='${partialAssistant.take(40)}'")
                                         _turnCompletedFlow.tryEmit(
                                             LiveVoiceTurn(
                                                 userText = partialUser,
@@ -672,21 +691,27 @@ class GeminiLiveClient(private val context: Context) {
                                     }
                                     currentUserTurnAccumulator.clear()
                                     currentAssistantTurnAccumulator.clear()
-                                    bargeInConsecutiveFrames = 0
-                                    _liveState.value = AuraLiveState.INTERRUPTED
                                     AuraDiagnostics.updateLive {
                                         it.copy(
                                             interruptionCount = it.interruptionCount + 1,
-                                            sessionState = AuraLiveState.INTERRUPTED
+                                            sessionState = AuraLiveState.LISTENING
                                         )
                                     }
-                                    _liveState.value = AuraLiveState.LISTENING
+
+                                    // Immediately stream buffered speech frames to Gemini Live so first syllable is never lost!
+                                    while (preBargeInBuffer.isNotEmpty()) {
+                                        val b = preBargeInBuffer.removeFirst()
+                                        sendAudioChunk(b, b.size)
+                                    }
+                                    hasSpokenInTurn = true
+                                    consecutiveSilenceFrames = 0
                                 }
+                                continue
                             } else {
                                 bargeInConsecutiveFrames = 0
+                                preBargeInBuffer.clear()
+                                continue
                             }
-                            // CRITICAL: NEVER stream speaker audio back into mic to prevent echo loop
-                            continue
                         }
 
                         // ── Hybrid VAD: Fast Turn Finalization (Bypasses server silence timeout) ──
@@ -944,6 +969,7 @@ class GeminiLiveClient(private val context: Context) {
                 // Server detected user interruption
                 if (serverContent.has("interrupted") && serverContent.get("interrupted").asBoolean) {
                     Log.i(TAG, "Server acknowledged user interruption — preserving context (ChatGPT style)")
+                    isBargeInActive = false
                     flushAudioPlayback()
                     val partialUser = currentUserTurnAccumulator.toString().trim()
                     val partialAssistant = currentAssistantTurnAccumulator.toString().trim()
@@ -985,6 +1011,7 @@ class GeminiLiveClient(private val context: Context) {
 
                 // Spoken transcriptions
                 if (serverContent.has("inputTranscription")) {
+                    isBargeInActive = false
                     val inTx = serverContent.getAsJsonObject("inputTranscription")
                     val tx = inTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
@@ -1012,6 +1039,12 @@ class GeminiLiveClient(private val context: Context) {
                         enqueueAssistantText(tx)
                         currentAssistantTurnAccumulator.append(tx).append(" ")
                     }
+                }
+
+                // Discard residual model audio chunks if client barge-in is currently active
+                if (isBargeInActive && serverContent.has("modelTurn")) {
+                    Log.d(TAG, "Dropping residual modelTurn audio chunk during active client barge-in")
+                    return
                 }
 
                 // Audio chunks from model turn
@@ -1154,6 +1187,7 @@ class GeminiLiveClient(private val context: Context) {
             pendingTextMessages.clear()
             // Clear context buffers — stale context should not bleed across sessions
             interruptedContext = null
+            isBargeInActive = false
             turnBuffer.clear()
             currentUserTurnAccumulator.clear()
             currentAssistantTurnAccumulator.clear()
