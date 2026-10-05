@@ -1,0 +1,17 @@
+name = "isha-gateway"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Public environment variables
+[vars]
+SERVICE_NAME = "ISHA Cloud Edge Gateway"
+SERVICE_VERSION = "2.1.0"
+# Set ENFORCE_AUTH to "true" when you want only clients with the correct X-Isha-App-Token to access
+ENFORCE_AUTH = "false"
+ISHA_APP_SECRET = "isha_mobile_sec_v2_edge"
+
+# Secret variables:
+# Store your Master Google Gemini API Key securely using:
+#   npx wrangler secret put GEMINI_API_KEY
+# It will be encrypted by Cloudflare and never exposed to the client or in code!

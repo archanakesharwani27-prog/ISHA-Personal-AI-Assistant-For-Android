@@ -455,9 +455,9 @@ fun IshaSettingsSheet(
                             )
                         )
                         Text(
-                            text = if (hasCustomKeySet) ApiKeyManager.maskKey(userCustomKey) else "Using default system key",
+                            text = if (hasCustomKeySet) ApiKeyManager.maskKey(userCustomKey) else "Isha Cloud (Zero-Key Active)",
                             style = AuraTypography.bodySmall.copy(
-                                color = ChatGptTextSecondary,
+                                color = if (hasCustomKeySet) ChatGptTextSecondary else ChatGptAccentGreen,
                                 fontSize = 12.sp
                             )
                         )

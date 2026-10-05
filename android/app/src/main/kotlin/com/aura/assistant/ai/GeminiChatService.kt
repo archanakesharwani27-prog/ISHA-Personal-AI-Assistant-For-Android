@@ -3,6 +3,7 @@ package com.aura.assistant.ai
 import android.content.Context
 import android.util.Log
 import com.aura.assistant.config.Secrets
+import com.aura.assistant.config.IshaGatewayConfig
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.MessageRole
 import com.aura.assistant.memory.AuraExperienceDatabase
@@ -168,13 +169,16 @@ class GeminiChatService(private val context: Context) {
 
         var lastErrorMsg = "Gemini API Error"
         for (model in CANDIDATE_MODELS) {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+            val (url, extraHeaders) = IshaGatewayConfig.getChatStreamUrl(context, model, apiKey)
             val body = bodyStr.toRequestBody("application/json; charset=utf-8".toMediaType())
 
-            val request = Request.Builder()
+            val reqBuilder = Request.Builder()
                 .url(url)
                 .post(body)
-                .build()
+            for ((k, v) in extraHeaders) {
+                reqBuilder.addHeader(k, v)
+            }
+            val request = reqBuilder.build()
 
             val call = client.newCall(request)
             activeCall = call
@@ -422,8 +426,12 @@ class GeminiChatService(private val context: Context) {
         val modelsToTry = CANDIDATE_MODELS.subList(startIndex, CANDIDATE_MODELS.size) + CANDIDATE_MODELS.subList(0, startIndex)
 
         for (candidateModel in modelsToTry) {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$candidateModel:streamGenerateContent?alt=sse&key=$apiKey"
-            val request = Request.Builder().url(url).post(body).build()
+            val (url, extraHeaders) = IshaGatewayConfig.getChatStreamUrl(context, candidateModel, apiKey)
+            val reqBuilder = Request.Builder().url(url).post(body)
+            for ((k, v) in extraHeaders) {
+                reqBuilder.addHeader(k, v)
+            }
+            val request = reqBuilder.build()
 
             val call = client.newCall(request)
             activeCall = call
