@@ -70,3 +70,5 @@ build_output.txt
 scratch/
 scratch_*.py
 /hey_isha*.onnx
+node_modules/
+.wrangler/

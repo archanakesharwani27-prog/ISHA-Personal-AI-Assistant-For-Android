@@ -16,6 +16,7 @@ import com.aura.assistant.audio.AuraVadDetector
 import com.aura.assistant.audio.MicOwnershipManager
 import com.aura.assistant.audio.MicOwner
 import com.aura.assistant.config.Secrets
+import com.aura.assistant.config.IshaGatewayConfig
 import com.aura.assistant.vision.ScreenFrameSampler
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -383,8 +384,12 @@ class GeminiLiveClient(private val context: Context) {
         _liveState.value = AuraLiveState.CONNECTING
         AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
         val key = Secrets.getActiveGeminiKey(context)
-        val url = "$BASE_WS_URL?key=$key"
-        val request = Request.Builder().url(url).build()
+        val (url, extraHeaders) = IshaGatewayConfig.getLiveWsEndpoint(context, key)
+        val reqBuilder = Request.Builder().url(url)
+        for ((k, v) in extraHeaders) {
+            reqBuilder.addHeader(k, v)
+        }
+        val request = reqBuilder.build()
 
         Log.i(TAG, "Connecting to Gemini Live WS with model: $activeModel")
 

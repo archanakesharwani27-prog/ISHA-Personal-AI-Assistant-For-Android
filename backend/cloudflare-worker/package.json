@@ -1,0 +1,25 @@
+{
+  "name": "isha-cloudflare-gateway",
+  "version": "2.1.0",
+  "description": "High-Performance Cloudflare Edge Gateway & Proxy for ISHA Personal AI Assistant",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "isha",
+    "assistant",
+    "cloudflare-worker",
+    "gemini",
+    "gemini-live",
+    "websocket",
+    "edge"
+  ],
+  "author": "Ansh Kesharwani",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}
