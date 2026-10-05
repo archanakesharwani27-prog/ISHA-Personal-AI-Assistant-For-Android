@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         @Volatile var instance: MainActivity? = null
     }
 
-    private val viewModel: IshaAssistantViewModel by viewModels()
+    val viewModel: IshaAssistantViewModel by viewModels()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ── Shake Sensor State ─────────────────────────────────────────────────────
@@ -122,24 +122,30 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val SHAKE_MAX_INTERVAL_MS = 600L
     private val SHAKE_COOLDOWN_MS = 2500L
 
-    // ── Native Caller Name Announcer TTS ──────────────────────────────────────
-    private var nativeTts: TextToSpeech? = null
-    private var isTtsReady = false
-    private var hasAnnouncedCurrentCall = false
-    private var lastAnnouncedCallerTime = 0L
-    private var lastAnnouncedCallerNumber = ""
 
     // ── Wake Word Receiver ────────────────────────────────────────────────────
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == WakeWordService.ACTION_WAKE) {
                 val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON) ?: "wake"
-                Log.i(TAG, "Wake broadcast received: reason=$reason")
+                Log.i(TAG, "Wake broadcast received: reason=$reason — engaging Gemini Live Voice")
                 if (reason != "shake") {
                     mainHandler.post {
-                        viewModel.onMicButtonPressed()
+                        startVoiceModeDirectly()
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Directly engages Gemini Bidirectional Live Voice mode with low-latency WebSocket ("Aoede").
+     */
+    fun startVoiceModeDirectly() {
+        runOnUiThread {
+            if (!viewModel.isVoiceModeActive.value) {
+                Log.i(TAG, "Starting Gemini Live Voice duplex mode directly")
+                viewModel.startVoiceMode()
             }
         }
     }
@@ -161,7 +167,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     TelephonyManager.EXTRA_STATE_OFFHOOK,
                     TelephonyManager.EXTRA_STATE_IDLE -> {
                         IshaCallAnnouncerManager.onCallEnded(ctx)
-                        hasAnnouncedCurrentCall = false
                     }
                 }
             } else if (intent?.action == IshaCallScreeningService.ACTION_PRE_CALL_SCREENED) {
@@ -176,7 +181,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     IshaCallAnnouncerManager.onCallRinging(ctx, callerName, number)
                 } else {
                     IshaCallAnnouncerManager.onCallEnded(ctx)
-                    hasAnnouncedCurrentCall = false
                 }
             }
         }
@@ -209,12 +213,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         checkAndRequestPermissions()
         registerReceivers()
         initShakeSensor()
-        initNativeTts()
         IshaCallAnnouncerManager.init(this)
-
-
         IshaAuthManager.init(this)
-        startWakeWordService()
+        com.aura.assistant.sync.IshaDeviceRegistry.init(this)
+        com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
+
+        val isVoiceWake = intent.getBooleanExtra("open_voice_mode", false) ||
+                intent.action == WakeWordService.ACTION_WAKE ||
+                intent.action == "com.aura.assistant.WAKE_ACTIVATE" ||
+                intent.action == Intent.ACTION_ASSIST ||
+                intent.action == "android.intent.action.VOICE_COMMAND"
+
+        if (!isVoiceWake) {
+            startWakeWordService()
+        }
         handleWakeIntent(intent)
 
         setContent {
@@ -281,27 +293,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             return
         }
         val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON)
-        if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null) {
-            mainHandler.postDelayed({
-                viewModel.onMicButtonPressed()
-            }, 300)
-        } else if (action == Intent.ACTION_ASSIST || action == "android.intent.action.VOICE_COMMAND") {
-            mainHandler.postDelayed({
-                viewModel.onMicButtonPressed()
-            }, 300)
-        } else if (intent.getBooleanExtra("open_voice_mode", false)) {
-            mainHandler.postDelayed({
-                if (!viewModel.isVoiceModeActive.value) {
-                    viewModel.startVoiceMode()
-                }
-            }, 200)
+        if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null || intent.getBooleanExtra("open_voice_mode", false) || action == Intent.ACTION_ASSIST || action == "android.intent.action.VOICE_COMMAND") {
+            startVoiceModeDirectly()
         }
     }
 
     private fun startWakeWordService() {
         try {
             val prefs = getSharedPreferences("aura_settings", Context.MODE_PRIVATE)
-            val isWakeEnabled = prefs.getBoolean("wake_word_enabled", false)
+            val isWakeEnabled = prefs.getBoolean("wake_word_enabled", true)
             val isShakeEnabled = prefs.getBoolean("shake_enabled", true)
             val serviceIntent = Intent(this, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_CONFIG
@@ -374,6 +374,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 startActivity(overlayIntent)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to launch overlay permission screen: ${e.message}")
+            }
+        }
+
+        // Pre-ringing Call Screening Role for Truecaller-like 0ms interception
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val roleManager = getSystemService(android.app.role.RoleManager::class.java)
+                if (roleManager != null && roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
+                    if (!roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING)) {
+                        val roleIntent = roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING)
+                        startActivityForResult(roleIntent, 8821)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "RoleManager ROLE_CALL_SCREENING check skipped: ${e.message}")
             }
         }
     }
@@ -463,6 +478,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         } else {
             sensorManager?.unregisterListener(this)
         }
+        com.aura.assistant.sync.IshaDeviceRegistry.registerHeartbeat(this)
+        com.aura.assistant.sync.IshaCrossDeviceBridge.startInboxListener(this)
     }
 
     override fun onUserLeaveHint() {
@@ -504,8 +521,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         try { unregisterReceiver(shakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(screenShareStopReceiver) } catch (_: Exception) {}
-        stopCallerAnnouncement()
-        try { nativeTts?.shutdown() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -579,80 +594,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    // ── Caller Name Announcer ──────────────────────────────────────────────────
-    private fun initNativeTts() {
-        try {
-            nativeTts = TextToSpeech(applicationContext) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    nativeTts?.language = Locale("en", "IN")
-                    nativeTts?.setSpeechRate(0.92f)
-                    isTtsReady = true
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun announceCaller(callerName: String, number: String) {
-        if (hasAnnouncedCurrentCall) return
-        val now = System.currentTimeMillis()
-        if (now - lastAnnouncedCallerTime < 10000L && (lastAnnouncedCallerNumber == number || number.isBlank())) return
-
-        hasAnnouncedCurrentCall = true
-        lastAnnouncedCallerTime = now
-        lastAnnouncedCallerNumber = number
-
-        val announcement = if (callerName.isNotBlank() && callerName != "Unknown Caller") {
-            "Incoming call from $callerName identified by ISHA"
-        } else if (number.isNotBlank()) {
-            "Incoming call from $number identified by ISHA"
-        } else {
-            "Incoming call identified by ISHA"
-        }
-
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        val ringMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
-        if (ringMode == AudioManager.RINGER_MODE_SILENT) return
-
-        val params = Bundle().apply {
-            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
-        }
-        if (isTtsReady && nativeTts != null) {
-            nativeTts?.speak(announcement, TextToSpeech.QUEUE_FLUSH, params, "ISHA_CALL_ANNOUNCE")
-        }
-    }
-
-    private fun stopCallerAnnouncement() {
-        try {
-            nativeTts?.stop()
-        } catch (_: Exception) {}
-    }
-
+    // ── Contact Name Resolution ────────────────────────────────────────────────
     private fun getContactName(phoneNumber: String): String {
-        if (phoneNumber.isBlank()) return "Unknown Caller"
-
-        // 1. Check ISHA's persistent Contact Memory (with old number awareness!)
-        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(this, phoneNumber)
-        if (memoryMatch != null) {
-            return if (memoryMatch.isOldNumber) {
-                "${memoryMatch.name} (purana number)"
-            } else {
-                memoryMatch.name
-            }
-        }
-
-        try {
-            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
-            val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
-            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    if (nameIdx >= 0) {
-                        val name = cursor.getString(nameIdx)
-                        if (!name.isNullOrBlank()) return name
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return phoneNumber
+        return IshaCallAnnouncerManager.resolveContactName(this, phoneNumber).first
     }
 }

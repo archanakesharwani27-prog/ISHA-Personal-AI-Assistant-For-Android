@@ -62,8 +62,10 @@ fun IshaMainScreen(
     val textSize by viewModel.textSize.collectAsState()
     val selectedVoice by viewModel.selectedVoice.collectAsState()
     val selectedLanguage by viewModel.selectedLanguage.collectAsState()
+    val voiceLanguage by viewModel.voiceLanguage.collectAsState()
     val isSoundEnabled by viewModel.isSoundEnabled.collectAsState()
     val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
+    val settingsState by viewModel.settingsState.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
 
     // Activity Launchers for Attachments
@@ -229,7 +231,9 @@ fun IshaMainScreen(
                     onStopScreenSharing = {
                         viewModel.stopLiveScreenShare()
                     },
-                    userName = "Ansh"
+                    userName = "Ansh",
+                    selectedLanguage = voiceLanguage,
+                    onSelectLanguage = { viewModel.setVoiceLanguage(it) }
                 )
             }
 
@@ -256,6 +260,7 @@ fun IshaMainScreen(
                     isWakeWordEnabled = isWakeWordEnabled,
                     isShakeEnabled = isShakeEnabled,
                     isMessageSpeakEnabled = isMessageSpeakEnabled,
+                    isCallAnnouncementEnabled = settingsState.isCallAnnouncementEnabled,
                     userProfile = userProfile,
                     selectedVoice = selectedVoice,
                     selectedLanguage = selectedLanguage,
@@ -264,6 +269,7 @@ fun IshaMainScreen(
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },
+                    onCallAnnouncementToggle = { viewModel.setCallAnnouncementEnabled(it) },
                     onVoiceChange = { viewModel.setSelectedVoice(it) },
                     onLanguageChange = { viewModel.setSelectedLanguage(it) },
                     onTextSizeChange = { viewModel.setTextSize(it) },
@@ -287,6 +293,42 @@ fun IshaMainScreen(
             if (isApiKeyScreenVisible) {
                 IshaApiKeyScreen(
                     onBack = { viewModel.hideApiKeyScreen() }
+                )
+            }
+
+            // ── Security Governance Confirmation Dialog ───────────────────────
+            val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
+            pendingConfirmation?.let { conf ->
+                AlertDialog(
+                    onDismissRequest = { viewModel.cancelPendingAction() },
+                    title = {
+                        Text(
+                            text = "Security Confirmation",
+                            color = androidx.compose.ui.graphics.Color.White,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = conf.promptText,
+                            color = androidx.compose.ui.graphics.Color.LightGray
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { viewModel.confirmPendingAction() }
+                        ) {
+                            Text("Confirm", color = androidx.compose.ui.graphics.Color(0xFF10A37F))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { viewModel.cancelPendingAction() }
+                        ) {
+                            Text("Cancel", color = androidx.compose.ui.graphics.Color.Gray)
+                        }
+                    },
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF202123)
                 )
             }
         }

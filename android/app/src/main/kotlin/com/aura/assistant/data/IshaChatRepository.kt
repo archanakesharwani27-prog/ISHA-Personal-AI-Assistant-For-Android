@@ -43,56 +43,54 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
         private const val TAG = "IshaChatRepo"
         private const val SESSIONS_FILE = "chat_sessions.json"
         private const val CHATS_DIR = "isha_chats"
+
+        fun sanitizeUserId(uid: String): String {
+            val clean = uid.trim().lowercase()
+            return if (clean.isBlank()) "guest" else clean.replace(Regex("[^a-zA-Z0-9_]"), "_")
+        }
     }
 
     private val gson = Gson()
     @Volatile private var currentUserId: String = sanitizeUserId(initialUserId)
 
-    private fun sanitizeUserId(uid: String): String {
-        val clean = uid.trim().lowercase()
-        return if (clean.isBlank()) "guest" else clean.replace(Regex("[^a-zA-Z0-9_]"), "_")
-    }
-
     private fun getUserDir(): File {
         val dir = File(context.filesDir, "$CHATS_DIR/user_$currentUserId")
         if (!dir.exists()) {
             dir.mkdirs()
-            // Auto-migrate legacy root sessions if this is the first user directory
-            migrateLegacySessionsIfNeeded(dir)
         }
         return dir
     }
 
     private fun getSessionsFile(): File = File(getUserDir(), SESSIONS_FILE)
 
-    private fun migrateLegacySessionsIfNeeded(targetUserDir: File) {
-        try {
-            val legacyRootDir = File(context.filesDir, CHATS_DIR)
-            val legacySessionsFile = File(legacyRootDir, SESSIONS_FILE)
-            if (legacySessionsFile.exists()) {
-                val targetFile = File(targetUserDir, SESSIONS_FILE)
-                if (!targetFile.exists()) {
-                    legacySessionsFile.copyTo(targetFile, overwrite = true)
-                    legacyRootDir.listFiles()?.forEach { f ->
-                        if (f.name.startsWith("session_") && f.name.endsWith(".json")) {
-                            f.copyTo(File(targetUserDir, f.name), overwrite = true)
-                        }
-                    }
-                    Log.i(TAG, "Migrated legacy chats to user directory: ${targetUserDir.name}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Legacy migration error", e)
-        }
-    }
-
     @Synchronized
     fun switchUser(userId: String) {
         val clean = sanitizeUserId(userId)
         if (clean != currentUserId) {
-            Log.i(TAG, "Switching chat partition: $currentUserId -> $clean")
+            Log.i(TAG, "Switching chat partition strictly: $currentUserId -> $clean")
             currentUserId = clean
-            getUserDir() // ensure directory exists
+            val dir = getUserDir()
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+        }
+    }
+
+    @Synchronized
+    fun upsertSessionAndMessages(session: ChatSession, messages: List<ChatMessage>) {
+        val sessions = getAllSessions()
+        val idx = sessions.indexOfFirst { it.id == session.id }
+        if (idx >= 0) {
+            sessions[idx] = session
+        } else {
+            sessions.add(0, session)
+        }
+        sessions.sortByDescending { it.updatedAt }
+        saveSessions(sessions)
+
+        if (messages.isNotEmpty()) {
+            val file = File(getUserDir(), "session_${session.id}.json")
+            file.writeText(gson.toJson(messages))
         }
     }
 

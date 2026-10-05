@@ -21,6 +21,7 @@ object IshaSettingsManager {
     private const val KEY_TEXT_SIZE = "text_size"
     private const val KEY_SOUND_ENABLED = "sound_enabled"
     private const val KEY_MESSAGE_SPEAK = "message_speak_enabled"
+    private const val KEY_CALL_ANNOUNCEMENT = "call_announcement_enabled"
 
     private var prefs: SharedPreferences? = null
 
@@ -42,7 +43,8 @@ object IshaSettingsManager {
             val lang = p.getString(KEY_LANGUAGE, "Auto-detect") ?: "Auto-detect"
             val textSz = p.getString(KEY_TEXT_SIZE, "Default") ?: "Default"
             val sound = p.getBoolean(KEY_SOUND_ENABLED, true)
-            val msgSpeak = p.getBoolean(KEY_MESSAGE_SPEAK, true)
+            val msgSpeak = false
+            val callAnnounce = p.getBoolean(KEY_CALL_ANNOUNCEMENT, true)
 
             _settingsState.value = IshaSettingsState(
                 isWakeWordEnabled = wake,
@@ -51,7 +53,8 @@ object IshaSettingsManager {
                 selectedLanguage = lang,
                 textSize = textSz,
                 isSoundEnabled = sound,
-                isMessageSpeakEnabled = msgSpeak
+                isMessageSpeakEnabled = false,
+                isCallAnnouncementEnabled = callAnnounce
             )
         }
     }
@@ -100,6 +103,15 @@ object IshaSettingsManager {
     fun setMessageSpeak(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_MESSAGE_SPEAK, enabled).apply()
         _settingsState.value = _settingsState.value.copy(isMessageSpeakEnabled = enabled)
+    }
+
+    fun setCallAnnouncement(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_CALL_ANNOUNCEMENT, enabled).apply()
+        _settingsState.value = _settingsState.value.copy(isCallAnnouncementEnabled = enabled)
+    }
+
+    fun isCallAnnouncementEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_CALL_ANNOUNCEMENT, true)
     }
 
     fun getSavedVoice(context: Context): String {

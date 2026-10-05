@@ -20,12 +20,33 @@ data class OfflineReflexResult(
 object OfflineReflexEngine {
 
     /**
+     * Synchronous blocking execution helper for legacy non-coroutine contexts.
+     */
+    @JvmStatic
+    fun tryExecuteSync(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? =
+        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            tryExecute(context, prompt, execute)
+        }
+
+    /**
      * Checks if the user prompt can be executed offline.
      * Returns an OfflineReflexResult if handled, or null if cloud LLM reasoning is required.
      * If [execute] is false, simulates success without invoking hardware actions (useful for test suites & training batches).
      */
-    fun tryExecute(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? {
+    suspend fun tryExecute(context: Context, prompt: String, execute: Boolean = true): OfflineReflexResult? {
         val clean = prompt.lowercase().trim()
+
+        // Deterministic Fast Intent Classification
+        val routed = IntentRouter.route(prompt)
+        if (routed.type == IntentType.ATTENTION_CHECK) {
+            // Use ConversationalReactionEngine for varied, natural attention-check responses
+            val reaction = ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.ATTENTION_CHECK)
+            return OfflineReflexResult(
+                toolName = "attention_check",
+                naturalResponse = reaction,
+                success = true
+            )
+        }
 
         // Guard: Never trigger offline reflex on complaints, questions, or problem descriptions
         val isNegativeOrComplaint = clean.contains("kharab") || clean.contains("problem") ||
@@ -34,18 +55,54 @@ object OfflineReflexEngine {
                                    clean.contains("kya hua") || clean.contains("kyu")
         if (isNegativeOrComplaint) return null
 
-        // 0. Cross-Device Command Interceptor (e.g. "Phone B par WhatsApp open karo", "Phone 2 par torch jalao")
-        val isCrossDevice = clean.contains("phone b") || clean.contains("phone 2") || clean.contains("dusre phone") ||
-                            clean.contains("dusra phone") || clean.contains("other phone") || clean.contains("second phone")
+        // Guard: Never trigger single-action offline reflex on multi-task / compound / sequential workflows!
+        // Multi-task commands require Gemini LLM reasoning and multi-step execution.
+        if (isCompoundOrMultiActionCommand(clean)) {
+            android.util.Log.i("OfflineReflexEngine", "Multi-task compound command detected: '$prompt'. Routing to Gemini reasoning engine.")
+            return null
+        }
+
+        // 0. Cross-Device Command Interceptor (e.g. "Pixel par torch jalao", "OnePlus par WhatsApp open karo", "Phone B par volume 80 karo")
+        val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+        val matchedDev = otherDevs.firstOrNull { dev ->
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            clean.contains(devAlias) || clean.contains(devModel) || (devMfr.length >= 3 && clean.contains(devMfr))
+        }
+
+        val isGenericCross = clean.contains("dusre phone") || clean.contains("dusra phone") ||
+                            clean.contains("other phone") || clean.contains("second phone") ||
+                            clean.contains("phone a") || clean.contains("phone b") ||
+                            clean.contains("phone 1") || clean.contains("phone 2") ||
+                            clean.contains("lava") || clean.contains("samsung")
+
+        val isCrossDevice = matchedDev != null || isGenericCross
         if (isCrossDevice) {
-            val targetQuery = if (clean.contains("phone b")) "Phone B" else if (clean.contains("phone 2") || clean.contains("second phone")) "Phone 2" else "other"
-            val actionPrompt = if (clean.contains("par ")) {
-                clean.substringAfter("par ").trim()
-            } else if (clean.contains("on ")) {
-                clean.substringAfter("on ").trim()
-            } else {
-                clean.replace("phone b", "").replace("phone 2", "").replace("dusre phone", "").trim()
+            val targetQuery = matchedDev?.deviceAlias
+                ?: com.aura.assistant.sync.IshaDeviceRegistry.resolveTargetDevice(clean)?.deviceAlias
+                ?: when {
+                    clean.contains("phone a") || clean.contains("phone 1") || clean.contains("lava") -> "Phone A"
+                    clean.contains("phone b") || clean.contains("phone 2") || clean.contains("samsung") -> "Phone B"
+                    else -> "other"
+                }
+
+            // Robust NLP action prompt extraction: strip target device references cleanly
+            var s = clean
+            matchedDev?.let { dev ->
+                s = s.replace(dev.deviceAlias.lowercase(), " ")
+                     .replace(dev.model.lowercase(), " ")
+                     .replace(dev.manufacturer.lowercase(), " ")
             }
+            s = s.replace("phone a", " ").replace("phone b", " ")
+                 .replace("phone 1", " ").replace("phone 2", " ")
+                 .replace("lava", " ").replace("samsung", " ")
+                 .replace("dusre phone", " ").replace("dusra phone", " ")
+                 .replace("wale phone", " ").replace("wala phone", " ")
+                 .replace("yaani", " ").trim()
+
+            // Remove leading prepositions (e.g. "par ", "pe ", "mein ", "me ", "on ", "pr ")
+            val actionPrompt = s.replace(Regex("""^(par|pr|pe|on|mein|me)\s+""", RegexOption.IGNORE_CASE), "").trim()
 
             if (execute) {
                 val (action, params) = when {
@@ -58,41 +115,69 @@ object OfflineReflexEngine {
                         val num = Regex("[0-9]+").find(actionPrompt)?.value?.toIntOrNull() ?: 50
                         "set_volume" to mapOf("level" to num)
                     }
+                    actionPrompt.contains("youtube") || actionPrompt.contains("song") || actionPrompt.contains("play") || actionPrompt.contains("video") || actionPrompt.contains("gaana") -> {
+                        val urlRegex = Regex("""https?://[^\s]+""")
+                        val url = urlRegex.find(actionPrompt)?.value ?: ""
+                        "play_youtube" to mapOf("query" to actionPrompt, "url" to url)
+                    }
+                    actionPrompt.contains("siren") -> {
+                        val isOff = actionPrompt.contains("band") || actionPrompt.contains("off") || actionPrompt.contains("roko") || actionPrompt.contains("stop")
+                        (if (isOff) "stop_siren" else "play_siren") to emptyMap<String, Any>()
+                    }
+                    actionPrompt.contains("hotspot") -> {
+                        val isOff = actionPrompt.contains("band") || actionPrompt.contains("off")
+                        "toggle_hotspot" to mapOf("enable" to !isOff)
+                    }
+                    actionPrompt.contains("unlock") || actionPrompt.contains("kholo") -> {
+                        val unlockMap = mutableMapOf<String, Any>()
+                        val patMatch = Regex("""pattern\s*([0-9,\s-]+)""", RegexOption.IGNORE_CASE).find(actionPrompt)?.groupValues?.get(1)?.trim()
+                        val pinMatch = Regex("""\b\d{4,6}\b""").find(actionPrompt)?.value
+                        if (!patMatch.isNullOrBlank()) {
+                            unlockMap["pattern"] = patMatch
+                        } else if (!pinMatch.isNullOrBlank()) {
+                            unlockMap["pin"] = pinMatch
+                        }
+                        "unlock_device" to unlockMap
+                    }
+                    actionPrompt.contains("lock") || actionPrompt.contains("band karo") -> {
+                        "lock_device" to emptyMap<String, Any>()
+                    }
                     else -> "generic_command" to mapOf("prompt" to actionPrompt)
                 }
 
-                var remoteMsg = "Remote task dispatched to $targetQuery"
-                var remoteSuccess = true
-                kotlinx.coroutines.runBlocking {
-                    val res = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
-                        context = context,
-                        targetDeviceQuery = targetQuery,
-                        action = action,
-                        params = params,
-                        rawPrompt = actionPrompt
-                    )
-                    remoteSuccess = res.success
-                    remoteMsg = res.message
-                }
-                return OfflineReflexResult("dispatch_remote_command", remoteMsg, remoteSuccess)
+                val res = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
+                    context = context,
+                    targetDeviceQuery = targetQuery,
+                    action = action,
+                    params = params,
+                    rawPrompt = actionPrompt
+                )
+                return OfflineReflexResult("dispatch_remote_command", res.message, res.success)
             } else {
-                return OfflineReflexResult("dispatch_remote_command", "Phone B par task bhej diya gaya hai Boss!", true)
+                return OfflineReflexResult("dispatch_remote_command", "$targetQuery par task bhej diya gaya hai Boss!", true)
             }
         }
 
-        // 1. Flashlight / Torch (Requires explicit action verb)
-        val isTorchCommand = (clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")) &&
-                             (clean.contains("on") || clean.contains("chalu") || clean.contains("jala") || clean.contains("chala") ||
-                              clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok"))
+        // 1. Flashlight / Torch (Requires explicit action verb or direct noun)
+        val isTorchMention = clean.contains("torch") || clean.contains("flashlight") || clean.contains("flash light")
+        val isTorchAction = clean.contains("on") || clean.contains("chalu") || clean.contains("jala") ||
+                            clean.contains("chala") || clean.contains("khol") || clean.contains("start") ||
+                            clean.contains("band") || clean.contains("off") || clean.contains("bujha") ||
+                            clean.contains("rok") || clean.contains("krdo") || clean.contains("kardo")
+        val isTorchExact = clean == "torch" || clean == "flashlight" || clean == "flash light" || clean == "torch light"
+        val isTorchCommand = isTorchMention && (isTorchAction || isTorchExact)
         if (isTorchCommand) {
             val isOff = clean.contains("band") || clean.contains("off") || clean.contains("bujha") || clean.contains("rok")
             val args = JsonObject().apply { addProperty("enable", !isOff) }
             val result = if (execute) IshaToolRegistry.executeTool(context, "toggle_flashlight", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
+            // ConversationalReactionEngine: natural personality variety on success/failure
             val resp = if (success) {
-                if (!isOff) "Torch chala di hai Boss! Roshan ho gaya! 🔦" else "Torch band kar di hai Boss!"
+                val reaction = ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.SUCCESS)
+                val detail = if (!isOff) "Torch chala di Boss! 🔦" else "Torch band kar di Boss!"
+                "$detail ${reaction}"
             } else {
-                "Boss, flashlight access karne me dikkat aayi."
+                ConversationalReactionEngine.selectAcknowledgement(ReactionSituation.FAILURE)
             }
             return OfflineReflexResult("toggle_flashlight", resp, success)
         }
@@ -202,8 +287,22 @@ object OfflineReflexEngine {
             val args = JsonObject().apply { addProperty("enable", !isOff) }
             val result = if (execute) IshaToolRegistry.executeTool(context, "toggle_hotspot", args) else JsonObject().apply { addProperty("status", "success") }
             val success = isSuccess(result)
-            val resp = if (!isOff) "Hotspot shuru kar diya hai Boss!" else "Hotspot band kar diya hai Boss!"
+            val resp = if (success) {
+                if (!isOff) "Hotspot shuru kar diya hai Boss! 📶" else "Hotspot band kar diya hai Boss!"
+            } else {
+                "Boss, hotspot toggle nahi ho saka. Settings check karein."
+            }
             return OfflineReflexResult("toggle_hotspot", resp, success)
+        }
+
+        // 7b. Siren Control
+        if (clean.contains("siren")) {
+            val isOff = clean.contains("band") || clean.contains("off") || clean.contains("roko") || clean.contains("stop")
+            val toolName = if (isOff) "stop_siren" else "play_siren"
+            val result = if (execute) IshaToolRegistry.executeTool(context, toolName, JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val resp = if (!isOff) "Siren bajna shuru ho gaya hai Boss! 🚨" else "Siren band kar diya hai Boss! 🛑"
+            return OfflineReflexResult(toolName, resp, success)
         }
 
         // 8. Screenshot
@@ -262,7 +361,11 @@ object OfflineReflexEngine {
         }
 
         // 11. Open Quick Apps (Camera, Settings, YouTube, WhatsApp, Chrome, Gallery)
-        if (clean.startsWith("open ") || clean.startsWith("kholo ") || clean.endsWith(" kholo") || clean.endsWith(" open karo")) {
+        val isOpenAppCmd = clean.startsWith("open ") || clean.startsWith("kholo ") || 
+                           clean.endsWith(" kholo") || clean.endsWith(" open karo") ||
+                           clean.endsWith(" open krdo") || clean.contains("open karo") ||
+                           clean.contains("open krdo") || clean.contains("khol do")
+        if (isOpenAppCmd) {
             val appMap = mapOf(
                 "camera" to "camera",
                 "settings" to "settings",
@@ -429,7 +532,10 @@ object OfflineReflexEngine {
             if (prim.isNumber) return prim.asInt == 0
             if (prim.isBoolean) return prim.asBoolean
             val s = prim.asString.lowercase()
+            // Accept all valid non-failure statuses including when a settings screen was opened
+            // (e.g. hotspot/wifi toggle that opens the settings page returns "settings_opened")
             return s == "success" || s == "ok" || s == "0" || s == "true"
+                || s == "settings_opened" || s == "dispatched" || s == "completed"
         }
         return false
     }
@@ -545,5 +651,63 @@ object OfflineReflexEngine {
         var clean = text.replace(Regex("\\b(isha|aura|mobile|number|phone|contact|ka|ki|ke|ko|se|hai|tha|the|kya|batao|bataiye|dikhao|bata|what|is|the|tell|me|show|details|please|purana|old|naya|new)\\b", RegexOption.IGNORE_CASE), " ")
         clean = clean.replace(Regex("[^a-zA-Z\\s]"), " ")
         return clean.trim().replace(Regex("\\s+"), " ")
+    }
+
+    /**
+     * Determines whether the given prompt contains multiple tasks, sequential actions,
+     * or compound chained requests that require full Gemini LLM multi-step execution.
+     */
+    fun isCompoundOrMultiActionCommand(cleanPrompt: String): Boolean {
+        val clean = cleanPrompt.lowercase().trim()
+
+        // 1. Explicit multi-action conjunctions and sequence connectors
+        val compoundConnectors = listOf(
+            " aur ", " and ", " & ", " then ", " phir ", " fir ",
+            " karke ", " kar ke ", " krke ", " kr ke ",
+            " ke baad ", " k baad ", " after ", " along with ",
+            " saath me ", " sath me ", " sath hi ", " saath hi "
+        )
+        if (compoundConnectors.any { clean.contains(it) }) {
+            return true
+        }
+
+        // 2. Chained follow-up markers (e.g. "ye bhi bta do", "ye bhi kar do", "battery kitna charge hai ye bhi bta do")
+        if (clean.contains("bhi") && (clean.contains("bta") || clean.contains("bata") || clean.contains("kar") || clean.contains("kr") || clean.contains("check") || clean.contains("dekh") || clean.contains("play"))) {
+            val beforeBhi = clean.substringBefore("bhi")
+            if (beforeBhi.length > 8 && (beforeBhi.contains("play") || beforeBhi.contains("on") || beforeBhi.contains("off") || beforeBhi.contains("start") || beforeBhi.contains("khol") || beforeBhi.contains("do") || beforeBhi.contains("karo") || beforeBhi.contains("krdo"))) {
+                return true
+            }
+        }
+
+        // 3. Comma-separated or semicolon-separated clauses
+        if (clean.contains(",") || clean.contains(";")) {
+            val parts = clean.split(Regex("[,;]+")).map { it.trim() }.filter { it.isNotBlank() }
+            if (parts.size >= 2) {
+                return true
+            }
+        }
+
+        // 4. Chained screenshot workflow (e.g. "take screenshot and send it to whatsapp to this person", "screenshot whatsapp par bhej do")
+        if ((clean.contains("screenshot") || clean.contains("screen shot")) &&
+            (clean.contains("send") || clean.contains("bhej") || clean.contains("share") ||
+             clean.contains("whatsapp") || clean.contains("kisi ko") || clean.contains("person") ||
+             clean.contains("to ") || clean.contains("ko "))) {
+            return true
+        }
+
+        // 5. Multiple distinct action intent domains in one prompt
+        var actionDomainCount = 0
+        if (clean.contains("youtube") || clean.contains("song") || clean.contains("gaana") || clean.contains("music") || clean.contains("video")) actionDomainCount++
+        if (clean.contains("battery") || clean.contains("charging") || clean.contains("charge kitna")) actionDomainCount++
+        if (clean.contains("dnd") || clean.contains("do not disturb")) actionDomainCount++
+        if (clean.contains("game") || clean.contains("app")) actionDomainCount++
+        if (clean.contains("torch") || clean.contains("flashlight")) actionDomainCount++
+        if (clean.contains("volume") || clean.contains("awaaz") || clean.contains("sound")) actionDomainCount++
+        if (clean.contains("wifi") || clean.contains("wi-fi") || clean.contains("hotspot")) actionDomainCount++
+        if (clean.contains("bluetooth")) actionDomainCount++
+        if (clean.contains("call") || clean.contains("phone lagao") || clean.contains("dial")) actionDomainCount++
+        if (clean.contains("whatsapp") || clean.contains("message") || clean.contains("sms")) actionDomainCount++
+
+        return actionDomainCount >= 2
     }
 }

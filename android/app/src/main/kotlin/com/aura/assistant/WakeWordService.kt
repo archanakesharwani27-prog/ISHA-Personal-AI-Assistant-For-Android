@@ -8,8 +8,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -19,9 +21,11 @@ import kotlin.math.sqrt
 import com.rementia.openwakeword.lib.WakeWordEngine
 import com.rementia.openwakeword.lib.model.WakeWordModel
 import com.rementia.openwakeword.lib.model.DetectionMode
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -30,6 +34,9 @@ import com.aura.assistant.audio.AuraDiagnostics
 import com.aura.assistant.IshaDynamicIsland
 import com.aura.assistant.audio.MicOwnershipManager
 import com.aura.assistant.audio.MicOwner
+import com.aura.assistant.wakeword.HeyIshaDetector
+import kotlinx.coroutines.isActive
+import android.annotation.SuppressLint as SL
 
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -79,14 +86,17 @@ class WakeWordService : Service(), SensorEventListener {
         private const val SAMPLE_RATE   = 16_000
         private const val FRAME_SIZE    = 512   // ~32 ms per frame @ 16 kHz
 
-        private const val COOLDOWN_MS     = 3_500L  // 3.5s cooldown after trigger
+        private const val COOLDOWN_MS     = 5_000L  // 5.0s cooldown after trigger to prevent echo
 
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
-        // A score spike from a single noise/clap frame is NOT a wake word.
-        // Score must stay above MIN_SCORE for CONFIRM_FRAMES consecutive frames
-        // (~240ms @ 80ms/chunk) before we fire. This prevents random voice false triggers.
-        private const val MIN_SCORE      = 0.60f  // Robust acoustic keyword threshold (prevents random noise triggers)
-        private const val CONFIRM_FRAMES = 3       // 3 consecutive frames required for confirmation
+        // Anti-false-positive calibration:
+        // Sustained two-word phrase ("Hey Isha") detection: Requires 4 consecutive frames (>= 0.75f)
+        // OR very high confidence (>= 0.90f) sustained for at least 3 consecutive frames (~240ms).
+        // Single isolated frame spikes (from horns, vehicle revs, doors, or single words) are NEVER allowed to trigger!
+        private const val MIN_SCORE              = 0.75f  // Keyword score threshold
+        private const val HIGH_CONFIDENCE_SCORE  = 0.90f  // High-confidence threshold (requires at least 3 frames)
+        private const val CONFIRM_FRAMES         = 4      // 4 consecutive frames (~320ms) required for standard score
+        private const val HIGH_CONF_FRAMES       = 3      // 3 consecutive frames required (~240ms) to reject single noise spikes
 
         // AURA Calibrated Double Quick-Shake Config
         private const val SHAKE_THRESHOLD       = 3.25f // Calibrated shake peak (3.25g)
@@ -111,10 +121,18 @@ class WakeWordService : Service(), SensorEventListener {
     // N-consecutive-frames counter (Google KWS style)
     @Volatile private var consecutiveFramesAboveThreshold = 0
 
-    // openWakeWord ONNX acoustic keyword engine
+    // openWakeWord ONNX acoustic keyword engine (fallback for non-Isha models)
     private var wakeWordEngine: WakeWordEngine? = null
-    private val serviceScope = CoroutineScope(Dispatchers.Default)
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + CoroutineExceptionHandler { _, t ->
+        Log.e(TAG, "WakeWord serviceScope caught uncaught exception: ${t.message}", t)
+    })
     private var detectionJob: Job? = null
+
+    // ── HeyIshaDetector (custom 128-dim mel ONNX pipeline) ─────────────────────
+    private var heyIshaDetector: HeyIshaDetector? = null
+    private var heyIshaAudioRecord: AudioRecord? = null
+    private var heyIshaJob: Job? = null
+    @Volatile private var heyIshaConsecutive = 0
 
     // AURA Quick Shake state
     private var shakePeakCount = 0
@@ -131,12 +149,12 @@ class WakeWordService : Service(), SensorEventListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
-                    Log.i(TAG, "Screen turned OFF — pausing mic (privacy + battery)")
-                    pauseWakeEngine()
+                    Log.i(TAG, "Screen turned OFF — wake word continues listening in background")
+                    // Do NOT pause wake engine here; hands-free wake word must listen while phone is locked/resting!
                 }
                 Intent.ACTION_SCREEN_ON -> {
-                    Log.i(TAG, "Screen turned ON — resuming wake word mic if enabled")
-                    if (isRunning && wakeEnabled && !isPaused) {
+                    Log.i(TAG, "Screen turned ON")
+                    if (isRunning && wakeEnabled && !isPaused && wakeWordEngine == null) {
                         startWakeEngine()
                     }
                 }
@@ -180,6 +198,13 @@ class WakeWordService : Service(), SensorEventListener {
         createSilentNotificationChannel()
         initShakeSensor()
         registerScreenReceiver()
+        try {
+            com.aura.assistant.auth.IshaAuthManager.init(this)
+            com.aura.assistant.sync.IshaDeviceRegistry.init(this)
+            com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
+        } catch (e: Exception) {
+            android.util.Log.w("WakeWordService", "CrossDeviceBridge init error: ${e.message}")
+        }
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -240,24 +265,47 @@ class WakeWordService : Service(), SensorEventListener {
             ACTION_PAUSE -> { isPaused = true; pauseWakeEngine(); return START_STICKY }
             ACTION_RESUME -> {
                 isPaused = false
-                if (isRunning && wakeEnabled) startWakeEngine()
+                isRunning = true
+                consecutiveFramesAboveThreshold = 0
+                lastTriggerTime = System.currentTimeMillis() + 1500L // 1.5s grace period on resume
+                // Add 1500ms delay before opening mic so speaker echoes/ambient chatter settle completely
+                handler.removeCallbacksAndMessages("WAKE_RESUME_TOKEN")
+                handler.postAtTime({
+                    if (!isPaused && wakeEnabled && !isTtsSpeaking) {
+                        startWakeEngine()
+                    }
+                }, "WAKE_RESUME_TOKEN", SystemClock.uptimeMillis() + 1500L)
                 return START_STICKY
             }
             ACTION_CONFIG -> {
-                wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
-                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
+                wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", true))
+                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", true))
+                isRunning = true
                 updateForegroundNotification()
-                if (!wakeEnabled || isPaused) pauseWakeEngine()
-                else if (isRunning) startWakeEngine()
-                if (!shakeEnabled) stopShakeSensor()
-                else startShakeSensor()
+                if (!wakeEnabled || isPaused) {
+                    pauseWakeEngine()
+                } else {
+                    startWakeEngine()
+                }
+                if (!shakeEnabled) {
+                    stopShakeSensor()
+                } else {
+                    startShakeSensor()
+                }
+                return START_STICKY
+            }
+            ACTION_START -> {
+                wakeEnabled = intent.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", true))
+                shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", true))
+                updateForegroundNotification()
+                startListening()
                 return START_STICKY
             }
             else -> {
-                wakeEnabled = intent?.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", false))
-                    ?: prefs.getBoolean("wake_word_enabled", false)
-                shakeEnabled = intent?.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", false))
-                    ?: prefs.getBoolean("shake_enabled", false)
+                wakeEnabled = intent?.getBooleanExtra(EXTRA_WAKE_ENABLED, prefs.getBoolean("wake_word_enabled", true))
+                    ?: prefs.getBoolean("wake_word_enabled", true)
+                shakeEnabled = intent?.getBooleanExtra(EXTRA_SHAKE_ENABLED, prefs.getBoolean("shake_enabled", true))
+                    ?: prefs.getBoolean("shake_enabled", true)
 
                 updateForegroundNotification()
                 startListening()
@@ -452,13 +500,130 @@ class WakeWordService : Service(), SensorEventListener {
     private fun areModelFilesReady(): Boolean {
         val hasMel = isAssetFileValid("melspectrogram.onnx") || isAssetFileValid("wakeword/melspectrogram.onnx")
         val hasEmb = isAssetFileValid("embedding_model.onnx") || isAssetFileValid("wakeword/embedding_model.onnx")
+        val hasIsha = (isAssetFileValid("hey_isha.onnx") && getAssetSize("hey_isha.onnx") > 1000) ||
+                      (isAssetFileValid("wakeword/hey_isha.onnx") && getAssetSize("wakeword/hey_isha.onnx") > 1000)
         val hasMira = (isAssetFileValid("hey_mira.onnx") && getAssetSize("hey_mira.onnx") > 1000) ||
                       (isAssetFileValid("wakeword/hey_mira.onnx") && getAssetSize("wakeword/hey_mira.onnx") > 1000)
         val hasAura = (isAssetFileValid("wakeword/hey_aura.onnx") && getAssetSize("wakeword/hey_aura.onnx") > 1000)
-        return hasMel && hasEmb && (hasMira || hasAura)
+        return hasMel && hasEmb && (hasIsha || hasMira || hasAura)
     }
 
-    private fun initWakeWordEngine() {
+    // ── Hybrid engine init ────────────────────────────────────────────────────
+
+    /**
+     * Returns true if hey_isha.onnx is available and small enough to use
+     * our custom HeyIshaDetector (128-dim mel pipeline).
+     * Returns false → fall back to WakeWordEngine for other models.
+     */
+    private fun shouldUseHeyIshaDetector(): Boolean {
+        // Return false: hey_isha.onnx is trained directly on Google openWakeWord embeddings (16x96),
+        // so WakeWordEngine (xyz.rementia:openwakeword) executes it directly with maximum accuracy and stability.
+        return false
+    }
+
+    /**
+     * Start the standalone HeyIshaDetector loop.
+     * Opens its own AudioRecord, feeds 512-sample frames into HeyIshaDetector,
+     * and fires onTriggerDetected on confirmation.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startHeyIshaDetector() {
+        if (heyIshaDetector != null) return
+        val modelPath = if (isAssetFileValid("wakeword/hey_isha.onnx")) "wakeword/hey_isha.onnx" else "hey_isha.onnx"
+        try {
+            val detector = HeyIshaDetector(assets, modelPath)
+            heyIshaDetector = detector
+            Log.i(TAG, "HeyIshaDetector loaded from assets/$modelPath")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load HeyIshaDetector — falling back to WakeWordEngine", e)
+            heyIshaDetector = null
+            initWakeWordEngineFallback()
+            return
+        }
+
+        val minBufSize = AudioRecord.getMinBufferSize(
+            HeyIshaDetector.SAMPLE_RATE,
+            android.media.AudioFormat.CHANNEL_IN_MONO,
+            android.media.AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(HeyIshaDetector.FRAME_SIZE * 4)
+
+        val audioRecord = try {
+            AudioRecord(
+                android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                HeyIshaDetector.SAMPLE_RATE,
+                android.media.AudioFormat.CHANNEL_IN_MONO,
+                android.media.AudioFormat.ENCODING_PCM_16BIT,
+                minBufSize
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "HeyIsha AudioRecord create failed", e)
+            heyIshaDetector?.close(); heyIshaDetector = null
+            return
+        }
+
+        heyIshaAudioRecord = audioRecord
+        audioRecord.startRecording()
+        heyIshaConsecutive = 0
+        IshaDiagnostics.updateWake { it.copy(modelLoaded = true, inferenceRunning = true) }
+        Log.i(TAG, "HeyIshaDetector AudioRecord started (buffer=$minBufSize)")
+
+        heyIshaJob?.cancel()
+        heyIshaJob = serviceScope.launch(Dispatchers.IO) {
+            val buf = ShortArray(HeyIshaDetector.FRAME_SIZE)
+            val detector = heyIshaDetector ?: return@launch
+            while (isActive) {
+                val read = audioRecord.read(buf, 0, buf.size)
+                if (read <= 0) continue
+
+                val score = detector.process(buf.copyOf(read))
+                if (score < 0f) continue  // Not enough samples yet
+
+                val now = System.currentTimeMillis()
+                if (score >= HeyIshaDetector.MIN_SCORE) {
+                    heyIshaConsecutive++
+                    if (score >= 0.10f) {
+                        Log.d(TAG, "HeyIsha score=$score consecutive=$heyIshaConsecutive")
+                    }
+                } else {
+                    if (heyIshaConsecutive > 0) {
+                        Log.d(TAG, "HeyIsha streak reset (score=$score)")
+                    }
+                    heyIshaConsecutive = 0
+                }
+
+                val triggered = score >= HeyIshaDetector.HIGH_CONFIDENCE_SCORE ||
+                                heyIshaConsecutive >= HeyIshaDetector.CONFIRM_FRAMES
+                if (triggered && (now - lastTriggerTime > COOLDOWN_MS)) {
+                    heyIshaConsecutive = 0
+                    lastTriggerTime = now
+                    Log.i(TAG, "Hey Isha CONFIRMED! score=$score — triggering")
+                    detector.reset()
+                    handler.post {
+                        stopHeyIshaDetector()
+                        onTriggerDetected("wake", score, "Hey Isha")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopHeyIshaDetector() {
+        heyIshaJob?.cancel(); heyIshaJob = null
+        heyIshaConsecutive = 0
+        try {
+            heyIshaAudioRecord?.stop()
+            heyIshaAudioRecord?.release()
+        } catch (_: Exception) {}
+        heyIshaAudioRecord = null
+        heyIshaDetector?.close(); heyIshaDetector = null
+        IshaDiagnostics.updateWake { it.copy(inferenceRunning = false) }
+        Log.i(TAG, "HeyIshaDetector stopped")
+    }
+
+    /**
+     * Fallback: initialise the openWakeWord/rementia WakeWordEngine for non-Isha models.
+     */
+    private fun initWakeWordEngineFallback() {
         if (wakeWordEngine != null) return
         val hasAudioPerm = androidx.core.content.ContextCompat.checkSelfPermission(
             this,
@@ -469,38 +634,31 @@ class WakeWordService : Service(), SensorEventListener {
             return
         }
 
-        if (!areModelFilesReady()) {
-            Log.w(TAG, "OpenWakeWord models pending in assets/. Ensure acoustic models are present.")
-            return
-        }
-
         try {
             val models = mutableListOf<WakeWordModel>()
+            val hasIsha = (isAssetFileValid("wakeword/hey_isha.onnx") && getAssetSize("wakeword/hey_isha.onnx") > 1000) ||
+                          (isAssetFileValid("hey_isha.onnx") && getAssetSize("hey_isha.onnx") > 1000)
             val hasAura = isAssetFileValid("wakeword/hey_aura.onnx") && getAssetSize("wakeword/hey_aura.onnx") > 1000
-            val phrasePath = if (hasAura) {
-                "wakeword/hey_aura.onnx"
-            } else if (isAssetFileValid("hey_mira.onnx")) {
-                "hey_mira.onnx"
-            } else {
-                "wakeword/hey_mira.onnx"
+            val phrasePath = when {
+                isAssetFileValid("wakeword/hey_isha.onnx") && getAssetSize("wakeword/hey_isha.onnx") > 1000 -> "wakeword/hey_isha.onnx"
+                isAssetFileValid("hey_isha.onnx") && getAssetSize("hey_isha.onnx") > 1000                   -> "hey_isha.onnx"
+                hasAura                                                                                     -> "wakeword/hey_aura.onnx"
+                isAssetFileValid("hey_mira.onnx")                                                           -> "hey_mira.onnx"
+                else                                                                                        -> "wakeword/hey_mira.onnx"
             }
-            val phraseName = if (hasAura) "Hey Aura" else "Hey Mira"
-            models.add(
-                WakeWordModel(
-                    name = phraseName,
-                    modelPath = phrasePath,
-                    // Calibrated threshold for acoustic chunk evaluation to prevent noise false triggers
-                    threshold = 0.55f
-                )
-            )
+            val phraseName = if (hasIsha) "Hey Isha" else if (hasAura) "Hey Aura" else "Hey ISHA"
+            val threshold = if (hasIsha) 0.75f else 0.45f
+            models.add(WakeWordModel(name = phraseName, modelPath = phrasePath, threshold = threshold))
 
             val engine = WakeWordEngine(
                 context = applicationContext,
                 models = models,
                 detectionMode = DetectionMode.SINGLE_BEST,
-                detectionCooldownMs = 0L // 0ms cooldown so engine.scores streams continuously without library throttling
+                detectionCooldownMs = 0L,
+                scope = serviceScope
             )
             wakeWordEngine = engine
+            IshaDiagnostics.updateWake { it.copy(modelLoaded = true) }
 
             detectionJob?.cancel()
             detectionJob = serviceScope.launch {
@@ -509,25 +667,22 @@ class WakeWordService : Service(), SensorEventListener {
                         val score = scoreItem.score
                         val now   = System.currentTimeMillis()
 
-                        // ── Continuous N-Consecutive-Frames Confirmation ──────
-                        // Only count frames that are above calibrated MIN_SCORE.
+                        if (score >= 0.15f) {
+                            Log.d(TAG, "KWS score=$score for ${scoreItem.model.name}")
+                        }
+
                         if (score >= MIN_SCORE) {
                             consecutiveFramesAboveThreshold++
-                            Log.d(TAG, "KWS hit frame ${consecutiveFramesAboveThreshold}/$CONFIRM_FRAMES — score=$score model=${scoreItem.model.name}")
                         } else {
-                            // Instant reset on silence or below-threshold acoustic energy
-                            if (consecutiveFramesAboveThreshold > 0) {
-                                Log.d(TAG, "KWS streak reset to 0 (score=$score dropped below $MIN_SCORE)")
-                            }
                             consecutiveFramesAboveThreshold = 0
                         }
 
-                        // ── Fire only after CONFIRM_FRAMES consecutive hits ──
-                        if (consecutiveFramesAboveThreshold >= CONFIRM_FRAMES &&
-                            now - lastTriggerTime > COOLDOWN_MS) {
-                            consecutiveFramesAboveThreshold = 0  // Reset for next detection
+                        val isTriggered = (consecutiveFramesAboveThreshold >= CONFIRM_FRAMES) ||
+                                          (score >= HIGH_CONFIDENCE_SCORE && consecutiveFramesAboveThreshold >= HIGH_CONF_FRAMES)
+                        if (isTriggered && (now - lastTriggerTime > COOLDOWN_MS)) {
+                            consecutiveFramesAboveThreshold = 0
                             lastTriggerTime = now
-                            Log.i(TAG, "Wake word CONFIRMED after $CONFIRM_FRAMES frames — '${scoreItem.model.name}' (score: $score) — triggering")
+                            Log.i(TAG, "Wake word CONFIRMED! '${scoreItem.model.name}' (score=$score)")
                             handler.post {
                                 pauseWakeEngine()
                                 onTriggerDetected("wake", score, scoreItem.model.name)
@@ -537,16 +692,18 @@ class WakeWordService : Service(), SensorEventListener {
                     .collect()
             }
 
-            try {
-                engine.start()
-                Log.i(TAG, "OpenWakeWord engine initialized and started successfully for ${models.map { it.name }}")
-            } catch (e: Throwable) {
-                Log.e(TAG, "Failed to start OpenWakeWord engine at runtime", e)
-            }
+            engine.start()
+            IshaDiagnostics.updateWake { it.copy(inferenceRunning = true, modelLoaded = true) }
+            Log.i(TAG, "WakeWordEngine (fallback) started for ${models.map { it.name }}")
         } catch (e: Throwable) {
-            Log.e(TAG, "Failed to initialize OpenWakeWord engine", e)
+            Log.e(TAG, "Failed to initialize WakeWordEngine fallback", e)
+            MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+            IshaDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
         }
     }
+
+    /** Legacy entry-point kept for compatibility; now routes to correct engine. */
+    private fun initWakeWordEngine() = initWakeWordEngineFallback()
 
     private fun startWakeEngine() {
         if (!wakeEnabled || isPaused || isTtsSpeaking) return
@@ -556,19 +713,32 @@ class WakeWordService : Service(), SensorEventListener {
             return
         }
         IshaDiagnostics.updateWake { it.copy(micOwned = true, serviceRunning = true) }
+
+        // ── Hybrid routing: HeyIshaDetector for hey_isha.onnx, WakeWordEngine for others ──
+        if (shouldUseHeyIshaDetector()) {
+            if (heyIshaDetector == null) {
+                startHeyIshaDetector()
+            }
+            return
+        }
+
+        // Fallback: openWakeWord/rementia engine for hey_mira / hey_aura
+        if (!areModelFilesReady()) {
+            Log.w(TAG, "Wake model files not ready — deferring")
+            return
+        }
         if (wakeWordEngine == null) {
-            initWakeWordEngine()
+            initWakeWordEngineFallback()
             return
         }
         try {
             wakeWordEngine?.start()
             Log.i(TAG, "OpenWakeWord engine started/resumed")
         } catch (e: Throwable) {
-            // OrtSession may be closed after a previous stop() — release and re-create the engine.
             Log.w(TAG, "Wake engine start failed (stale OrtSession), re-initialising...", e)
             runCatching { wakeWordEngine?.release() }
             wakeWordEngine = null
-            handler.postDelayed({ initWakeWordEngine() }, 300L)
+            handler.postDelayed({ initWakeWordEngineFallback() }, 300L)
         }
     }
 
@@ -576,14 +746,25 @@ class WakeWordService : Service(), SensorEventListener {
         try {
             MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
             IshaDiagnostics.updateWake { it.copy(micOwned = false, inferenceRunning = false) }
+
+            // Stop HeyIshaDetector if running
+            stopHeyIshaDetector()
+
+            // Stop WakeWordEngine if running
             detectionJob?.cancel()
             detectionJob = null
-            wakeWordEngine?.stop()
-            wakeWordEngine?.release()
+            val engine = wakeWordEngine
             wakeWordEngine = null
-            Log.i(TAG, "OpenWakeWord engine stopped and released (mic closed, zero green dot)")
+            if (engine != null) {
+                engine.stop()
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(120L)
+                    runCatching { engine.release() }
+                }
+                Log.i(TAG, "OpenWakeWord engine stopped cleanly (mic closed)")
+            }
         } catch (e: Throwable) {
-            Log.e(TAG, "Error pausing OpenWakeWord engine", e)
+            Log.e(TAG, "Error pausing wake engine", e)
         }
     }
 
@@ -591,11 +772,12 @@ class WakeWordService : Service(), SensorEventListener {
         isRunning = false
         MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
         IshaDiagnostics.updateWake { it.copy(serviceRunning = false, micOwned = false, inferenceRunning = false) }
-        pauseWakeEngine()
+        stopHeyIshaDetector()
         stopShakeSensor()
         detectionJob?.cancel()
         detectionJob = null
         try {
+            wakeWordEngine?.stop()
             wakeWordEngine?.release()
             Log.i(TAG, "OpenWakeWord engine released")
         } catch (e: Throwable) {
@@ -607,10 +789,34 @@ class WakeWordService : Service(), SensorEventListener {
     // ── Gemini-Style Assistant Wake Trigger ────────────────────────────────────
 
     private fun onTriggerDetected(reason: String, score: Float = 0.0f, modelName: String = "") {
-        Log.i(TAG, "Trigger detected: $reason (score=$score, model=$modelName) — presenting Gemini Assistant Floating Overlay")
+        Log.i(TAG, "Trigger detected: $reason (score=$score, model=$modelName) — starting Gemini Live Voice Chat directly")
 
-        // Immediately release mic ownership so Gemini Live can acquire it without contention
+        // Immediately pause wake engine and release mic ownership so Gemini Live can acquire it without contention
+        pauseWakeEngine()
         MicOwnershipManager.releaseOwnership(MicOwner.WAKE_WORD)
+
+        // 0. Immediate Haptic & Audio Chime Feedback so Boss knows ISHA is actively listening
+        try {
+            val vib = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib?.vibrate(VibrationEffect.createOneShot(75L, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vib?.vibrate(75L)
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager?.ringerMode != AudioManager.RINGER_MODE_SILENT) {
+                val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
+                toneGen.startTone(ToneGenerator.TONE_PROP_PROMPT, 140)
+                handler.postDelayed({
+                    try { toneGen.release() } catch (_: Exception) {}
+                }, 300L)
+            }
+        } catch (_: Exception) {}
+
         IshaDiagnostics.updateWake {
             it.copy(
                 micOwned = false,
@@ -633,20 +839,36 @@ class WakeWordService : Service(), SensorEventListener {
             wakeLock?.acquire(2000L)
         } catch (_: Exception) {}
 
-        // 1. Show the sleek Gemini Floating Overlay Card directly over the active app!
-        // (YouTube, WhatsApp, Browser remain completely visible underneath)
-        IshaDynamicIsland.show(applicationContext, reason)
+        // 1. Show Dynamic Island overlay bubble on top (preserves user's foreground apps e.g. games, YouTube, WhatsApp)
+        IshaDynamicIsland.show(applicationContext, "voice_mode")
 
-        // 2. Broadcast to MainActivity in case it is already active
+        // 2. Engage Gemini Live voice duplex directly
+        val act = MainActivity.instance
+        if (act != null) {
+            act.startVoiceModeDirectly()
+        } else {
+            // If MainActivity not yet in memory, launch it
+            try {
+                val voiceIntent = Intent(applicationContext, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("open_voice_mode", true)
+                    putExtra(EXTRA_REASON, reason)
+                    putExtra(EXTRA_SCORE, score)
+                    putExtra(EXTRA_MODEL, modelName)
+                }
+                startActivity(voiceIntent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch MainActivity for voice mode", e)
+            }
+        }
+
+        // 3. Broadcast to MainActivity in case it is already active
         sendBroadcast(Intent(ACTION_WAKE).apply {
             `package` = packageName
             putExtra(EXTRA_REASON, reason)
             putExtra(EXTRA_SCORE, score)
             putExtra(EXTRA_MODEL, modelName)
         })
-
-        // Notice: We intentionally do NOT call bringAppToForeground() here!
-        // Full app opens only if the user explicitly taps "Open Full App" on the overlay.
     }
 
     // ── Morning First-Unlock Event Reminder Trigger ───────────────────────────

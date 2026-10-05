@@ -12,6 +12,7 @@ import android.hardware.SensorManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.*
+import android.provider.ContactsContract
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -67,14 +68,129 @@ object IshaCallAnnouncerManager {
     private var windowManager: WindowManager? = null
     private var floatingCallView: View? = null
 
+    private var lastAnnouncedCallTime = 0L
+    @Volatile private var voiceRetryCount = 0
+
+    // Ringtone Silencing / Muting state (Truecaller-style pre-ringing announcement)
+    @Volatile private var isRingerMutedByUs = false
+    @Volatile private var savedRingVolume = -1
+    @Volatile private var isSpeakingAnnouncement = false
+    private val ringtoneRestoreLock = Any()
+
+    // 0ms contact name cache
+    private val contactNameCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()
+
+    /**
+     * Resolves contact name with multi-tier fallbacks:
+     * 1. Check in-memory contactNameCache (0ms).
+     * 2. Check if callerName is already an alphabetic contact name (e.g. "Mom", "Rahul", "Umesh").
+     * 3. Query ISHA persistent Contact Memory (with old number recognition).
+     * 4. Query ContactsContract.PhoneLookup with normalized number.
+     * 5. Query ContactsContract.CommonDataKinds.Phone with last 10 digits.
+     * 6. Fallback to "Unknown Caller" — NEVER returns raw digits as a name!
+     */
+    fun resolveContactName(context: Context, rawNumber: String, rawCallerName: String = ""): Pair<String, Boolean> {
+        val cleanNumber = rawNumber.trim()
+        val cleanCallerName = rawCallerName.trim()
+
+        val isNameActuallyNumber = cleanCallerName.isBlank() ||
+                cleanCallerName.equals("Unknown Caller", ignoreCase = true) ||
+                cleanCallerName.matches(Regex("[+0-9\\s\\-\\(\\)]{4,}"))
+
+        if (!isNameActuallyNumber) {
+            return Pair(cleanCallerName, false)
+        }
+
+        val candidate = when {
+            cleanNumber.isNotBlank() -> cleanNumber
+            cleanCallerName.matches(Regex("[+0-9\\s\\-\\(\\)]{4,}")) -> cleanCallerName
+            else -> ""
+        }
+
+        if (candidate.isBlank()) return Pair("Unknown Caller", false)
+
+        contactNameCache[candidate]?.let { return it }
+
+        // 1. ISHA Contact Memory
+        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(context, candidate)
+        if (memoryMatch != null) {
+            val res = Pair(memoryMatch.name, memoryMatch.isOldNumber)
+            contactNameCache[candidate] = res
+            return res
+        }
+
+        val digitsOnly = candidate.replace(Regex("[^0-9+]"), "")
+
+        // 2. Query ContactsContract.PhoneLookup
+        try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(digitsOnly))
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val name = cursor.getString(idx)
+                        if (!name.isNullOrBlank()) {
+                            val res = Pair(name, false)
+                            contactNameCache[candidate] = res
+                            return res
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "PhoneLookup failed: ${e.message}")
+        }
+
+        // 3. Fallback: Query CommonDataKinds.Phone with last 10 digits
+        val last10 = digitsOnly.takeLast(10)
+        if (last10.length >= 7) {
+            try {
+                context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME),
+                    "${ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?",
+                    arrayOf("%$last10"),
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                        if (idx >= 0) {
+                            val name = cursor.getString(idx)
+                            if (!name.isNullOrBlank()) {
+                                val res = Pair(name, false)
+                                contactNameCache[candidate] = res
+                                return res
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "CommonDataKinds.Phone failed: ${e.message}")
+            }
+        }
+
+        // 4. Truly unknown number (never return raw digits)
+        val unknown = Pair("Unknown Caller", false)
+        contactNameCache[candidate] = unknown
+        return unknown
+    }
+
     fun init(context: Context) {
         if (nativeTts == null) {
             try {
                 nativeTts = TextToSpeech(context.applicationContext) { status ->
                     if (status == TextToSpeech.SUCCESS) {
-                        nativeTts?.language = Locale("en", "IN")
-                        nativeTts?.setSpeechRate(0.92f)
+                        val result = nativeTts?.setLanguage(Locale("en", "IN"))
+                        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            nativeTts?.setLanguage(Locale.US)
+                        }
+                        nativeTts?.setSpeechRate(1.20f) // Snappy, crisp announcement
                         isTtsReady = true
+                        Log.i(TAG, "nativeTts initialized and ready for Truecaller-style announcement")
                     }
                 }
             } catch (e: Exception) {
@@ -84,33 +200,95 @@ object IshaCallAnnouncerManager {
     }
 
     /**
+     * Temporarily mutes the cellular ringtone before ISHA announces caller details.
+     * Prevents ringtone audio from blaring over or drowning out caller announcement.
+     */
+    private fun muteRingtoneTemporarily(context: Context) {
+        synchronized(ringtoneRestoreLock) {
+            if (isRingerMutedByUs) return
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+                if (currentVol > 0) {
+                    savedRingVolume = currentVol
+                }
+                Log.i(TAG, "🔇 Muting STREAM_RING (saved volume=$savedRingVolume) before announcement...")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, 0)
+                } else {
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                }
+                isRingerMutedByUs = true
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to mute STREAM_RING: ${e.message}")
+                try {
+                    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                    audioManager?.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                    isRingerMutedByUs = true
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Restores ringtone volume immediately once announcement completes or call state changes.
+     */
+    fun restoreRingtone(context: Context) {
+        synchronized(ringtoneRestoreLock) {
+            if (!isRingerMutedByUs) return
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                Log.i(TAG, "🔊 Restoring STREAM_RING volume to $savedRingVolume...")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
+                }
+                if (savedRingVolume > 0) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, savedRingVolume, 0)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to restore STREAM_RING: ${e.message}")
+            } finally {
+                isRingerMutedByUs = false
+                savedRingVolume = -1
+            }
+        }
+    }
+
+    /**
      * Triggered when an incoming cellular or VoIP call starts ringing.
      */
     fun onCallRinging(context: Context, callerName: String, number: String) {
-        val cleanNumber = number.trim()
-        val memoryMatch = com.aura.assistant.ai.IshaContactMemoryManager.resolveIncomingNumber(context, cleanNumber)
-        val cleanName = when {
-            memoryMatch != null -> memoryMatch.name
-            callerName.isNotBlank() && callerName != "Unknown Caller" -> callerName
-            else -> ""
+        val (resolvedName, isOldNumber) = resolveContactName(context, number, callerName)
+        val now = System.currentTimeMillis()
+
+        // Deduplicate duplicate triggers within 3.5s unless upgrading from "Unknown Caller" to real name
+        if (isRinging && now - lastAnnouncedCallTime < 3500L && (resolvedName == currentCallerName || resolvedName == "Unknown Caller")) {
+            Log.d(TAG, "Skipping duplicate ringing event for $resolvedName")
+            return
         }
-        val isOldNumber = memoryMatch?.isOldNumber == true
 
+        // Check user setting toggle
+        val isEnabled = com.aura.assistant.ui.components.IshaSettingsManager.isCallAnnouncementEnabled(context)
+        if (!isEnabled) {
+            Log.i(TAG, "Call announcement disabled in settings — skipping.")
+            return
+        }
+
+        voiceRetryCount = 0
+        lastAnnouncedCallTime = now
         isRinging = true
-        currentCallerName = cleanName
-        currentCallerNumber = cleanNumber
+        currentCallerName = resolvedName
+        currentCallerNumber = number.trim()
 
-        Log.i(TAG, "Incoming call ringing from: '$cleanName' ($cleanNumber) [OldNumber=$isOldNumber]")
+        Log.i(TAG, "Incoming call ringing from: '$resolvedName' ($number) [OldNumber=$isOldNumber]")
 
-        // 1. Show interactive floating Heads-Up UI for direct hand tap
-        val hudTitle = if (isOldNumber) "$cleanName (Old Number)" else cleanName.ifBlank { cleanNumber }.ifBlank { "Unknown Caller" }
-        showFloatingCallHud(context, hudTitle)
-
-        // 2. Start Hand Wave & Proximity Gesture Listener
+        // 1. Start Hand Wave & Proximity Gesture Listener
         startProximityHandSensor(context)
 
-        // 3. Announce Caller Name via TTS
-        announceCallerWithPrompt(context, cleanName, cleanNumber, isOldNumber)
+        // 2. Announce Caller Name via TTS (pre-ringing) and activate Mic strictly after announcement
+        announceCallerWithPrompt(context, resolvedName, isOldNumber)
     }
 
     /**
@@ -121,7 +299,10 @@ object IshaCallAnnouncerManager {
         isRinging = false
         currentCallerName = ""
         currentCallerNumber = ""
+        voiceRetryCount = 0
+        isSpeakingAnnouncement = false
 
+        restoreRingtone(context)
         stopProximityHandSensor(context)
         stopVoiceResponseListener()
         dismissFloatingCallHud()
@@ -130,41 +311,114 @@ object IshaCallAnnouncerManager {
         } catch (_: Exception) {}
     }
 
-    // ── 1. Caller Announcement with Voice Prompt ──────────────────────────────
-    private fun announceCallerWithPrompt(context: Context, callerName: String, number: String, isOldNumber: Boolean = false) {
+    // ── 1. Caller Announcement with Voice Prompt (Truecaller Style) ────────────
+    private fun announceCallerWithPrompt(context: Context, resolvedName: String, isOldNumber: Boolean = false) {
+        // 1. Immediately mute ringtone so ringtone does NOT blare over or before TTS
+        muteRingtoneTemporarily(context)
+
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val ringMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
-        if (ringMode == AudioManager.RINGER_MODE_SILENT) return
+        if (ringMode == AudioManager.RINGER_MODE_SILENT) {
+            // In silent mode, start mic listener immediately without loud TTS
+            startVoiceResponseListener(context)
+            return
+        }
 
-        val displayName = callerName.ifBlank { number }.ifBlank { "Unknown Caller" }
         val speechText = if (isOldNumber) {
-            "Incoming call from $displayName ke purane number se. Say Accept to answer, or Decline to reject."
+            "Incoming call from $resolvedName, purana number, identified by Isha."
+        } else if (resolvedName.isNotBlank() && resolvedName != "Unknown Caller") {
+            "Incoming call from $resolvedName, identified by Isha."
         } else {
-            "Incoming call from $displayName. Say Accept to answer, or Decline to reject."
+            "Incoming call from an unknown number, identified by Isha."
         }
 
         if (nativeTts == null) init(context)
 
+        // Play on STREAM_ALARM so announcement is loud and clear even with STREAM_RING muted!
         val params = Bundle().apply {
-            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
+            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
         }
 
-        nativeTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) {
-                if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
-                    mainHandler.post {
-                        startVoiceResponseListener(context)
+        isSpeakingAnnouncement = true
+
+        fun finishAnnouncementAndStartListening() {
+            if (!isSpeakingAnnouncement) return
+            isSpeakingAnnouncement = false
+            Log.i(TAG, "TTS announcement finished. Restoring ringtone and activating voice mic...")
+
+            // 1. Unmute/restore ringtone now so phone rings
+            restoreRingtone(context)
+
+            // 2. Wait 250ms for audio echo/buffer to clear, then activate mic for voice commands
+            mainHandler.postDelayed({
+                if (isRinging && !isListeningVoiceResponse) {
+                    startVoiceResponseListener(context)
+                }
+            }, 250L)
+        }
+
+        fun doSpeak() {
+            try {
+                nativeTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        Log.d(TAG, "TTS announcement started: '$speechText'")
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
+                            mainHandler.post {
+                                finishAnnouncementAndStartListening()
+                            }
+                        }
+                    }
+                    @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId, errorCode)"))
+                    @Suppress("DEPRECATION")
+                    override fun onError(utteranceId: String?) {
+                        if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
+                            mainHandler.post { finishAnnouncementAndStartListening() }
+                        }
+                    }
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        if (utteranceId == UTTERANCE_CALL_ANNOUNCE && isRinging) {
+                            mainHandler.post { finishAnnouncementAndStartListening() }
+                        }
+                    }
+                })
+
+                val res = nativeTts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, params, UTTERANCE_CALL_ANNOUNCE)
+                if (res != TextToSpeech.SUCCESS) {
+                    Log.w(TAG, "nativeTts.speak returned $res, completing announcement immediately")
+                    mainHandler.postDelayed({ finishAnnouncementAndStartListening() }, 300L)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error speaking call announcement", e)
+                finishAnnouncementAndStartListening()
+            }
+        }
+
+        if (!isTtsReady) {
+            init(context)
+            mainHandler.postDelayed({
+                if (isRinging) {
+                    if (isTtsReady) {
+                        doSpeak()
+                    } else {
+                        Log.w(TAG, "TTS not ready after 400ms fallback, starting ring & mic")
+                        finishAnnouncementAndStartListening()
                     }
                 }
-            }
-            @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId, errorCode)"))
-            @Suppress("DEPRECATION")
-            override fun onError(utteranceId: String?) {}
-            override fun onError(utteranceId: String?, errorCode: Int) {}
-        })
+            }, 400L)
+        } else {
+            doSpeak()
+        }
 
-        nativeTts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, params, UTTERANCE_CALL_ANNOUNCE)
+        // Safety watchdog: ONLY fires if TTS hangs for > 4.5 seconds (never at 1000ms!)
+        // Mic will NEVER open prematurely while TTS is speaking.
+        mainHandler.postDelayed({
+            if (isRinging && isSpeakingAnnouncement) {
+                Log.w(TAG, "Watchdog timer (4500ms) fired while waiting for TTS announcement")
+                finishAnnouncementAndStartListening()
+            }
+        }, 4500L)
     }
 
     // ── 2. Hand Gesture Mechanism (Proximity Sensor) ──────────────────────────
@@ -229,55 +483,89 @@ object IshaCallAnnouncerManager {
 
     // ── 3. Hands-Free Voice Response Recognition ──────────────────────────────
     private fun startVoiceResponseListener(context: Context) {
-        if (!isRinging || isListeningVoiceResponse) return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-
-        try {
-            isListeningVoiceResponse = true
-            speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        if (!isRinging) return
+        mainHandler.post {
+            if (!isRinging || isListeningVoiceResponse) return@post
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO permission not granted for call voice response")
+                return@post
             }
 
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    Log.i(TAG, "Listening for call answer/decline voice commands...")
+            try {
+                if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+                    Log.w(TAG, "SpeechRecognizer is not available on this device")
+                    return@post
                 }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-                override fun onError(error: Int) {
-                    isListeningVoiceResponse = false
-                }
-                override fun onResults(results: Bundle?) {
-                    isListeningVoiceResponse = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
-                    evaluateVoiceResponse(context, matches)
-                }
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
-                    evaluateVoiceResponse(context, matches)
-                }
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
 
-            speechRecognizer?.startListening(intent)
+                isListeningVoiceResponse = true
+                try {
+                    speechRecognizer?.stopListening()
+                    speechRecognizer?.destroy()
+                } catch (_: Exception) {}
+                speechRecognizer = null
 
-            // Auto timeout voice listening after 6 seconds
-            mainHandler.postDelayed({
-                stopVoiceResponseListener()
-            }, 6000L)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start speech recognizer for call response", e)
-            isListeningVoiceResponse = false
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext).apply {
+                    setRecognitionListener(object : RecognitionListener {
+                        override fun onReadyForSpeech(params: Bundle?) {
+                            Log.i(TAG, "🎙️ Call response mic is LIVE — say 'Accept' or 'Decline'")
+                        }
+                        override fun onBeginningOfSpeech() {
+                            Log.d(TAG, "Voice detected...")
+                        }
+                        override fun onRmsChanged(rmsdB: Float) {}
+                        override fun onBufferReceived(buffer: ByteArray?) {}
+                        override fun onEndOfSpeech() {
+                            Log.d(TAG, "Voice ended...")
+                        }
+                        override fun onError(error: Int) {
+                            Log.w(TAG, "SpeechRecognizer error: $error")
+                            isListeningVoiceResponse = false
+                            try {
+                                speechRecognizer?.destroy()
+                                speechRecognizer = null
+                            } catch (_: Exception) {}
+                            // Limit to 1 retry to avoid infinite mic flapping/flickering
+                            if (isRinging && voiceRetryCount < 1) {
+                                voiceRetryCount++
+                                mainHandler.postDelayed({
+                                    if (isRinging && !isListeningVoiceResponse) {
+                                        startVoiceResponseListener(context)
+                                    }
+                                }, 1200L)
+                            } else {
+                                Log.i(TAG, "Call voice mic listener stopped (voiceRetryCount=$voiceRetryCount).")
+                            }
+                        }
+                        override fun onResults(results: Bundle?) {
+                            isListeningVoiceResponse = false
+                            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                            evaluateVoiceResponse(context, matches)
+                        }
+                        override fun onPartialResults(partialResults: Bundle?) {
+                            val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                            evaluateVoiceResponse(context, matches)
+                        }
+                        override fun onEvent(eventType: Int, params: Bundle?) {}
+                    })
+                }
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra("android.speech.extra.DICTATION_MODE", true)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
+                }
+
+                speechRecognizer?.startListening(intent)
+                Log.i(TAG, "Started SpeechRecognizer for call voice command")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start speech recognizer for call response", e)
+                isListeningVoiceResponse = false
+            }
         }
     }
 
@@ -287,14 +575,17 @@ object IshaCallAnnouncerManager {
         Log.i(TAG, "Voice response heard: '$joined'")
 
         val isAccept = joined.contains("accept") || joined.contains("answer") ||
-                       joined.contains("pick up") || joined.contains("haan") ||
+                       joined.contains("pick") || joined.contains("haan") ||
                        joined.contains("ha") || joined.contains("uthao") ||
-                       joined.contains("yes") || joined.contains("receive")
+                       joined.contains("uthaye") || joined.contains("yes") ||
+                       joined.contains("receive") || joined.contains("le lo")
 
         val isDecline = joined.contains("decline") || joined.contains("reject") ||
-                        joined.contains("cut") || joined.contains("kaat do") ||
-                        joined.contains("nahi") || joined.contains("cancel") ||
-                        joined.contains("ignore") || joined.contains("no") || joined.contains("busy")
+                        joined.contains("cut") || joined.contains("kaat") ||
+                        joined.contains("kat") || joined.contains("nahi") ||
+                        joined.contains("cancel") || joined.contains("ignore") ||
+                        joined.contains("no") || joined.contains("busy") ||
+                        joined.contains("hatao") || joined.contains("mat uthao")
 
         if (isAccept) {
             Log.i(TAG, "Voice command accepted call!")
@@ -319,157 +610,10 @@ object IshaCallAnnouncerManager {
 
     // ── 4. Interactive Floating Call Heads-Up HUD (Hand Tap) ───────────────────
     private fun showFloatingCallHud(context: Context, callerDisplay: String) {
-        mainHandler.post {
-            try {
-                if (floatingCallView != null) dismissFloatingCallHud()
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-                    Log.w(TAG, "Overlay permission not granted; cannot display floating call HUD")
-                    return@post
-                }
-
-                windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-                val wm = windowManager ?: return@post
-
-                val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                }
-
-                val dm = context.resources.displayMetrics
-                val width = (dm.widthPixels * 0.94f).toInt()
-
-                @Suppress("DEPRECATION")
-                val params = WindowManager.LayoutParams(
-                    width,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    layoutType,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    y = (dm.heightPixels * 0.05f).toInt()
-                }
-
-                // Construct sleek AMOLED card with green/red actions
-                val root = LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(48, 36, 48, 36)
-                    val bg = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(android.graphics.Color.parseColor("#EE121214")) // AMOLED Black Glass
-                        cornerRadius = 48f
-                        setStroke(3, android.graphics.Color.parseColor("#4D10A37F")) // Subtle Neon Green Border
-                    }
-                    background = bg
-                    elevation = 24f
-                }
-
-                // Header
-                val header = TextView(context).apply {
-                    text = "ISHA CALL ANNOUNCER"
-                    setTextColor(android.graphics.Color.parseColor("#10A37F"))
-                    textSize = 11f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    letterSpacing = 0.08f
-                }
-                root.addView(header)
-
-                // Caller Name
-                val callerTv = TextView(context).apply {
-                    text = callerDisplay
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 18f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    setPadding(0, 8, 0, 4)
-                }
-                root.addView(callerTv)
-
-                // Helper Subtitle
-                val subTv = TextView(context).apply {
-                    text = "👋 Wave hand over phone to accept • Or say 'Accept' / 'Decline'"
-                    setTextColor(android.graphics.Color.parseColor("#9E9E9E"))
-                    textSize = 12f
-                    setPadding(0, 0, 0, 24)
-                }
-                root.addView(subTv)
-
-                // Action Buttons Row (Hand Tap Accept / Decline)
-                val btnRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    weightSum = 2f
-                }
-
-                // Decline Button (Red)
-                val declineBtn = TextView(context).apply {
-                    text = "✕ Decline"
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 15f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setPadding(0, 32, 0, 32)
-                    val redBg = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(android.graphics.Color.parseColor("#E53935"))
-                        cornerRadius = 28f
-                    }
-                    background = redBg
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        Log.i(TAG, "Decline button clicked on call HUD")
-                        onCallEnded(context)
-                        declineCall(context)
-                    }
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginEnd = 16
-                    }
-                }
-                btnRow.addView(declineBtn)
-
-                // Accept Button (Green)
-                val acceptBtn = TextView(context).apply {
-                    text = "✓ Accept"
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 15f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setPadding(0, 32, 0, 32)
-                    val greenBg = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(android.graphics.Color.parseColor("#10A37F"))
-                        cornerRadius = 28f
-                    }
-                    background = greenBg
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        Log.i(TAG, "Accept button clicked on call HUD")
-                        onCallEnded(context)
-                        answerCall(context)
-                    }
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginStart = 16
-                    }
-                }
-                btnRow.addView(acceptBtn)
-
-                root.addView(btnRow)
-
-                floatingCallView = root
-                wm.addView(root, params)
-                Log.i(TAG, "Floating call HUD displayed")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to display floating call HUD", e)
-            }
-        }
+        // Disabled per user request: Caller ID HUD is removed, keeping full focus on hands-free voice experience.
     }
 
-    private fun dismissFloatingCallHud() {
+    fun dismissFloatingCallHud() {
         mainHandler.post {
             try {
                 floatingCallView?.let { view ->

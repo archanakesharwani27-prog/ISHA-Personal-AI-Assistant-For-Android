@@ -288,6 +288,11 @@ open class IshaNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        try {
+            com.aura.assistant.sync.IshaCrossDeviceBridge.init(applicationContext)
+        } catch (e: Exception) {
+            android.util.Log.w("IshaNotifListener", "Failed to initialize CrossDeviceBridge: ${e.message}")
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -320,6 +325,7 @@ open class IshaNotificationListenerService : NotificationListenerService() {
                 putExtra("package", sbn.packageName)
             }
             sendBroadcast(callBroadcast)
+            IshaCallAnnouncerManager.onCallEnded(applicationContext)
         }
     }
 
@@ -383,7 +389,8 @@ open class IshaNotificationListenerService : NotificationListenerService() {
                 putExtra("package", pkg)
             }
             sendBroadcast(callBroadcast)
-            // Note: Single authoritative call announcement handled by MainActivity
+            // Immediately trigger IshaCallAnnouncerManager directly for instant pre-ringing announcement & voice mic
+            IshaCallAnnouncerManager.onCallRinging(applicationContext, title.ifBlank { appName }, "")
             return
         }
 
@@ -401,12 +408,6 @@ open class IshaNotificationListenerService : NotificationListenerService() {
         }
         sendBroadcast(broadcast)
 
-        // Announce important notifications via TTS (only if enabled in settings)
-        val prefs = applicationContext.getSharedPreferences("aura_settings", android.content.Context.MODE_PRIVATE)
-        val isMessageSpeakEnabled = prefs.getBoolean("message_speak_enabled", true)
-        if (isMessageSpeakEnabled && priority in listOf(PRIORITY_PERSONAL, PRIORITY_DELIVERY, PRIORITY_PAYMENT, PRIORITY_OTP)) {
-            announceNotification(appName, title, text, priority)
-        }
     }
 
     private fun classifyPriority(pkg: String, title: String, text: String): String {
@@ -446,73 +447,6 @@ open class IshaNotificationListenerService : NotificationListenerService() {
         }
 
         return PRIORITY_SYSTEM
-    }
-
-    private fun announceNotification(appName: String, title: String, body: String, priority: String) {
-        if (!ttsReady || tts == null) {
-            initTts()
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                if (ttsReady && tts != null) {
-                    announceNotification(appName, title, body, priority)
-                }
-            }, 850L)
-            return
-        }
-        if (WakeWordService.isTtsSpeaking) return  // Prevent self-echo
-
-        val utteranceId = "AURA_NOTIF_${System.currentTimeMillis()}"
-        val announcement = when (priority) {
-            PRIORITY_OTP -> {
-                val otp = extractOtp(body)
-                listOf(
-                    "Boss, dhyan dijiye! $appName se zaroori OTP aaya hai: $otp. Ise kisi ke saath share mat kariyega!",
-                    "Boss, alert! $appName ka verification code mila hai: $otp. Kisi anjaan ko mat dena!",
-                    "Boss, zaroori OTP aaya hai $appName se: $otp. Ise safe rakhiyega!",
-                    "Boss, security notification! $appName ka OTP code hai: $otp."
-                ).random()
-            }
-            PRIORITY_PERSONAL -> {
-                val msg = body.take(90)
-                val sender = if (title.isNotBlank()) title else appName
-                val appLabel = when {
-                    appName.contains("WhatsApp", ignoreCase = true) -> "WhatsApp"
-                    appName.contains("Instagram", ignoreCase = true) -> "Instagram"
-                    appName.contains("Telegram", ignoreCase = true) -> "Telegram"
-                    appName.contains("Message", ignoreCase = true) -> "SMS"
-                    else -> appName
-                }
-                listOf(
-                    "Boss, $sender ne $appLabel par message bheja hai: $msg.",
-                    "Arey Boss, $sender ka naya text aaya hai $appLabel par: $msg.",
-                    "Boss, suniye, $sender ne message kiya hai: $msg.",
-                    "Dekhiye Boss, $appLabel par $sender ka paigam aaya hai: $msg.",
-                    "Boss, $sender ne kuch likh kar bheja hai: $msg."
-                ).random()
-            }
-            PRIORITY_DELIVERY -> {
-                val info = body.take(100)
-                listOf(
-                    "Boss, khushkhabari! $appName se aapka order update aaya hai: $info.",
-                    "Boss, aapka parcel raste mein hai! $appName ka update: $info.",
-                    "Boss, delivery alert! $appName se update mila hai: $info.",
-                    "Arey Boss, aapka delivery status change hua hai: $info."
-                ).random()
-            }
-            PRIORITY_PAYMENT -> {
-                val info = body.take(100)
-                listOf(
-                    "Boss, payment transaction update aaya hai: $info.",
-                    "Boss, bank alert! $info.",
-                    "Boss, khata update hua hai: $info."
-                ).random()
-            }
-            else -> "${appName}: ${body.take(80)}"
-        }
-
-        val params = Bundle().apply {
-            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-        }
-        tts?.speak(announcement, TextToSpeech.QUEUE_ADD, params, utteranceId)
     }
 
     private fun announceIncomingCall(appName: String, caller: String) {

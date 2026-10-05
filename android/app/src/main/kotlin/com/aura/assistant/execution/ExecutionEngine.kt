@@ -53,14 +53,27 @@ object ExecutionEngine {
         }
 
         // ── Stage 3: AUTHORIZE ──────────────────────────────────────────
+        val policyDecision = com.aura.assistant.security.PolicyEngine.evaluate(tool.name, tool.riskLevel)
+        if (policyDecision == com.aura.assistant.security.PolicyDecision.DENY_UNSAFE) {
+            Log.e(TAG, "Tool '${tool.name}' denied by PolicyEngine (CRITICAL risk).")
+            return ToolResult.denied(tool.id, "Security policy denied critical/unsafe action '${tool.name}'.")
+        }
+
         val auth = tool.authorize(toolContext)
-        when (auth) {
-            AuthorizationResult.DENIED -> {
-                Log.e(TAG, "Authorization denied for tool '${tool.name}'")
-                return ToolResult.denied(tool.id, "Security policy or user settings denied this action.")
-            }
-            AuthorizationResult.NEEDS_CONFIRMATION -> {
-                Log.w(TAG, "Tool '${tool.name}' requires explicit confirmation")
+        val needsConfirmation = policyDecision == com.aura.assistant.security.PolicyDecision.REQUIRE_CONFIRMATION ||
+                                auth == AuthorizationResult.NEEDS_CONFIRMATION
+
+        if (needsConfirmation) {
+            val confirmed = arguments.has("confirmed") && arguments.get("confirmed").asBoolean
+            if (!confirmed) {
+                Log.w(TAG, "Tool '${tool.name}' requires explicit confirmation.")
+                com.aura.assistant.security.ConfirmationEngine.request(
+                    toolName = tool.name,
+                    promptText = "AURA Security Governance: Kya aap '${tool.name}' ko run karna chahte hain?",
+                    onConfirm = {
+                        Log.i(TAG, "User confirmed action: ${tool.name}")
+                    }
+                )
                 return ToolResult(
                     toolId = tool.id,
                     callId = callId,
@@ -68,7 +81,9 @@ object ExecutionEngine {
                     message = "High risk action requires confirmation: ${tool.name}"
                 )
             }
-            AuthorizationResult.ALLOWED -> {}
+        } else if (auth == AuthorizationResult.DENIED) {
+            Log.e(TAG, "Authorization denied for tool '${tool.name}'")
+            return ToolResult.denied(tool.id, "Security policy or user settings denied this action.")
         }
 
         // ── Stage 4: PREPARE ────────────────────────────────────────────
@@ -194,5 +209,70 @@ object ExecutionEngine {
                 )
             )
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Executes a tool through the full 10-stage autonomous lifecycle:
+     * DISCOVER → VALIDATE → AUTHORIZE (PolicyEngine) → PREPARE → EXECUTE (Timeout) →
+     * OBSERVE → VERIFY (ExecutionVerifier) → RECOVER (Retry & Fallback) → COMMIT → LEARN (ExperienceDatabase)
+     *
+     * Returns a structured JsonObject preserving exact REST schema for Gemini and internal services.
+     */
+    suspend fun executeTool(
+        context: Context,
+        toolName: String,
+        arguments: JsonObject,
+        scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.Dispatchers.IO),
+        callId: String = ""
+    ): JsonObject {
+        val tool = ToolRegistry.getTool(toolName) ?: ToolRegistry.createDynamicTool(toolName)
+        val policy = RetryPolicy.getPolicyForTool(toolName)
+        val toolResult = execute(
+            tool = tool,
+            arguments = arguments,
+            context = context,
+            scope = scope,
+            callId = callId,
+            retryPolicy = policy
+        )
+
+        val output = JsonObject()
+        when (toolResult.status) {
+            ToolStatus.SUCCESS -> {
+                output.addProperty("status", "success")
+                output.addProperty("message", toolResult.message)
+                toolResult.data?.entrySet()?.forEach { (k, v) ->
+                    if (!output.has(k)) output.add(k, v)
+                }
+            }
+            ToolStatus.NEEDS_CONFIRMATION -> {
+                output.addProperty("status", "needs_confirmation")
+                output.addProperty("message", toolResult.message)
+                output.addProperty("tool_name", toolName)
+                output.addProperty("requires_confirmation", true)
+            }
+            ToolStatus.UNAVAILABLE -> {
+                output.addProperty("status", "error")
+                output.addProperty("message", toolResult.message)
+            }
+            ToolStatus.DENIED -> {
+                output.addProperty("status", "error")
+                output.addProperty("message", toolResult.message)
+            }
+            else -> {
+                output.addProperty("status", "error")
+                output.addProperty("message", toolResult.message)
+                if (toolResult.error != null) {
+                    output.addProperty("error", toolResult.error.message)
+                }
+            }
+        }
+        toolResult.evidence?.let {
+            output.addProperty("verified", it.verified)
+            if (it.observedState != null) {
+                output.addProperty("observedState", it.observedState)
+            }
+        }
+        return output
     }
 }

@@ -134,6 +134,7 @@ open class IshaAccessibilityService : AccessibilityService() {
     @Volatile var pendingNavigationMode: String? = null
     @Volatile var pendingWifiToggle: Boolean? = null
     @Volatile var pendingBluetoothToggle: Boolean? = null
+    @Volatile var lastKnownWhatsappContactTitle: String? = null
 
     // ── New action queue ───────────────────────────────────────────────────────
     private data class A11yStep(
@@ -158,6 +159,11 @@ open class IshaAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "AuraAccessibilityService connected")
+        try {
+            com.aura.assistant.sync.IshaCrossDeviceBridge.init(applicationContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize CrossDeviceBridge from AccessibilityService: ${e.message}")
+        }
     }
 
     override fun onDestroy() {
@@ -179,8 +185,14 @@ open class IshaAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
 
         // Legacy handlers
-        if (pendingWhatsappSend && (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ)) {
-            if (clickFirstMatch(root, SEND_HINTS)) pendingWhatsappSend = false
+        if (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ) {
+            val contactTitle = getWhatsappActiveContactTitle()
+            if (!contactTitle.isNullOrBlank()) {
+                lastKnownWhatsappContactTitle = contactTitle
+            }
+            if (pendingWhatsappSend && clickFirstMatch(root, SEND_HINTS)) {
+                pendingWhatsappSend = false
+            }
         }
         if (pendingAutoInstall) {
             // Only tap Install on the Play Store or Package Installer screens
@@ -419,8 +431,77 @@ open class IshaAccessibilityService : AccessibilityService() {
             A11yStep(clickHint = "type a message", delayMs = 1200),
             A11yStep(clickHint = "message", delayMs = 1000),
             A11yStep(typeText  = message, delayMs = 900),
-            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent"),
+            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent")
         ))
+    }
+
+    fun isWhatsappActive(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        return pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ || pkg.contains("whatsapp")
+    }
+
+    fun isWhatsappChatOpen(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
+
+        val inputHints = listOf(
+            "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry",
+            "type a message", "message", "संदेश लिखें", "संदेश"
+        )
+        return findNode(root, inputHints) != null || findFocusedEditText(root) != null
+    }
+
+    fun getWhatsappActiveContactTitle(): String? {
+        val root = rootInActiveWindow ?: return null
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return null
+
+        val titleHints = listOf(
+            "com.whatsapp:id/conversation_contact_name",
+            "com.whatsapp:id/conversation_title",
+            "com.whatsapp.w4b:id/conversation_contact_name",
+            "com.whatsapp:id/toolbar"
+        )
+        val node = findNode(root, titleHints)
+        if (node != null && !node.text.isNullOrBlank()) {
+            return node.text.toString().trim()
+        }
+        return null
+    }
+
+    /**
+     * Instantly sends a message if WhatsApp is ALREADY open in the active chat.
+     * Bypasses app launch, deep-links, and contact search entirely!
+     * Executes in ~200-300ms.
+     */
+    fun armWhatsappInstantInChatSend(message: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
+
+        val inputHints = listOf(
+            "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry",
+            "type a message", "message", "संदेश लिखें", "संदेश"
+        )
+        val inputNode = findNode(root, inputHints) ?: findFocusedEditText(root)
+        if (inputNode != null) {
+            inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            typeIntoNode(inputNode, message)
+
+            stepHandler.postDelayed({
+                val updatedRoot = rootInActiveWindow ?: return@postDelayed
+                val sendHints = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "send message")
+                if (!clickFirstMatch(updatedRoot, sendHints)) {
+                    val dm = resources.displayMetrics
+                    performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
+                }
+                Log.i(TAG, "armWhatsappInstantInChatSend: fast-sent message in ~200ms")
+            }, 200L)
+            return true
+        }
+        return false
     }
 
     /**
@@ -848,7 +929,8 @@ open class IshaAccessibilityService : AccessibilityService() {
                 if (pendingYouTubeAutoPlay) {
                     val root = rootInActiveWindow
                     if (root != null) {
-                        if (clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal)) {
+                        // From attempt 2 (2800ms) onwards, enable top-result fallback click so fuzzy/mispronounced songs auto-play without 5.5s delay
+                        if (clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal || index >= 2)) {
                             pendingYouTubeAutoPlay = false
                             Log.i(TAG, "YouTube video auto-play clicked at ${delay}ms")
                         }
@@ -1265,17 +1347,28 @@ open class IshaAccessibilityService : AccessibilityService() {
             val s = findSwitchInHierarchy(node.getChild(i))
             if (s != null) return s
         }
-        val parent = node.parent
-        if (parent != null) {
+        // Search sibling hierarchies (up to 3 levels up) for Samsung OneUI & custom vendor preference rows
+        var curr: AccessibilityNodeInfo? = node
+        for (level in 0..2) {
+            val parent = curr?.parent ?: break
             for (i in 0 until parent.childCount) {
                 val child = parent.getChild(i)
-                if (child != node) {
-                    if (child?.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
-                        child?.isCheckable == true) {
+                if (child != curr && child != null) {
+                    if (child.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
+                        child.className?.toString()?.contains("CompoundButton", ignoreCase = true) == true ||
+                        child.isCheckable) {
                         return child
+                    }
+                    for (j in 0 until child.childCount) {
+                        val subChild = child.getChild(j)
+                        if (subChild?.className?.toString()?.contains("Switch", ignoreCase = true) == true ||
+                            subChild?.isCheckable == true) {
+                            return subChild
+                        }
                     }
                 }
             }
+            curr = parent
         }
         return null
     }
@@ -2068,6 +2161,150 @@ open class IshaAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Locks the screen immediately via Accessibility Global Action (Android 9+).
+     */
+    fun performLockScreen(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Performs a vertical upward swipe to dismiss keyguard / swipe-to-unlock screen.
+     */
+    fun performUnlockSwipe(): Boolean {
+        val dm = resources.displayMetrics
+        val startX = dm.widthPixels / 2
+        val startY = (dm.heightPixels * 0.85f).toInt()
+        val endX = dm.widthPixels / 2
+        val endY = (dm.heightPixels * 0.15f).toInt()
+        return performSwipe(startX, startY, endX, endY, 350)
+    }
+
+    /**
+     * Enters a numeric lock screen PIN (e.g. "41578") on the active keyguard/pin pad.
+     */
+    fun enterPin(pin: String): Boolean {
+        if (pin.isBlank()) return false
+        val cleanPin = pin.filter { it.isDigit() }
+        if (cleanPin.isEmpty()) return false
+
+        // 1. Try finding numeric keypad buttons via Accessibility Node tree
+        var allFound = true
+        for (ch in cleanPin) {
+            val digitStr = ch.toString()
+            var digitClicked = false
+            val root = rootInActiveWindow
+            if (root != null) {
+                fun findDigitNode(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                    if (node == null) return null
+                    val text = node.text?.toString()?.trim()
+                    val desc = node.contentDescription?.toString()?.trim()
+                    val viewId = node.viewIdResourceName?.lowercase() ?: ""
+                    if ((text == digitStr || desc == digitStr || viewId.endsWith("key_$digitStr") || viewId.endsWith("button_$digitStr")) && node.isClickable) {
+                        return node
+                    }
+                    for (i in 0 until node.childCount) {
+                        val found = findDigitNode(node.getChild(i))
+                        if (found != null) return found
+                    }
+                    return null
+                }
+                val node = findDigitNode(root)
+                if (node != null) {
+                    node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                    digitClicked = true
+                    try { Thread.sleep(90) } catch (_: Exception) {}
+                }
+            }
+            if (!digitClicked) {
+                allFound = false
+                break
+            }
+        }
+        if (allFound) {
+            try { Thread.sleep(120) } catch (_: Exception) {}
+            val root = rootInActiveWindow
+            if (root != null) {
+                val okLabels = listOf("enter", "ok", "done", "confirm", "✓")
+                for (lbl in okLabels) {
+                    if (performClickByText(lbl)) break
+                }
+            }
+            return true
+        }
+
+        // 2. Physical Coordinate Fallback for standard 3x4 numeric lockpad
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels.toFloat()
+        val height = dm.heightPixels.toFloat()
+
+        val padTop = height * 0.52f
+        val padBottom = height * 0.88f
+        val padLeft = width * 0.08f
+        val padRight = width * 0.92f
+
+        val colWidth = (padRight - padLeft) / 3f
+        val rowHeight = (padBottom - padTop) / 4f
+
+        fun getDigitCoordinates(digit: Char): Pair<Float, Float>? {
+            val (row, col) = when (digit) {
+                '1' -> Pair(0, 0)
+                '2' -> Pair(0, 1)
+                '3' -> Pair(0, 2)
+                '4' -> Pair(1, 0)
+                '5' -> Pair(1, 1)
+                '6' -> Pair(1, 2)
+                '7' -> Pair(2, 0)
+                '8' -> Pair(2, 1)
+                '9' -> Pair(2, 2)
+                '0' -> Pair(3, 1)
+                else -> return null
+            }
+            val x = padLeft + col * colWidth + colWidth / 2f
+            val y = padTop + row * rowHeight + rowHeight / 2f
+            return Pair(x, y)
+        }
+
+        for (ch in cleanPin) {
+            val coords = getDigitCoordinates(ch) ?: continue
+            performTap(coords.first, coords.second)
+            try { Thread.sleep(140) } catch (_: Exception) {}
+        }
+
+        // Tap Enter / Check button if present (row 3, col 2)
+        val enterX = padLeft + 2 * colWidth + colWidth / 2f
+        val enterY = padTop + 3 * rowHeight + rowHeight / 2f
+        performTap(enterX, enterY)
+
+        return true
+    }
+
+    /**
+     * Draws pattern unlock gesture from pattern string like "4,1,5,7,8" or "41578".
+     * Checks post-draw keyguard state to verify if pattern successfully unlocked the screen.
+     */
+    fun unlockWithPattern(patternStr: String): Boolean {
+        val dots = patternStr.split(",", " ", "-").mapNotNull { it.trim().toIntOrNull() }
+            .ifEmpty { patternStr.filter { it.isDigit() }.map { it.toString().toInt() } }
+        if (dots.size >= 2) {
+            val dispatched = drawPattern(dots)
+            if (!dispatched) return false
+            try {
+                Thread.sleep(350)
+                val km = getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+                if (km != null && !km.isKeyguardLocked) {
+                    return true
+                }
+            } catch (_: Exception) {}
+            return dispatched
+        }
+        return false
+    }
+
+    /**
      * Draws a continuous pattern gesture on a 3x3 (9-dot) unlock or payment grid.
      * [dots] is a list of dot numbers 1 to 9:
      *   1 (top-left)    2 (top-mid)    3 (top-right)
@@ -2086,7 +2323,8 @@ open class IshaAccessibilityService : AccessibilityService() {
             if (node == null || foundPatternView) return
             val cls = node.className?.toString()?.lowercase() ?: ""
             val resId = node.viewIdResourceName?.lowercase() ?: ""
-            if (cls.contains("pattern") || resId.contains("pattern") || resId.contains("lock_pattern")) {
+            if (cls.contains("pattern") || resId.contains("pattern") || resId.contains("lock_pattern") ||
+                resId.contains("keyguard_pattern") || resId.contains("lockpatternview") || cls.contains("lockpatternview")) {
                 node.getBoundsInScreen(targetBounds)
                 if (targetBounds.width() > 200 && targetBounds.height() > 200) {
                     foundPatternView = true
@@ -2106,10 +2344,10 @@ open class IshaAccessibilityService : AccessibilityService() {
             targetBounds
         } else {
             val dm = resources.displayMetrics
-            val left = (dm.widthPixels * 0.12f).toInt()
-            val right = (dm.widthPixels * 0.88f).toInt()
-            val top = (dm.heightPixels * 0.44f).toInt()
-            val bottom = (dm.heightPixels * 0.82f).toInt()
+            val left = (dm.widthPixels * 0.10f).toInt()
+            val right = (dm.widthPixels * 0.90f).toInt()
+            val top = (dm.heightPixels * 0.45f).toInt()
+            val bottom = (dm.heightPixels * 0.83f).toInt()
             android.graphics.Rect(left, top, right, bottom)
         }
 

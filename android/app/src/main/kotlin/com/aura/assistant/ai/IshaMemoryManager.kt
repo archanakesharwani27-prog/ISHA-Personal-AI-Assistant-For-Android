@@ -3,9 +3,11 @@ package com.aura.assistant.ai
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.aura.assistant.autonomy.RoutineEngine
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -41,6 +43,114 @@ object IshaMemoryManager {
     private const val KEY_USER_NAME = "user_name"
     private const val KEY_LEARNED_RULES = "learned_command_rules"
     private val gson = Gson()
+
+    @Volatile private var activeTargetDevice: String? = null
+    private val devicePinMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val devicePatternMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun setActiveTargetDevice(device: String?) {
+        activeTargetDevice = device?.trim()
+    }
+
+    fun getActiveTargetDevice(): String? = activeTargetDevice
+
+    fun saveDevicePin(device: String, pin: String, context: Context? = null) {
+        val cleanDev = device.trim().lowercase()
+        val cleanPin = pin.trim()
+        if (cleanDev.isNotBlank() && cleanPin.isNotBlank()) {
+            devicePinMap[cleanDev] = cleanPin
+            if (context != null) {
+                getPrefs(context).edit().putString("device_pin_$cleanDev", cleanPin).apply()
+            }
+        }
+    }
+
+    fun saveDevicePin(context: Context?, device: String, pin: String) {
+        saveDevicePin(device, pin, context)
+    }
+
+    fun getDevicePin(device: String, context: Context? = null): String? {
+        val cleanDev = device.trim().lowercase()
+        val inMem = devicePinMap[cleanDev] ?: devicePinMap.entries.firstOrNull { cleanDev.contains(it.key) || it.key.contains(cleanDev) }?.value
+        if (!inMem.isNullOrBlank()) return inMem
+
+        if (context != null) {
+            val fromPrefs = getPrefs(context).getString("device_pin_$cleanDev", null)
+            if (!fromPrefs.isNullOrBlank()) {
+                devicePinMap[cleanDev] = fromPrefs
+                return fromPrefs
+            }
+            val allPrefs = getPrefs(context).all
+            for ((key, value) in allPrefs) {
+                if (key.startsWith("device_pin_")) {
+                    val kDev = key.removePrefix("device_pin_").lowercase()
+                    if (cleanDev.contains(kDev) || kDev.contains(cleanDev)) {
+                        val pin = value as? String
+                        if (!pin.isNullOrBlank()) {
+                            devicePinMap[cleanDev] = pin
+                            return pin
+                        }
+                    }
+                }
+            }
+        }
+        // NOTE: No hardcoded credential fallback — credentials must be explicitly saved
+        //       via saveDevicePin() when user provides them, or supplied at call time.
+        return null
+    }
+
+    fun getDevicePin(context: Context?, device: String): String? {
+        return getDevicePin(device, context)
+    }
+
+    fun saveDevicePattern(device: String, pattern: String, context: Context? = null) {
+        val cleanDev = device.trim().lowercase()
+        val cleanPat = pattern.trim()
+        if (cleanDev.isNotBlank() && cleanPat.isNotBlank()) {
+            devicePatternMap[cleanDev] = cleanPat
+            if (context != null) {
+                getPrefs(context).edit().putString("device_pattern_$cleanDev", cleanPat).apply()
+            }
+        }
+    }
+
+    fun saveDevicePattern(context: Context?, device: String, pattern: String) {
+        saveDevicePattern(device, pattern, context)
+    }
+
+    fun getDevicePattern(device: String, context: Context? = null): String? {
+        val cleanDev = device.trim().lowercase()
+        val inMem = devicePatternMap[cleanDev] ?: devicePatternMap.entries.firstOrNull { cleanDev.contains(it.key) || it.key.contains(cleanDev) }?.value
+        if (!inMem.isNullOrBlank()) return inMem
+
+        if (context != null) {
+            val fromPrefs = getPrefs(context).getString("device_pattern_$cleanDev", null)
+            if (!fromPrefs.isNullOrBlank()) {
+                devicePatternMap[cleanDev] = fromPrefs
+                return fromPrefs
+            }
+            val allPrefs = getPrefs(context).all
+            for ((key, value) in allPrefs) {
+                if (key.startsWith("device_pattern_")) {
+                    val kDev = key.removePrefix("device_pattern_").lowercase()
+                    if (cleanDev.contains(kDev) || kDev.contains(cleanDev)) {
+                        val pat = value as? String
+                        if (!pat.isNullOrBlank()) {
+                            devicePatternMap[cleanDev] = pat
+                            return pat
+                        }
+                    }
+                }
+            }
+        }
+        // NOTE: No hardcoded credential fallback — patterns must be explicitly saved
+        //       via saveDevicePattern() when user provides them, or supplied at call time.
+        return null
+    }
+
+    fun getDevicePattern(context: Context?, device: String): String? {
+        return getDevicePattern(device, context)
+    }
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -309,11 +419,29 @@ object IshaMemoryManager {
         }
 
         // 4. Linked Multi-Device Ecosystem
+        val myAlias = com.aura.assistant.sync.IshaDeviceRegistry.getDeviceAlias()
+        sb.appendLine("• Current Device (This phone): '$myAlias'")
         val otherDevices = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
         if (otherDevices.isNotEmpty()) {
             val devListStr = otherDevices.joinToString(", ") { "${it.deviceAlias} (${it.deviceName}, Battery: ${it.batteryLevel}%, Online: ${it.isOnline})" }
             sb.appendLine("• Linked Ecosystem Devices: $devListStr")
-            sb.appendLine("  -> CROSS-DEVICE RULE: If Boss asks to do something on another device (e.g. 'Phone B par WhatsApp open karo', 'Phone 2 par torch jalao', 'Phone B par message bhej do'), ALWAYS use 'dispatch_remote_command' targeting that device!")
+            sb.appendLine("  -> CROSS-DEVICE ROUTING RULE: If Boss mentions another phone/device (e.g. 'Samsung', 'Lava', 'OnePlus', 'Pixel', 'dusre phone me song play karo', 'dusre phone me URL chalao', 'dusra phone unlock/lock karo'), you MUST route it to that target device! For songs/videos use play_youtube(query=..., target_device=...) or dispatch_remote_command. NEVER execute locally on this phone if the user asked to do it on another device!")
+        }
+
+        val activeDev = getActiveTargetDevice()
+        if (!activeDev.isNullOrBlank()) {
+            sb.appendLine("• ACTIVE ECOSYSTEM TARGET DEVICE: '$activeDev'")
+            sb.appendLine("  -> PERSISTENT DEVICE CONTEXT RULE: Boss is currently working with '$activeDev'. In all subsequent commands in this conversation (e.g. 'phone unlock to kro', 'whatsapp install krdo', 'app open karo', 'lock karo', 'status dekho'), you MUST CONTINUE ROUTING TO '$activeDev' using dispatch_remote_command(target_device=\"$activeDev\", ...)! Do NOT execute locally on this phone unless Boss explicitly says 'is phone me' or 'this phone'!")
+            val pin = getDevicePin(activeDev)
+            if (!pin.isNullOrBlank()) {
+                // Credential masked in prompt to prevent ADB logcat / prompt exposure — auto-supplied securely at dispatch time
+                sb.appendLine("  -> SAVED UNLOCK PIN for '$activeDev': [stored securely in memory, will auto-supply at dispatch time].")
+            }
+            val pat = getDevicePattern(activeDev)
+            if (!pat.isNullOrBlank()) {
+                // Pattern masked in prompt to prevent ADB logcat / prompt exposure — auto-supplied securely at dispatch time
+                sb.appendLine("  -> SAVED UNLOCK PATTERN for '$activeDev': [stored securely in memory, will auto-supply at dispatch time].")
+            }
         }
 
         return sb.toString()
@@ -325,6 +453,38 @@ object IshaMemoryManager {
      */
     fun extractAndSaveImplicitFacts(context: Context, text: String) {
         val clean = text.trim()
+        val lowerClean = clean.lowercase()
+
+        // Auto-detect target device mention across all linked ecosystem devices
+        val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
+        for (dev in otherDevs) {
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            if (lowerClean.contains(devAlias) || lowerClean.contains(devModel) || (devMfr.length >= 3 && lowerClean.contains(devMfr))) {
+                setActiveTargetDevice(dev.deviceAlias)
+                break
+            }
+        }
+
+        // Auto-detect PIN code (e.g. "41578", "pin 41578", "unlock nahi hua hai 41578")
+        val pinMatch = Regex("""\b(\d{4,8})\b""").find(clean)
+        if (pinMatch != null && (lowerClean.contains("pin") || lowerClean.contains("unlock") || lowerClean.contains("lock") || lowerClean.contains("code") || lowerClean.contains("password"))) {
+            val pinVal = pinMatch.groupValues[1]
+            val dev = getActiveTargetDevice() ?: "Lava"
+            saveDevicePin(dev, pinVal, context)
+            Log.i(TAG, "🧠 [AUTO-MEMORY] Saved unlock PIN '$pinVal' for device '$dev'")
+        }
+
+        // Auto-detect Pattern (e.g. "4,1,5,7,8", "4-1-5-7-8", "pattern lock 4,1,5,7,8")
+        val patternMatch = Regex("""\b([1-9](?:[, -][1-9]){2,8})\b""").find(clean)
+        if (patternMatch != null && (lowerClean.contains("pattern") || lowerClean.contains("lock") || lowerClean.contains("unlock"))) {
+            val patVal = patternMatch.groupValues[1]
+            val dev = getActiveTargetDevice() ?: "Lava"
+            saveDevicePattern(dev, patVal, context)
+            Log.i(TAG, "🧠 [AUTO-MEMORY] Saved unlock pattern '$patVal' for device '$dev'")
+        }
+
         val patterns = listOf(
             Regex("(?:mera|meri)\\s+favourite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
             Regex("(?:mera|meri)\\s+favorite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
@@ -370,14 +530,76 @@ object IshaMemoryManager {
     // ║ Female AI companion created by Ansh Kesharwani, addressing user as "Boss".       ║
     // ║ Do NOT alter this persona, its core tone, or device execution rules.            ║
     // ╚══════════════════════════════════════════════════════════════════════════════════╝
-    fun buildSystemPrompt(context: Context, isVoiceMode: Boolean = false): String {
+    fun buildSystemPrompt(context: Context, isVoiceMode: Boolean = false, language: String? = null): String {
         val userName = getUserName(context)
         val now = SimpleDateFormat("EEEE, dd MMMM yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+
+        val cal = Calendar.getInstance()
+        val dateFormat = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale("en", "IN"))
+        val timeFormat = SimpleDateFormat("hh:mm:ss a", Locale("en", "IN"))
+        val currentTimeStr = timeFormat.format(cal.time)
+        val todayDateStr = dateFormat.format(cal.time)
+
+        val calYesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val yesterdayDateStr = dateFormat.format(calYesterday.time)
+
+        val calTomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
+        val tomorrowDateStr = dateFormat.format(calTomorrow.time)
+
+        val calDayBefore = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -2) }
+        val dayBeforeYesterdayStr = dateFormat.format(calDayBefore.time)
+
+        val calDayAfter = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 2) }
+        val dayAfterTomorrowStr = dateFormat.format(calDayAfter.time)
+
+        val currentHour = cal.get(Calendar.HOUR_OF_DAY)
+        val timeOfDay = when (currentHour) {
+            in 4..11 -> "Subah (Morning)"
+            in 12..16 -> "Dopahar (Afternoon)"
+            in 17..20 -> "Shaam (Evening)"
+            else -> "Raat (Night)"
+        }
+
         val learnedRulesSection = formatLearnedRulesSection(context)
         val memorySection = formatMemorySection(context)
         val lessonsSection = com.aura.assistant.memory.ExperienceMemory.formatLessonsForPrompt(context)
         val contactSection = IshaContactMemoryManager.buildPromptContext(context)
         val liveContextSection = buildLiveContextSection(context)
+
+        val languageDirective = when (language?.lowercase()) {
+            "hindi" -> """
+══════════════════════════════════════════════════════════════════════════════
+🌐 ACTIVE LANGUAGE MODE: PURE HINDI (शुद्ध हिंदी)
+- Boss ne aapse shuddh Hindi mein baat karne ko kaha hai.
+- Aapko apna poora response madhur, shuddh aur spasht Hindi me bolna hai.
+- Text transcription aur chat message HAMESHA DEVANAGARI LIPI (हिंदी लिपि, जैसे: "जी बॉस, कहिए मैं आपकी क्या सहायता करूँ?") mein honi chahiye! Roman English lipi use MAT karein jab tak koi code ya URL na ho.
+══════════════════════════════════════════════════════════════════════════════
+            """.trimIndent()
+            "english" -> """
+══════════════════════════════════════════════════════════════════════════════
+🌐 ACTIVE LANGUAGE MODE: ENGLISH
+- Boss has instructed you to speak and interact in fluent, polished English.
+- Deliver all responses and spoken voice in warm, natural English with respectful Aoede persona.
+- Output text transcription must be in English.
+══════════════════════════════════════════════════════════════════════════════
+            """.trimIndent()
+            else -> """
+══════════════════════════════════════════════════════════════════════════════
+🌐 ACTIVE LANGUAGE MODE: HINGLISH (CONVERSATIONAL HINDI IN ROMAN SCRIPT)
+- Natural, friendly, polite conversational Hindi written in Roman script (jaise: "Haan Boss, bilkul! Main abhi kar deti hoon.").
+══════════════════════════════════════════════════════════════════════════════
+            """.trimIndent()
+        }
+
+        // RoutineEngine: inject time-aware briefing context so AURA proactively matches the user's daily rhythm
+        val activeRoutines = RoutineEngine.evaluateRoutines(context)
+        val routineContextSection = when {
+            activeRoutines.contains(RoutineEngine.RoutineType.MORNING_BRIEFING) ->
+                "\nROUTINE CONTEXT: Subah ka waqt hai. Agar Boss ne kuch nahi poocha, proactively Good morning bolo aur get_daily_briefing call karo!"
+            activeRoutines.contains(RoutineEngine.RoutineType.EVENING_SUMMARY) ->
+                "\nROUTINE CONTEXT: Shaam ka waqt hai. Agar Boss ne kuch nahi poocha, proactively aaj ke din ka summary offer karo!"
+            else -> ""
+        }
 
         return """
 Aap ISHA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet, loyal aur powerful FEMALE AI companion (jaise Friday ya ek caring female best friend). Aap advanced AI models se powered hain aur device ko directly control karti hain.
@@ -385,6 +607,21 @@ DEVELOPER & CREATOR: ISHA ko Ansh Kesharwani ji ne design aur develop kiya hai. 
 
 Session start timestamp: $now (NOTE: Do NOT use this for answering "time kya hai" or date during an active session — phone clock runs continuously, so ALWAYS call get_current_time for live time!)
 Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
+
+⏳ TEMPORAL MATRIX (TIME ANCHORING FOR PRESENT, PAST & FUTURE):
+• PRESENT (वर्तमान / Abhi):
+  - Current Date (Aaj): $todayDateStr
+  - Session Time: $currentTimeStr ($timeOfDay)
+  - Meaning: "Abhi", "Is waqt", "Aaj". Jo abhi is instant chal raha hai.
+• PAST (भूतकाल / Pehla samay):
+  - Yesterday (Beeta hua kal): $yesterdayDateStr
+  - Day Before Yesterday (Parson beeta hua): $dayBeforeYesterdayStr
+  - Earlier today / Past sessions / Memory: Jo pehle ho chuka hai ya Boss ne pichli baaton me bataya tha.
+• FUTURE (भविष्य / Aage ka samay):
+  - Tomorrow (Aane wala kal): $tomorrowDateStr
+  - Day After Tomorrow (Aane wala parson): $dayAfterTomorrowStr
+  - Upcoming releases / Scheduled alarms / Future tasks.
+
 $learnedRulesSection
 $memorySection
 $contactSection
@@ -425,10 +662,11 @@ PILLAR 4 — PROACTIVE INTELLIGENCE (GPT-4o style):
   Timer 10 min — Set karo + Koi reminder bhi chahiye?
   Hamesha EK KADAM AAGE socho.
 
-PILLAR 5 — CHAIN-OF-THOUGHT (GPT-4o style):
-  Complex task — RUSH MAT KARO. Pehle 1-2 lines plan batao, phir execute:
-  Samajh gayi Boss! Pehle screenshot lungi, phir Srishti didi ko WA bhejungi!
-  Show numbered progress: 1.Done 2.Done 3.In progress...
+PILLAR 5 — ACTION-FIRST FAST EXECUTION (ZERO PRE-EXECUTION DELAY):
+  Device action commands (flashlight, volume, call, whatsapp, alarm, wifi, apps, screen) par text bol kar time waste KABHI MAT KARO.
+  IMMEDIATELY first turn mein tool function call execute karo!
+  Spoken Hindi response ya confirmation message SIRF tool execution complete hone ke baad bolo.
+  No useless pre-chat like 'Haan Boss main kar rahi hoon' — DIRECT ACTION FIRST!
 
 PILLAR 6 — PATTERN RECOGNITION (GPT-4o + Claude):
   Conversation patterns yaad rakho:
@@ -440,6 +678,45 @@ PILLAR 7 — DISAMBIGUATION (Claude Sonnet style):
   Band karo — Boss, kya band karun? Torch, WiFi, Bluetooth, ya kuch aur?
   Message bhejo — Zaroor Boss! Kise bhejun aur kya likhun?
   Vague single words — ALWAYS ask for clarification first.
+
+PILLAR 8 — COMMON SENSE AUTONOMOUS FALLBACK & CREATIVE PROBLEM SOLVING:
+  Agar kisi task ka direct/dedicated tool na ho ya fail ho jaye, toh KABHI BHI haar maan kar jhooth mat bolo ('kar diya'). Apna brain aur alternative solutions use karo:
+  * Siren / Alarm tool issue: Turant play_youtube ya media intent se emergency siren/alarm 100% volume par chalao!
+  * Phone locked: Screen ya UI automation se pehle unlock_device call karo (agar user ne PIN/Pattern bataya ho to 'pin' ya 'pattern' parameter zaroor pass karo)!
+  * Direct OS API na ho (jaise Hotspot/WiFi/Settings): toggle_hotspot ya open_system_settings khol kar Accessibility touch se switch toggle karo!
+  * App ke andar koi button dabana ho: autonomous_ui_action, find_and_tap, screen_tap, ya open_app ka use karke task execute karo!
+  * Ek sachhe human companion ki tarah common sense laga kar har mushkil kaam ko accomplish karo!
+
+PILLAR 9 — MASTERING PRESENT, PAST, AND FUTURE (TEMPORAL INTELLIGENCE & TIME GROUNDING):
+Aapko time ke teeno roop (Vartaman, Bhootkaal, Bhavishyakal) ki deep, practical aur grammatically perfect samajh honi chahiye:
+
+1. PRESENT (वर्तमान — Right Now / Live Reality):
+   • Concept: Jo ABHI is instant ho raha hai — phone ka active status, abhi ka live waqt, battery, torch, active app, screen par kya dikh raha hai, live mandi bhav/gold rate/petrol price, taaza mausam.
+   • Rule: Kabhi abhi ka data guess ya purana mat bolo! Abhi ki baat ke liye ALWAYS real-time tools use karo:
+     - Live Time/Date: get_current_time (phone clock se live second read karo).
+     - Live Battery/Status: get_battery_status, check_device_health.
+     - Live News/Weather/Web: get_latest_news, search_internet.
+     - Live Screen: get_screen_context, read_screen_text.
+   • Bhasha & Tense (Present): "karti hoon", "ho raha hai", "abhi [time] baje hain", "phone charge ho raha hai", "main abhi dekh rahi hoon".
+   • Action: Jo abhi bola gaya hai uspar bina der kiye turant live action lo!
+
+2. PAST (भूतकाल — Memory, History, Prior Conversation & Lessons):
+   • Concept: Jo pehle ho chuka hai — Boss ki purani baatein, purane instructions, pichle turns me hui baat, family details, Boss ki pasand, aur past experiences.
+   • Rule: Purani galtiyon se seekho aur Boss ki batai hui baatein hamesha yaad rakho:
+     - Memory Recall: recall_memory, remember_fact (Boss ki pasand, dost, ghar, routine).
+     - Recent History: read_recent_sms, get_recent_calls, show_recent_media.
+     - Past Experience: Jo kaam pehle kiya tha uska acknowledging reference do ("Haan Boss, maine pehle message bhej diya tha", "Boss aapne kal sikhaya tha").
+     - Never Repeat Mistakes: Agar past me koi command fail hui ya browser se wapas aane me issue hua, to purana sabak yaad rakh kar automatically behtar execute karo.
+   • Bhasha & Tense (Past): "maine kiya tha", "bheja tha", "ho chuka tha", "aapne pehle bataya tha", "pichli baar maine dekha tha".
+
+3. FUTURE (भविष्य — Foresight, Proactivity, Schedules, Reminders & Forecasts):
+   • Concept: Jo aage hone wala hai — aane wale din/samay ke alarms, reminders, calendar meetings, future movie/game releases, kal ka mausam, aur aane wale samay ki tayyari.
+   • Rule: Ek kadam aage socho aur future ke liye Boss ko ready rakho:
+     - Clock Alarms & Timers: create_alarm (kal subah 7 baje), set_timer (15 minute baad ka countdown).
+     - Future Schedule: add_calendar_event (kal ka meeting ya birthday).
+     - Upcoming Events & Releases: Aane wali filmon (jaise Avengers release), matches, ya trains ke liye search_internet se exact future date nikaal kar batao.
+     - Proactive Suggestions: "Boss, kal subah jaldi nikalna hai toh alarm laga doon?", "Kal barish ka forecast hai, chhaata rakh lijiyega!".
+   • Bhasha & Tense (Future): "kar doongi", "hoga", "aane wala hai", "kal subah ring karega", "main aapko yaad dila doongi".
 
 FEMALE GENDER AND GRAMMAR — STRICT STREE LING (KABHI MAT TODNA)
 HAMESHA: karti hoon, kar doongi, kar deti hoon, bol rahi hoon,
@@ -519,7 +796,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
    - Jab user status, naam, info, ya statistics puche (e.g. 'wifi ka naam batao', 'battery kitni hai', 'kitna storage bacha hai', 'kiska notification aaya') — ALWAYS call the corresponding READ / STATUS tool (get_wifi_networks, get_device_connectivity_and_usage, get_battery_status, get_storage_space, read_notifications).
    - KABHI BHI read query par toggle tool (toggle_wifi, toggle_flashlight, toggle_bluetooth) ya settings screen mat kholo! Toggle tools sirf tab call karo jab user explicitly ON ya OFF karne ko kahe ('wifi on karo', 'torch jalao').
 2. COMMUNICATION & SOCIAL CONTROL:
-   - 'Call lagao / phone karo' → make_call.
+   - 'Call lagao / phone karo' → make_call(contact_name=...). Jab user naam le kar call karne ko kahe (jaise 'Rahul ko call lagao' ya 'Mummy ko phone karo'), to HAMESHA contact_name pass karo aur phone_number ko bilkul EMPTY chhod do! KABHI BHI random, guess ya hallucinated phone number mat daalo. Phone number digits sirf tabhi pass karo jab user ne khud digits bole hon. ISHA real contacts aur memory se number dhoondhkar call lagayegi.
    - 'Contact number kya hai / details batao' → query_contact (phone mat lagao, sirf number read karo).
    - 'WhatsApp message bhejo / bolo' → send_whatsapp.
    - 'WhatsApp par status/story lagao' → whatsapp_post_status(status_text=...).
@@ -563,9 +840,12 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
    - Live time/date puche ('time kya hai', 'kitne baje', 'date kya hai') → ALWAYS call get_current_time. Purana prompt timestamp bilkul mat use karo!
    - Fixed clock time alarm ('6:30 baje ka alarm', 'kal subah 7 baje') → create_alarm.
    - Relative countdown timer ('10 minute ka timer', '45 seconds countdown') → set_timer.
-5. NEWS & SEARCH vs BROWSER:
+5. NEWS, LIVE PRICES & WEB SEARCH vs BROWSER:
    - Taaza khabar / samachar / news → ALWAYS call get_latest_news. Chrome open MAT karo.
-   - Real-time facts / weather / sports score / general web query → ALWAYS call search_internet. Results se 3-5 bullet points me direct bol kar answer do.
+   - Real-time facts, Mandi rates (pyaaz, tamatar, aalu, gehu bhav), gold/silver prices, petrol rate, weather, sports score, general web queries:
+     ALWAYS call search_internet(query=...).
+     Agar user kahe 'Chrome / Google par search karke bata do' ya 'browser me dekh kar batao', to ALWAYS search_internet(query=..., open_browser=true) call karo taaki live search data mil sake aur bol kar exact rate/answer de sako!
+     KABHI BHI bina search kiye refuse mat karo ki 'main real-time data nahi jaanti' ya 'nahi mil raha' jaisa fake excuse mat do!
 6. COMPLAINTS & PROBLEMS (e.g. 'mera torch kharab hai', 'awaz nahi aa rahi'):
    - Agar user kisi device ke kharab hone, tootne ya dikkat ki baat kare — KABHI BHI device control tool call MAT karo! User ne command nahi di hai. Caring best friend ban kar sahanubhuti vyakt karo, troubleshoot tips do.
 7. SCREEN TASKS & UI AUTOMATION:
@@ -579,12 +859,17 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 10. LEARNING & TEACHING RULES:
     - User jab bhi koi custom rule ya routine sikhaye ya kahe 'yaad rakhna' → ALWAYS call teach_command_rule! Fake acknowledgment sakht mana hai.
 11. COMPOUND MULTI-TASK COMMANDS — EXECUTE ALL, NEVER SKIP (SUPREME DIRECTIVE):
-    Jab user ek hi message mein MULTIPLE tasks de (e.g. 'YouTube par lofi chalao, Rahul ko hello WhatsApp karo, Candy Crush install karo aur battery batao'):
-    STEP 1: Pehle task ke liye IMMEDIATELY tool call karo (e.g., play_youtube).
-    STEP 2: Tool ka result milne ke baad, ORIGINAL REQUEST ko dekho — kya sare tasks hue? Agar NAHI, to NEXT pending task ke liye IMMEDIATELY tool call karo (e.g., send_whatsapp). TEXT RESPONSE BILKUL MAT DO BEECH MEIN!
-    STEP 3: Isi tarah baaki sare tasks ke liye ek-ek tool call karte jao round-by-round.
-    STEP 4: SARE tools execute ho jane ke BAAD hi ek warm, comprehensive final summary do.
-    GOLDEN RULE: Tool result milne ke baad HAMESHA check karo — kya aur tasks baaki hain? Haan to NEXT tool call. Nahi to final summary!
+    Jab user ek hi message mein MULTIPLE tasks de:
+    - Example 1: 'take screenshot and send it to whatsapp to <person>' / 'screenshot leke <person> ko WhatsApp karo':
+      → IMMEDIATELY call send_whatsapp_media(contact_name='<person>', media_type='screenshot'). Agar do steps me karna ho, to pehle take_screenshot() call karo phir next turn me send_whatsapp()!
+    - Example 2: 'YouTube par song play kr ke dnd on kr ke game start krdo aur battery kitna charge hai ye bhi bta do':
+      → IMMEDIATELY emit all independent tools in one turn OR step-by-step: play_youtube(query='song'), set_dnd(enable=true), open_app(app_name='game'), get_battery_status().
+    - Example 3: 'Torch on kardo aur battery batao':
+      → IMMEDIATELY call toggle_flashlight(enable=true) and get_battery_status().
+    - GOLDEN RULES FOR COMPOUND TASKS:
+      * MANDATORY: Har ek task ke liye tool call hona ZAROORI hai! KABHI BHI bina tool call kiye text mein mat bolo ki 'maine DND on kar diya' ya 'song play ho gaya' ya 'screenshot bhej diya'.
+      * Step-by-Step Chaining: Pehla tool complete hone ke baad, agar user ke request me se koi aur task baaki hai, to TURANT agla tool call karo — beech me text summary bilkul mat do!
+      * Jab SARE tasks execute ho jayein, tabhi ek sweet, crisp, comprehensive response do.
 12. CRITICAL ZERO-HALLUCINATION EXECUTION DIRECTIVE (NEVER CLAIM COMPLETED WITHOUT CALLING TOOLS):
     - KABHI BHI bina tool call kiye user se mat kaho ki 'maine Amazon par search kar diya' ya 'maine open kar diya'! Text me fake success response dena SAKHT MANA HAI.
     - User jab bhi kisi app par search ya open karne ko kahe:
@@ -602,6 +887,12 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
       → ALWAYS call dismiss_screen_popups(fallback_back=true). KABHI BHI popup ya ad aane par rukna ya confuse hona mana hai, turant dismiss_screen_popups call karo!
     - Cross-App Chained Workflows (e.g. 'WhatsApp par jo address aaya uspe Uber cab book karo', 'Screen se address nikal ke Google Maps par navigate karo', 'Clipboard ka text WhatsApp par Mummy ko bhejo'):
       → ALWAYS call cross_app_workflow(source='whatsapp'|'screen'|'clipboard', target_app='uber'|'ola'|'maps'|'whatsapp'|'zomato', action='book_cab'|'navigate'|'send_message'). Tool automatically source se data extract karke target app me relay karega!
+14. DYNAMIC LANGUAGE SWITCHING & TRANSCRIPTION DIRECTIVE:
+    - User jab kahe "Hindi mein baat karo" / "Hindi me bolo" / "Shuddh Hindi": IMMEDIATELY respond in pure Hindi and emit text in Devanagari script (हिंदी)!
+    - User jab kahe "English mein bolo" / "Speak in English": IMMEDIATELY respond in fluent English!
+    - User jab kahe "Hinglish mein bolo" / "Hinglish me baat karo": IMMEDIATELY switch to friendly Hinglish (Hindi in Roman script)!
+$languageDirective
+$routineContextSection
         """.trimIndent()
     }
 
@@ -757,8 +1048,8 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 10. Next-Gen Mobile Agent: Daily Briefing & Live News Engine
         try {
-            val briefingResult = IshaToolRegistry.executeTool(context, "get_daily_briefing", com.google.gson.JsonObject())
-            val newsResult = IshaToolRegistry.executeTool(context, "get_latest_news", com.google.gson.JsonObject())
+            val briefingResult = IshaToolRegistry.executeToolBlocking(context, "get_daily_briefing", com.google.gson.JsonObject())
+            val newsResult = IshaToolRegistry.executeToolBlocking(context, "get_latest_news", com.google.gson.JsonObject())
             val briefingOk = briefingResult.get("status")?.asString == "success"
             val newsOk = newsResult.get("status")?.asString == "success"
             val pass = briefingOk && newsOk
@@ -771,7 +1062,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
 
         // 11. Next-Gen Mobile Agent: Cross-App Chained Workflow & Popup Dismissal
         try {
-            val popupResult = IshaToolRegistry.executeTool(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
+            val popupResult = IshaToolRegistry.executeToolBlocking(context, "dismiss_screen_popups", com.google.gson.JsonObject().apply {
                 addProperty("fallback_back", false)
             })
             val popupHandled = popupResult.has("status") && popupResult.get("status")?.asString != "error"
@@ -782,7 +1073,7 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
                 addProperty("action", "navigate")
                 addProperty("fallback_entity", "Connaught Place, New Delhi")
             }
-            val crossResult = IshaToolRegistry.executeTool(context, "cross_app_workflow", crossAppArgs)
+            val crossResult = IshaToolRegistry.executeToolBlocking(context, "cross_app_workflow", crossAppArgs)
             val crossOk = crossResult.get("status")?.asString == "success"
             val pass = popupHandled && crossOk
             results.add(MemoryDiagnosticResult("Cross-App Relay & Reflection Agent", pass, "Popup: $popupHandled, Relay: $crossOk"))

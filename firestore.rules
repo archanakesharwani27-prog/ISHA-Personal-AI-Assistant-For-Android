@@ -1,13 +1,37 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(userId) {
+      return (request.auth != null && request.auth.uid == userId) ||
+             userId.matches('guest_.*') ||
+             userId.matches('user_.*') ||
+             userId.matches('google_.*') ||
+             userId.matches('local_.*');
+    }
+
     // User presence, profiles, devices, chats, contacts, and cross-device command queue
     match /users/{userId} {
-      allow read, write: if request.auth != null || userId.matches('guest_.*') || userId.matches('user_.*') || userId.matches('google_.*') || userId.matches('local_.*');
+      allow read, write: if isOwner(userId);
 
-      // Subcollections: devices, inbox, chats, contacts, shared_clipboard
+      // Specific security rule for cross-device inbox commands
+      match /devices/{deviceId}/inbox/{commandId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         request.resource.data.action is string &&
+                         request.resource.data.status in ['PENDING', 'EXECUTING'];
+        allow update: if isOwner(userId) &&
+                         request.resource.data.status in ['PENDING', 'EXECUTING', 'COMPLETED', 'FAILED'];
+        allow delete: if isOwner(userId);
+      }
+
+      // Universal cloud clipboard bridge
+      match /shared_clipboard/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // All remaining subcollections (devices, chats, contacts)
       match /{allSubcollections=**} {
-        allow read, write: if request.auth != null || userId.matches('guest_.*') || userId.matches('user_.*') || userId.matches('google_.*') || userId.matches('local_.*');
+        allow read, write: if isOwner(userId);
       }
     }
   }

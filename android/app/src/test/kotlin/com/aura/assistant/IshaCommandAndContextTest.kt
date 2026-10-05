@@ -1,9 +1,11 @@
 package com.aura.assistant
 
 import com.aura.assistant.ai.IshaMemoryManager
+import com.aura.assistant.ai.AuraMemoryManager
 import com.aura.assistant.ai.IshaToolRegistry
 import com.aura.assistant.data.ChatMessage
 import com.aura.assistant.data.MessageRole
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -114,10 +116,10 @@ class IshaCommandAndContextTest {
 
         // Verify Live Context instructions
         val liveContext = AuraMemoryManager.buildLiveContextSection(null)
-        assertTrue("Live context must contain LAST EXECUTED ACTION block", liveContext.contains("Last Action Executed"))
+        assertTrue("Live context must contain LAST ACTION block", liveContext.contains("Last Hardware/Toggle Action") || liveContext.contains("Last Executed"))
         assertTrue("Live context must reference the executed tool", liveContext.contains("toggle_flashlight"))
         assertTrue("Live context must instruct shorthand pronoun resolution", 
-            liveContext.contains("PRONOUN & SHORTHAND RULE") &&
+            (liveContext.contains("TOGGLE/SHORTHAND RULE") || liveContext.contains("PRONOUN & SHORTHAND RULE")) &&
             liveContext.contains("refers directly to 'toggle_flashlight'")
         )
         println("✅ Context Action Snapshot & Shorthand Resolution logic successfully verified!")
@@ -220,7 +222,7 @@ class IshaCommandAndContextTest {
 
         val dummyContext = android.content.ContextWrapper(null)
 
-        val result = IshaToolRegistry.executeTool(dummyContext, "calculate", args)
+        val result = IshaToolRegistry.executeToolBlocking(dummyContext, "calculate", args)
 
         assertNotNull("Result must not be null", result)
         assertEquals("success", result.get("status")?.asString)

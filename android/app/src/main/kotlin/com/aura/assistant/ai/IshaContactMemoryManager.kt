@@ -86,7 +86,9 @@ object IshaContactMemoryManager {
      * Normalizes contact name for lookup (lowercase, trimmed, removes extra spaces).
      */
     fun normalizeName(rawName: String): String {
-        return rawName.trim().lowercase().replace(Regex("\\s+"), " ")
+        return rawName.trim().lowercase()
+            .replace(Regex("(?<=[\\u0900-\\u097F])\\s+(?=[\\u0900-\\u097F])"), "")
+            .replace(Regex("\\s+"), " ")
     }
 
     /**

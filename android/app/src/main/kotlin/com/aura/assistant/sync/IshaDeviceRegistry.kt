@@ -67,10 +67,13 @@ object IshaDeviceRegistry {
     fun init(context: Context) {
         if (isInitialized) return
         val app = context.applicationContext
+        IshaAuthManager.init(app)
         prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Retrieve or generate stable device ID
-        var did = prefs?.getString(KEY_DEVICE_ID, null)
+        // Retrieve or generate stable device ID with package isolation
+        val pkgSuffix = if (app.packageName.contains("aura")) "_aura" else "_isha"
+        val prefsKey = KEY_DEVICE_ID + pkgSuffix
+        var did = prefs?.getString(prefsKey, null)
         if (did.isNullOrBlank()) {
             val androidId = try {
                 Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
@@ -78,16 +81,21 @@ object IshaDeviceRegistry {
                 null
             }
             did = if (!androidId.isNullOrBlank() && androidId != "9774d56d682e549c") {
-                "dev_" + androidId.take(12)
+                "dev_" + androidId.take(10) + pkgSuffix
             } else {
-                "dev_" + UUID.randomUUID().toString().replace("-", "").take(12)
+                "dev_" + UUID.randomUUID().toString().replace("-", "").take(10) + pkgSuffix
             }
-            prefs?.edit()?.putString(KEY_DEVICE_ID, did)?.apply()
+            prefs?.edit()?.putString(prefsKey, did)?.apply()
         }
         cachedDeviceId = did
 
         // Default alias is Model name or saved alias
-        cachedDeviceAlias = prefs?.getString(KEY_DEVICE_ALIAS, getDefaultDeviceAlias()) ?: getDefaultDeviceAlias()
+        var savedAlias = prefs?.getString(KEY_DEVICE_ALIAS, null)
+        if (savedAlias.isNullOrBlank() || savedAlias.equals("LAVA LAVA LEX402", ignoreCase = true) || savedAlias.equals("LEX402", ignoreCase = true)) {
+            savedAlias = getDefaultDeviceAlias()
+            prefs?.edit()?.putString(KEY_DEVICE_ALIAS, savedAlias)?.apply()
+        }
+        cachedDeviceAlias = savedAlias
         isInitialized = true
 
         Log.i(TAG, "Device Registry initialized. My Device ID: $cachedDeviceId ($cachedDeviceAlias)")
@@ -95,6 +103,15 @@ object IshaDeviceRegistry {
         // Register heartbeat and start observing devices
         registerHeartbeat(app)
         startObservingDevices(app)
+
+        scope.launch {
+            IshaAuthManager.sessionState.collect { user ->
+                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                    registerHeartbeat(app)
+                    startObservingDevices(app)
+                }
+            }
+        }
     }
 
     fun getDeviceId(): String = cachedDeviceId
@@ -110,10 +127,35 @@ object IshaDeviceRegistry {
         }
     }
 
+    fun updateDeviceAlias(context: Context, targetDeviceId: String, newAlias: String) {
+        val clean = newAlias.trim()
+        if (clean.isBlank()) return
+        if (targetDeviceId == cachedDeviceId) {
+            setDeviceAlias(context, clean)
+        } else {
+            val userId = IshaAuthManager.sessionState.value.uid
+            if (userId.isNotBlank()) {
+                FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(userId)
+                    .collection("devices")
+                    .document(targetDeviceId)
+                    .set(mapOf("deviceAlias" to clean), SetOptions.merge())
+            }
+        }
+    }
+
     private fun getDefaultDeviceAlias(): String {
-        val model = Build.MODEL ?: "Phone"
-        val mfr = Build.MANUFACTURER ?: "Android"
-        return "$mfr $model".trim()
+        val rawModel = Build.MODEL?.trim() ?: "Android Phone"
+        val rawMfr = Build.MANUFACTURER?.trim() ?: ""
+        val mfr = if (rawMfr.isNotBlank()) rawMfr.replaceFirstChar { it.uppercase() } else ""
+        return if (rawModel.contains(mfr, ignoreCase = true)) {
+            rawModel
+        } else if (mfr.isNotBlank()) {
+            "$mfr $rawModel"
+        } else {
+            rawModel
+        }
     }
 
     /**
@@ -179,7 +221,7 @@ object IshaDeviceRegistry {
                         return@addSnapshotListener
                     }
                     if (snapshot != null) {
-                        val devicesList = snapshot.documents.mapNotNull { doc ->
+                        val rawList = snapshot.documents.mapNotNull { doc ->
                             try {
                                 val did = doc.getString("deviceId") ?: doc.id
                                 val alias = doc.getString("deviceAlias") ?: did
@@ -190,6 +232,15 @@ object IshaDeviceRegistry {
                                 val battery = (doc.getLong("batteryLevel") ?: -1L).toInt()
                                 val charging = doc.getBoolean("isCharging") ?: false
                                 val lastSeen = doc.getTimestamp("lastSeenAt")?.toDate()?.time ?: 0L
+
+                                val isCurrent = (did == cachedDeviceId)
+                                if (!isCurrent && !did.endsWith("_isha") && !did.endsWith("_aura")) {
+                                    // Purge obsolete legacy registration from Firestore
+                                    try {
+                                        firestore.collection("users").document(userId).collection("devices").document(did).delete()
+                                        Log.i(TAG, "Purged obsolete legacy device document: $did")
+                                    } catch (_: Exception) {}
+                                }
 
                                 IshaDeviceInfo(
                                     deviceId = did,
@@ -202,14 +253,27 @@ object IshaDeviceRegistry {
                                     batteryLevel = battery,
                                     isCharging = charging,
                                     lastSeenAt = lastSeen,
-                                    isCurrentDevice = (did == cachedDeviceId)
+                                    isCurrentDevice = isCurrent
                                 )
                             } catch (e: Exception) {
                                 null
                             }
                         }
-                        _knownDevices.value = devicesList
-                        Log.i(TAG, "Active device count: ${devicesList.size} for user $userId")
+
+                        // Auto-disambiguate identical device aliases (e.g. two phones of exact same model)
+                        val aliasCounts = rawList.groupBy { it.deviceAlias.lowercase() }
+                        val disambiguatedList = rawList.map { dev ->
+                            val count = aliasCounts[dev.deviceAlias.lowercase()]?.size ?: 0
+                            if (count > 1) {
+                                val shortId = dev.deviceId.removePrefix("dev_").take(4).ifBlank { dev.deviceId.takeLast(4) }
+                                dev.copy(deviceAlias = "${dev.deviceAlias} ($shortId)")
+                            } else {
+                                dev
+                            }
+                        }
+
+                        _knownDevices.value = disambiguatedList
+                        Log.i(TAG, "Active device count: ${disambiguatedList.size} for user $userId")
                     }
                 }
         } catch (e: Exception) {
@@ -219,7 +283,7 @@ object IshaDeviceRegistry {
 
     /**
      * Resolves target device from natural language queries like:
-     * "phone b", "phone 2", "dusra phone", "pixel", "samsung", "redmi".
+     * "phone b", "phone 2", "dusra phone", "pixel", "samsung", "redmi", "shortId (2595)", "teesra phone".
      */
     fun resolveTargetDevice(query: String): IshaDeviceInfo? {
         val clean = query.trim().lowercase()
@@ -228,27 +292,56 @@ object IshaDeviceRegistry {
 
         if (otherDevices.isEmpty()) return null
 
-        // 1. If only 1 other device exists, any generic phrase routes to it
-        if (otherDevices.size == 1 && (clean.contains("phone") || clean.contains("dusra") || clean.contains("other") || clean.isBlank())) {
-            return otherDevices.first()
+        val currentSuffix = if (cachedDeviceId.endsWith("_isha")) "_isha" else "_aura"
+        // Prioritize devices with matching app suffix, online status, and latest heartbeat
+        val sortedOtherDevices = otherDevices.sortedWith(
+            compareByDescending<IshaDeviceInfo> { it.deviceId.endsWith(currentSuffix) }
+                .thenByDescending { it.isOnline }
+                .thenByDescending { it.lastSeenAt }
+        )
+
+        // 1. If only 1 other device exists, any cross-device request routes directly to it
+        if (sortedOtherDevices.size == 1) {
+            return sortedOtherDevices.first()
         }
 
         // 2. Exact alias match
-        otherDevices.firstOrNull { it.deviceAlias.lowercase() == clean }?.let { return it }
+        sortedOtherDevices.firstOrNull { it.deviceAlias.equals(clean, ignoreCase = true) }?.let { return it }
 
-        // 3. Substring match on alias, model, or manufacturer
-        otherDevices.firstOrNull {
-            clean.contains(it.deviceAlias.lowercase()) ||
-            clean.contains(it.model.lowercase()) ||
-            clean.contains(it.manufacturer.lowercase())
+        // 3. Dynamic Substring, Token, Short-ID match across ANY Android device
+        val cleanTokens = clean.split(Regex("[\\s,_\\-]+")).filter { it.length >= 2 }
+        sortedOtherDevices.firstOrNull { dev ->
+            val devAlias = dev.deviceAlias.lowercase()
+            val devModel = dev.model.lowercase()
+            val devMfr = dev.manufacturer.lowercase()
+            val devName = dev.deviceName.lowercase()
+            val devId = dev.deviceId.lowercase()
+            val shortId = dev.deviceId.removePrefix("dev_").take(4).lowercase()
+
+            clean.contains(devAlias) || clean.contains(devModel) || clean.contains(devMfr) || clean.contains(devName) ||
+            devAlias.contains(clean) || devModel.contains(clean) || devMfr.contains(clean) || devName.contains(clean) ||
+            (shortId.isNotBlank() && clean.contains(shortId)) || devId.contains(clean) ||
+            cleanTokens.any { token ->
+                devAlias.contains(token) || devModel.contains(token) || devMfr.contains(token) || devName.contains(token) || (shortId.isNotBlank() && token == shortId)
+            }
         }?.let { return it }
 
-        // 4. "phone b" / "phone 2" heuristics
-        if (clean.contains("phone b") || clean.contains("phone 2") || clean.contains("second phone")) {
-            return otherDevices.firstOrNull()
+        // 4. Positional/Ordinal resolution ("pehla phone", "dusra phone", "teesra phone", "first", "second", "third")
+        if (clean.contains("pehla") || clean.contains("first") || clean.contains("1st") || clean.contains("phone 1")) {
+            sortedOtherDevices.getOrNull(0)?.let { return it }
+        }
+        if (clean.contains("dusra") || clean.contains("second") || clean.contains("2nd") || clean.contains("phone 2") || clean.contains("dusre phone")) {
+            sortedOtherDevices.getOrNull(1)?.let { return it } ?: sortedOtherDevices.getOrNull(0)?.let { return it }
+        }
+        if (clean.contains("teesra") || clean.contains("third") || clean.contains("3rd") || clean.contains("phone 3")) {
+            sortedOtherDevices.getOrNull(2)?.let { return it }
+        }
+        if (clean.contains("chautha") || clean.contains("fourth") || clean.contains("4th") || clean.contains("phone 4")) {
+            sortedOtherDevices.getOrNull(3)?.let { return it }
         }
 
-        return otherDevices.firstOrNull()
+        // 5. Default to first available active online device, or first registered device
+        return sortedOtherDevices.firstOrNull { it.isOnline } ?: sortedOtherDevices.firstOrNull()
     }
 
     /**
