@@ -19,8 +19,8 @@ object IshaGatewayConfig {
     private const val KEY_GATEWAY_SECRET = "gateway_secret"
 
     // Default Gateway URL deployed on Cloudflare Workers
-    const val DEFAULT_GATEWAY_URL = "https://isha-gateway.archanakesharwani27.workers.dev"
-    const val DEFAULT_GATEWAY_WS_URL = "wss://isha-gateway.archanakesharwani27.workers.dev/live"
+    const val DEFAULT_GATEWAY_URL = "https://isha-gateway.anshkesharwani0807.workers.dev"
+    const val DEFAULT_GATEWAY_WS_URL = "wss://isha-gateway.anshkesharwani0807.workers.dev/live"
     const val DEFAULT_APP_SECRET = "isha_mobile_sec_v2_edge"
 
     private fun getPrefs(context: Context): SharedPreferences {
