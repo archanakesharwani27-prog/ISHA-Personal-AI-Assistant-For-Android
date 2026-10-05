@@ -151,7 +151,7 @@ object IshaGatewayConfig {
         // Zero-Key Mode: Fetch / use cached Ephemeral Token
         val token = getOrFetchEphemeralToken(context)
         if (!token.isNullOrBlank()) {
-            return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?access_token=$token"
+            return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=$token"
         }
 
         // Fallback: If custom key or BuildConfig key exists
@@ -169,7 +169,7 @@ object IshaGatewayConfig {
         val headers = mutableMapOf<String, String>()
         val cached = cachedEphemeralToken
         return if (!cached.isNullOrBlank() && System.currentTimeMillis() < tokenExpiryTime) {
-            Pair("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?access_token=$cached", headers)
+            Pair("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=$cached", headers)
         } else if (apiKey.isNotBlank()) {
             Pair("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey", headers)
         } else {
