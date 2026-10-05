@@ -8,6 +8,7 @@ import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aura.assistant.IshaDynamicIsland
 import com.aura.assistant.WakeWordService
 import com.aura.assistant.ai.AuraLiveState
 import com.aura.assistant.ai.AuraMemoryManager
@@ -104,6 +105,23 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     val liveTranscript: StateFlow<String> = liveClient.transcriptFlow
     val audioAmplitude: StateFlow<Float> = liveClient.amplitudeFlow
 
+    // ── Voice Language Preference ("hinglish", "hindi", "english") ────────────
+    private val _voiceLanguage = MutableStateFlow(
+        prefs.getString("voice_language", "hinglish") ?: "hinglish"
+    )
+    val voiceLanguage: StateFlow<String> = _voiceLanguage.asStateFlow()
+
+    fun setVoiceLanguage(lang: String) {
+        val normalized = when (lang.trim().lowercase()) {
+            "hindi", "hi", "हिंदी" -> "hindi"
+            "english", "en", "अंग्रेजी" -> "english"
+            else -> "hinglish"
+        }
+        _voiceLanguage.value = normalized
+        prefs.edit().putString("voice_language", normalized).apply()
+        liveClient.setVoiceLanguage(normalized)
+    }
+
     // ── Attached Media State ──────────────────────────────────────────────────
     private val _selectedAttachment = MutableStateFlow<AttachedMedia?>(null)
     val selectedAttachment: StateFlow<AttachedMedia?> = _selectedAttachment.asStateFlow()
@@ -117,13 +135,13 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     private val _isToolsSheetVisible = MutableStateFlow(false)
     val isToolsSheetVisible: StateFlow<Boolean> = _isToolsSheetVisible.asStateFlow()
 
-    private val _isWakeWordEnabled = MutableStateFlow(prefs.getBoolean("wake_word_enabled", false))
+    private val _isWakeWordEnabled = MutableStateFlow(prefs.getBoolean("wake_word_enabled", true))
     val isWakeWordEnabled: StateFlow<Boolean> = _isWakeWordEnabled.asStateFlow()
 
     private val _isShakeEnabled = MutableStateFlow(prefs.getBoolean("shake_enabled", true))
     val isShakeEnabled: StateFlow<Boolean> = _isShakeEnabled.asStateFlow()
 
-    private val _isMessageSpeakEnabled = MutableStateFlow(prefs.getBoolean("message_speak_enabled", true))
+    private val _isMessageSpeakEnabled = MutableStateFlow(false)
     val isMessageSpeakEnabled: StateFlow<Boolean> = _isMessageSpeakEnabled.asStateFlow()
 
     private val _isSettingsVisible = MutableStateFlow(false)
@@ -140,13 +158,35 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     val isSoundEnabled = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.settingsState.value.isSoundEnabled)
 
     init {
+        prefs.edit().putBoolean("message_speak_enabled", false).apply()
         com.aura.assistant.auth.IshaAuthManager.init(application)
         com.aura.assistant.ui.components.IshaSettingsManager.init(application)
+        com.aura.assistant.ui.components.IshaSettingsManager.setMessageSpeak(application, false)
         com.aura.assistant.ai.IshaContactMemoryManager.init(application)
         com.aura.assistant.sync.IshaDeviceRegistry.init(application)
         com.aura.assistant.sync.IshaCrossDeviceBridge.init(application)
         com.aura.assistant.sync.IshaCloudSyncBridge.init(application)
-        initTts()
+        // initTts() disabled: User strictly requested no TTS speech
+
+        liveClient.onLanguageChanged = { lang ->
+            _voiceLanguage.value = lang
+            prefs.edit().putString("voice_language", lang).apply()
+        }
+        liveClient.setVoiceLanguage(_voiceLanguage.value)
+
+        // Forward real-time Gemini Live states to Dynamic Island floating overlay
+        viewModelScope.launch {
+            liveClient.liveState.collect { state ->
+                IshaDynamicIsland.updateLiveState(application, state, liveClient.amplitudeFlow.value)
+            }
+        }
+        viewModelScope.launch {
+            liveClient.amplitudeFlow.collect { amp ->
+                if (_isVoiceModeActive.value) {
+                    IshaDynamicIsland.updateLiveState(application, liveClient.liveState.value, amp)
+                }
+            }
+        }
 
         val currentProfile = com.aura.assistant.auth.IshaAuthManager.sessionState.value
         val initialUid = if (currentProfile.isLoggedIn && currentProfile.provider != "GUEST" && currentProfile.uid.isNotBlank() && !currentProfile.uid.startsWith("guest")) {
@@ -763,12 +803,9 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             }
             app.startService(pauseIntent)
         } catch (_: Exception) {}
-        // CRITICAL FIX: ACTION_PAUSE is dispatched asynchronously via startService().
-        // We must wait for WakeWordService to fully release the AudioRecord mic resource
-        // before GeminiLiveClient tries to open it. 500ms is enough for the Binder IPC
-        // + OpenWakeWord engine.release() to complete on all Android OEMs.
+        // Fast startup: 100ms is sufficient for AudioRecord mic release and binder IPC.
         viewModelScope.launch {
-            kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(100)
             liveClient.connect()
         }
     }
@@ -777,6 +814,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         stopLiveScreenShare()
         _isVoiceModeActive.value = false
         liveClient.disconnect()
+        IshaDynamicIsland.hide()
         val app = getApplication<Application>()
         try {
             val resumeIntent = Intent(app, WakeWordService::class.java).apply {
@@ -876,11 +914,9 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // ── Text-to-Speech (Read Aloud) ────────────────────────────────────────────
-
+    // Disabled: User strictly requested no TTS speech
     fun speakText(text: String) {
-        if (isTtsReady && text.isNotBlank()) {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "AuraReadAloud")
-        }
+        tts?.stop()
     }
 
     fun stopSpeaking() {
@@ -1036,20 +1072,16 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         repository.saveMessages(sessionId, updated)
         _sessions.value = repository.getAllSessions()
 
-        if (_isMessageSpeakEnabled.value) {
-            speakResponse(reflex.naturalResponse)
-        }
+        // Automatic TTS voice playback disabled per user requirement: "tts nhi chahiye mujhe tumse"
+        // if (_isMessageSpeakEnabled.value) {
+        //     speakResponse(reflex.naturalResponse)
+        // }
         triggerLightHaptic()
     }
 
     fun speakResponse(text: String) {
-        if (!isTtsReady || tts == null || text.isBlank()) return
-        try {
-            val clean = text.replace(Regex("[*#_`>]"), "").trim()
-            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "reflex_${System.currentTimeMillis()}")
-        } catch (e: Exception) {
-            Log.w(TAG, "TTS speak failed: ${e.message}")
-        }
+        // Explicitly disabled: User strictly requested no TTS voice playback
+        return
     }
 
     // ── Security Governance (ConfirmationEngine) ───────────────────────────────

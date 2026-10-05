@@ -43,7 +43,7 @@ data class IshaSettingsState(
     val selectedLanguage: String = "Auto-detect",
     val textSize: String = "Default",
     val isSoundEnabled: Boolean = true,
-    val isMessageSpeakEnabled: Boolean = true,
+    val isMessageSpeakEnabled: Boolean = false,
     val isCallAnnouncementEnabled: Boolean = true
 )
 
@@ -54,7 +54,7 @@ typealias AuraSettingsState = IshaSettingsState
 fun IshaSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
-    isMessageSpeakEnabled: Boolean = true,
+    isMessageSpeakEnabled: Boolean = false,
     isCallAnnouncementEnabled: Boolean = true,
     userProfile: UserProfile = UserProfile(),
     selectedVoice: String = "Aoede",
@@ -1140,7 +1140,7 @@ private fun InfoRow(label: String, value: String) {
 fun AuraSettingsSheet(
     isWakeWordEnabled: Boolean,
     isShakeEnabled: Boolean,
-    isMessageSpeakEnabled: Boolean = true,
+    isMessageSpeakEnabled: Boolean = false,
     userProfile: UserProfile = UserProfile(),
     onWakeWordToggle: (Boolean) -> Unit,
     onShakeToggle: (Boolean) -> Unit,

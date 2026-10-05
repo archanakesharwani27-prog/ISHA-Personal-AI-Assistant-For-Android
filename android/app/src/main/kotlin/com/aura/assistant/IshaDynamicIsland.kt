@@ -79,24 +79,12 @@ object IshaDynamicIsland {
     private var isIslandTtsReady = false
 
     private fun initTts(ctx: Context) {
-        if (islandTts == null) {
-            try {
-                islandTts = android.speech.tts.TextToSpeech(ctx.applicationContext) { status ->
-                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                        islandTts?.language = Locale("hi", "IN")
-                        islandTts?.setSpeechRate(0.95f)
-                        isIslandTtsReady = true
-                    }
-                }
-            } catch (_: Exception) {}
-        }
+        // Disabled: User strictly uses Gemini Live Bidirectional Voice duplex ("Aoede")
     }
 
     private fun speakText(text: String) {
-        if (isIslandTtsReady && text.isNotBlank()) {
-            val clean = text.replace(Regex("[*#_`~]"), "").trim()
-            islandTts?.speak(clean, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "DynamicIslandTTS")
-        }
+        // Suppressed: All assistant voice output is handled via 24kHz PCM duplex by GeminiLiveClient
+        Log.d(TAG, "Legacy TTS speakText suppressed in favor of Gemini Live: $text")
     }
 
     @Volatile private var currentReason: String = "wake"
@@ -172,12 +160,13 @@ object IshaDynamicIsland {
     }
 
     private fun _show(ctx: Context, reason: String) {
-        currentReason = reason
-        initTts(ctx)
+        // Always map 'wake' to 'voice_mode' so it functions purely as visual HUD for Gemini Live
+        val effectiveReason = if (reason == "wake") "voice_mode" else reason
+        currentReason = effectiveReason
         if (overlayView != null) {
             // Already showing - update reason
-            updateStateFromReason(reason)
-            if (reason != "screen_share" && reason != "voice_mode") {
+            updateStateFromReason(effectiveReason)
+            if (effectiveReason != "screen_share" && effectiveReason != "voice_mode") {
                 resetDismissTimer()
             } else {
                 handler.removeCallbacks(dismissRunnable)
@@ -280,21 +269,13 @@ object IshaDynamicIsland {
         // Set initial state based on reason
         updateStateFromReason(reason)
 
-        // 450ms settle delay after shake before opening SpeechRecognizer.
-        // Prevents phone vibration motor and hand shake noise from triggering false speech!
-        if (reason != "screen_share" && reason != "voice_mode" && reason != "auto_overlay") {
-            handler.postDelayed({
-                if (overlayView != null) {
-                    startSpeechListening(ctx, overlay)
-                }
-            }, 450L)
-            // Auto-dismiss after idle time
-            resetDismissTimer()
-        } else if (reason == "voice_mode") {
+        // Waveform state based on reason
+        if (reason == "voice_mode" || reason == "screen_share") {
             waveView?.setListening(true)
-        } else if (reason == "auto_overlay") {
+        } else {
             waveView?.setListening(false)
         }
+        resetDismissTimer()
     }
 
     private fun _hide() {
@@ -315,10 +296,15 @@ object IshaDynamicIsland {
                     windowManager = null
                     resetState()
                     try {
-                        val resumeIntent = Intent(appContext, WakeWordService::class.java).apply {
-                            action = WakeWordService.ACTION_RESUME
+                        val isVoiceActive = MainActivity.instance?.viewModel?.isVoiceModeActive?.value == true
+                        if (!isVoiceActive) {
+                            val resumeIntent = Intent(appContext, WakeWordService::class.java).apply {
+                                action = WakeWordService.ACTION_RESUME
+                            }
+                            appContext.startService(resumeIntent)
+                        } else {
+                            Log.d(TAG, "Gemini Live voice active — skipping WakeWordService resume")
                         }
-                        appContext.startService(resumeIntent)
                     } catch (_: Exception) {}
                 }.start()
     }
@@ -358,20 +344,19 @@ object IshaDynamicIsland {
             false
         }
 
-        // Tap: if currently in screen_share, voice_mode or auto_overlay -> return to Aura; if idle -> restart speech; otherwise toggle expand
+        // Tap: Bring MainActivity to foreground directly in Gemini Live voice mode
         root.setOnClickListener {
-            if (currentReason == "screen_share" || currentReason == "voice_mode" || currentReason == "auto_overlay") {
+            try {
                 val intent = Intent(ctx, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("open_voice_mode", true)
                 }
                 ctx.startActivity(intent)
-            } else if (!isListeningSpeech) {
-                // Re-arm speech so user can speak without re-shaking
-                startSpeechListening(ctx, root)
-                resetDismissTimer()
-            } else {
-                toggleExpandedState()
+                MainActivity.instance?.startVoiceModeDirectly()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch voice mode on tap", e)
             }
+            hide()
         }
 
         // State indicator text (small)
@@ -541,146 +526,8 @@ object IshaDynamicIsland {
     }
 
     private fun startSpeechListening(ctx: Context, root: View) {
-        if (isListeningSpeech) return
-        try {
-            if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
-                Log.w(TAG, "Speech engine unavailable")
-                return
-            }
-            stopSpeechListening()
-            requestDucking(ctx)
-
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
-                setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        isListeningSpeech = true
-                        isThinking = false
-                        updateStateUI("Listening")
-                        micVolume = 0f
-                        waveView?.setListening(true)
-                    }
-
-                    override fun onBeginningOfSpeech() {
-                        isListeningSpeech = true
-                        isThinking = false
-                        updateStateUI("Listening")
-                        resetDismissTimer()
-                    }
-
-                    override fun onEndOfSpeech() {
-                        isListeningSpeech = false
-                        isThinking = true
-                        updateStateUI("Thinking")
-                        waveView?.setListening(false)
-                        waveView?.setThinking(true)
-                        // Small delay to simulate processing
-                        handler.postDelayed({
-                            if (!isSpeaking) {
-                                // If not currently speaking, go back to idle after thinking
-                                handler.postDelayed({ updateStateUI("ISHA") }, 800L)
-                            }
-                        }, 600L)
-                    }
-
-                    override fun onError(error: Int) {
-                        isListeningSpeech = false
-                        isThinking = false
-                        Log.d(TAG, "SpeechRecognizer error: $error")
-                        when (error) {
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                            SpeechRecognizer.ERROR_AUDIO -> {
-                                // Mic was still in use by WakeWordService — retry after short pause
-                                Log.w(TAG, "Mic busy/audio error ($error), retrying after 600ms")
-                                handler.postDelayed({
-                                    if (overlayView != null) {
-                                        updateStateUI("Listening")
-                                        startSpeechListening(ctx, root)
-                                        resetDismissTimer()
-                                    }
-                                }, 600L)
-                            }
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                            SpeechRecognizer.ERROR_NO_MATCH -> {
-                                // User didn't speak in time — dismiss cleanly without claiming Done
-                                handler.post {
-                                    stateText?.text = "No speech detected"
-                                    updateBackgroundColor("Idle")
-                                    waveView?.setListening(false)
-                                }
-                                handler.postDelayed({ hide() }, 1200L)
-                            }
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                                stateText?.text = "Mic permission"
-                                handler.postDelayed({ hide() }, 2000L)
-                            }
-                            SpeechRecognizer.ERROR_CLIENT,
-                            SpeechRecognizer.ERROR_SERVER -> {
-                                handler.post {
-                                    stateText?.text = "Mic error"
-                                    updateBackgroundColor("Idle")
-                                }
-                                handler.postDelayed({ hide() }, 1200L)
-                            }
-                            else -> {
-                                handler.post {
-                                    stateText?.text = "Listening stopped"
-                                    updateBackgroundColor("Idle")
-                                }
-                                handler.postDelayed({ hide() }, 1000L)
-                            }
-                        }
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        isListeningSpeech = false
-                        isThinking = false
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val spoken = matches?.firstOrNull()?.trim() ?: ""
-                        if (spoken.length >= 2 &&
-                            !spoken.equals("done", ignoreCase = true) &&
-                            !spoken.equals("bnd", ignoreCase = true) &&
-                            !spoken.matches(Regex("^[.\\s,;\\-_*]*$"))) {
-                            // Valid user speech — process command
-                            handleSpokenCommand(ctx, spoken)
-                        } else {
-                            Log.d(TAG, "Ignoring noise artifact in Dynamic Island: '$spoken'")
-                            handler.postDelayed({ hide() }, 800L)
-                        }
-                    }
-
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        // Optional: show partial transcript
-                    }
-
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-
-                    override fun onRmsChanged(rmsdB: Float) {
-                        val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-                        waveView?.setMicVolume(normalized)
-                    }
-
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-            }
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-IN")
-                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            }
-            speechRecognizer?.startListening(intent)
-        } catch (e: Exception) {
-            isListeningSpeech = false
-            Log.w(TAG, "SpeechRecognizer start failed: $e")
-            stateText?.text = "Mic error"
-            handler.postDelayed({ hide() }, 1000L)
-        }
+        // Disabled: User strictly uses Gemini Live Bidirectional Voice duplex ("Aoede") via MainActivity
+        Log.d(TAG, "Dynamic Island SpeechRecognizer disabled in favor of Gemini Live Voice")
     }
 
     private fun stopSpeechListening() {

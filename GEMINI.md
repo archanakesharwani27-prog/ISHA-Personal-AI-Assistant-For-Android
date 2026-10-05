@@ -1,4 +1,4 @@
-# Repository Guidelines & Rules for AURA
+# Repository Guidelines & Rules for Isha
 
 ## 🔒 STRICT ARCHITECTURE & WORKING CONSTRAINTS (DO NOT VIOLATE)
 
@@ -20,7 +20,7 @@ The voice persona, engine, and playback stack in `GeminiLiveClient.kt` are **STR
 - **Voice Persona**: `"Aoede"` (Natural, sweet female tone). Do NOT change this voice identifier.
 - **Live Voice Model**: `models/gemini-2.5-flash-native-audio-latest` for low-latency WebSocket live duplex.
 - **Audio Output Pipeline**: 24kHz PCM 16-bit mono AudioTrack stream. Never degrade the sample rate or buffer configuration.
-- **Persona & Identity**: AURA is a female AI companion created by Ansh Kesharwani, addressing the user as "Boss". This identity is locked.
+- **Persona & Identity**: Isha is a female AI companion created by Ansh Kesharwani, addressing the user as "Boss". This identity is locked.
 
 ### 3. FROZEN WORKING CORE SYSTEMS & AUTOMATION
 The following working features and components are production-tested and **STRICTLY PROHIBITED** from being broken, removed, or refactored:
@@ -30,7 +30,7 @@ The following working features and components are production-tested and **STRICT
    - All 40+ native device tools (flashlight, battery, alarms, volume, bluetooth, wifi, apps, whatsapp, call screening) must remain intact and functional.
    - `type_message` / `type_text`: Must preserve typing into screen inputs without auto-sending.
    - `chat_on_whatsapp`: Must preserve autonomous reading of WhatsApp messages via accessibility node hierarchy and automatic formulated reply.
-   - **Smart Browser-to-Chat Return (`readBrowserScreenAndReturn`)**: When Chrome/browser is opened for search, it extracts readable page text and immediately executes triple-fallback foreground return (`MainActivity.instance`, `GLOBAL_ACTION_BACK`, launch intent) so AURA returns to chat screen with the answer.
+   - **Smart Browser-to-Chat Return (`readBrowserScreenAndReturn`)**: When Chrome/browser is opened for search, it extracts readable page text and immediately executes triple-fallback foreground return (`MainActivity.instance`, `GLOBAL_ACTION_BACK`, launch intent) so Isha returns to chat screen with the answer.
    - **Direct Web Search (`performDirectWebSearch`)**: Two-tier robust live search engine (DDG Lite form-based parser + DDG HTML fallback) is locked.
 3. **Temporal Intelligence & Time Grounding (`IshaMemoryManager.kt`)**:
    - `⏳ TEMPORAL MATRIX`: Automatic anchoring of Present (Aaj), Past (Yesterday / Day before), and Future (Tomorrow / Day after) timestamps.

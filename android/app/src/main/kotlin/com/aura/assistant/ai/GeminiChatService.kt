@@ -74,6 +74,10 @@ class GeminiChatService(private val context: Context) {
         "open_app",
         "chat_on_whatsapp",
         "send_whatsapp",
+        "send_whatsapp_media",
+        "share_media",
+        "make_call",
+        "play_youtube",
         "autonomous_ui_action",
         "dismiss_screen_popups",
         "press_system_key",
@@ -228,6 +232,7 @@ class GeminiChatService(private val context: Context) {
             val reader = BufferedReader(InputStreamReader(responseStream))
             val fullAccumulator = StringBuilder()
             val pendingFunctionCalls = mutableListOf<JsonObject>()
+            val rawModelParts = mutableListOf<JsonObject>()
             var exactModelTurnContent: JsonObject? = null
 
         try {
@@ -256,9 +261,10 @@ class GeminiChatService(private val context: Context) {
                                         callback.onToken(token)
                                     }
 
-                                    // Check for tool function call
+                                    // Check for tool function call (Preserve exact part with thoughtSignature)
                                     if (part.has("functionCall")) {
                                         pendingFunctionCalls.add(part.getAsJsonObject("functionCall"))
+                                        rawModelParts.add(part.deepCopy())
                                         exactModelTurnContent = content
                                     }
                                 }
@@ -277,7 +283,14 @@ class GeminiChatService(private val context: Context) {
         if (pendingFunctionCalls.isNotEmpty()) {
             val executedTools = executeFunctionCalls(pendingFunctionCalls, callback)
             // Send tool responses back to complete conversation turn with natural speech
-            executeToolResponsesStream(model, history, newPrompt, executedTools, exactModelTurnContent, callback)
+            executeToolResponsesStream(
+                model = model,
+                history = history,
+                originalPrompt = newPrompt,
+                executedTools = executedTools,
+                callback = callback,
+                rawModelParts = rawModelParts
+            )
         } else {
             callback.onComplete(fullAccumulator.toString())
         }
@@ -293,10 +306,10 @@ class GeminiChatService(private val context: Context) {
         history: List<ChatMessage>,
         originalPrompt: String,
         executedTools: List<Triple<String, JsonObject, JsonObject>>,
-        modelTurnContent: JsonObject?,
         callback: ChatStreamCallback,
         currentStep: Int = 1,
-        priorContents: JsonArray? = null
+        priorContents: JsonArray? = null,
+        rawModelParts: List<JsonObject>? = null
     ) {
         val apiKey = Secrets.getActiveGeminiKey(context)
 
@@ -305,7 +318,7 @@ class GeminiChatService(private val context: Context) {
             add("system_instruction", createSystemInstruction())
 
             val contents = if (priorContents != null) {
-                priorContents
+                priorContents.deepCopy()
             } else {
                 val initContents = createHistoryContents(history)
                 val userTurn = JsonObject().apply {
@@ -320,19 +333,31 @@ class GeminiChatService(private val context: Context) {
                 initContents
             }
 
-            // Model turn calling the functions
-            val modelTurn = modelTurnContent ?: JsonObject().apply {
+            // Model turn calling the functions (Preserving exact thoughtSignature for Gemini 3 validity)
+            val modelTurn = JsonObject().apply {
                 addProperty("role", "model")
                 val parts = JsonArray()
-                for ((toolName, toolArgs, _) in executedTools) {
-                    val fnCallPart = JsonObject().apply {
-                        val fnObj = JsonObject().apply {
-                            addProperty("name", toolName)
-                            add("args", toolArgs)
+                if (!rawModelParts.isNullOrEmpty()) {
+                    for (p in rawModelParts) {
+                        val partCopy = p.deepCopy()
+                        if (partCopy.has("thoughtSignature") && !partCopy.has("thought_signature")) {
+                            partCopy.add("thought_signature", partCopy.get("thoughtSignature"))
+                        } else if (partCopy.has("thought_signature") && !partCopy.has("thoughtSignature")) {
+                            partCopy.add("thoughtSignature", partCopy.get("thought_signature"))
                         }
-                        add("functionCall", fnObj)
+                        parts.add(partCopy)
                     }
-                    parts.add(fnCallPart)
+                } else {
+                    for ((toolName, toolArgs, _) in executedTools) {
+                        val fnCallPart = JsonObject().apply {
+                            val fnObj = JsonObject().apply {
+                                addProperty("name", toolName)
+                                add("args", toolArgs)
+                            }
+                            add("functionCall", fnObj)
+                        }
+                        parts.add(fnCallPart)
+                    }
                 }
                 add("parts", parts)
             }
@@ -350,7 +375,7 @@ class GeminiChatService(private val context: Context) {
                                 val outputObj = if (toolResult.isJsonObject) toolResult.asJsonObject.deepCopy() else JsonObject()
                                 outputObj.addProperty(
                                     "_task_guidance",
-                                    "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise chat_on_whatsapp ke baad reply bhejna), to IMMEDIATELY unka tool call karo — text summary abhi mat do! Speak directly and naturally to Boss in Hindi — NEVER echo raw technical tool data or write '[Tool Output]' in your spoken message."
+                                    "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise screenshot ke baad WhatsApp par bhejna, ya YouTube ke baad DND lagana, app/game kholna, battery check karna), to IMMEDIATELY unka tool call karo — text summary abhi mat do! Sare tasks ke tool call hone ke baad hi natural Hindi me short spoken confirmation do."
                                 )
                                 add("output", outputObj)
                             }
@@ -373,6 +398,14 @@ class GeminiChatService(private val context: Context) {
                 add(toolHolder)
             }
             add("tools", tools)
+
+            val toolConfig = JsonObject().apply {
+                val fnCallingConfig = JsonObject().apply {
+                    addProperty("mode", "AUTO")
+                }
+                add("function_calling_config", fnCallingConfig)
+            }
+            add("tool_config", toolConfig)
 
             // Generation Config: Low temperature (0.25) after tool completion ensures crisp, accurate spoken confirmation
             val genConfig = JsonObject().apply {
@@ -413,7 +446,7 @@ class GeminiChatService(private val context: Context) {
                     delay(if (response.code == 503) 1500L else 2000L)
                     continue
                 }
-                if (response.code == 404 || response.code > 500) {
+                if (response.code == 404 || response.code >= 400) {
                     continue
                 }
                 break
@@ -423,7 +456,7 @@ class GeminiChatService(private val context: Context) {
         val reader = BufferedReader(InputStreamReader(stream))
         val postToolAccumulator = StringBuilder()
         val nextPendingFunctionCalls = mutableListOf<JsonObject>()
-        var nextExactModelTurnContent: JsonObject? = null
+        val nextRawModelParts = mutableListOf<JsonObject>()
 
         try {
             var line: String?
@@ -449,7 +482,7 @@ class GeminiChatService(private val context: Context) {
                                     }
                                     if (part.has("functionCall")) {
                                         nextPendingFunctionCalls.add(part.getAsJsonObject("functionCall"))
-                                        nextExactModelTurnContent = content
+                                        nextRawModelParts.add(part.deepCopy())
                                     }
                                 }
                             }
@@ -472,10 +505,10 @@ class GeminiChatService(private val context: Context) {
                 history = history,
                 originalPrompt = originalPrompt,
                 executedTools = nextExecutedTools,
-                modelTurnContent = nextExactModelTurnContent,
                 callback = callback,
                 currentStep = currentStep + 1,
-                priorContents = root.getAsJsonArray("contents")
+                priorContents = root.getAsJsonArray("contents"),
+                rawModelParts = nextRawModelParts
             )
             return
         }
@@ -536,6 +569,15 @@ class GeminiChatService(private val context: Context) {
             add(toolHolder)
         }
         root.add("tools", tools)
+
+        // tool_config: enforce AUTO function calling mode
+        val toolConfig = JsonObject().apply {
+            val fnCallingConfig = JsonObject().apply {
+                addProperty("mode", "AUTO")
+            }
+            add("function_calling_config", fnCallingConfig)
+        }
+        root.add("tool_config", toolConfig)
 
         // 4. Generation Config: Fast dynamic temperature (0.2 for device actions, 0.7 for conversational chat)
         val genConfig = JsonObject().apply {

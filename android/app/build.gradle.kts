@@ -85,6 +85,7 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
     implementation("xyz.rementia:openwakeword:0.1.5")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))

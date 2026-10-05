@@ -59,6 +59,12 @@ object IshaToolRegistry {
     @Volatile
     private var cachedGeminiToolDeclarations: JsonArray? = null
 
+    @Volatile
+    private var lastCapturedScreenshotUri: Uri? = null
+
+    @Volatile
+    private var lastCapturedScreenshotTime: Long = 0L
+
     /**
      * Builds or returns the cached JSON array of tool declarations conforming to Gemini's function_declarations specification.
      * Caching 80+ tool declarations saves 200-400ms on every single LLM turn and prevents GC churn.
@@ -79,12 +85,12 @@ object IshaToolRegistry {
         // 1. Calling
         toolsArray.add(createFunction(
             name = "make_call",
-            desc = "Place a phone call to a phone number or named contact. Call ONLY when the user explicitly commands to initiate or place a call (e.g. 'call Rahul', 'Mom ko phone lagao'). NEVER call when user only asks for a contact's number or details (use query_contact instead).",
-            params = mapOf("phone_number" to "string", "contact_name" to "string"),
-            required = listOf("phone_number"),
+            desc = "Place a phone call to a named contact or phone number. When calling a person by name, ALWAYS pass contact_name. NEVER invent, guess, or hallucinate a random phone number! If calling by contact name, leave phone_number completely empty. ISHA will search contacts and long-term memory for their real number.",
+            params = mapOf("contact_name" to "string", "phone_number" to "string"),
+            required = emptyList(),
             paramDescriptions = mapOf(
-                "phone_number" to "Phone number with digits, or contact name if phone number is not known yet",
-                "contact_name" to "The full name of the contact as spoken by the user"
+                "contact_name" to "The full name of the contact as spoken by the user (e.g. 'Rahul', 'Mummy', 'Kartik'). Use this when calling someone by name.",
+                "phone_number" to "Specific digits to dial directly ONLY if the user spoke the digits explicitly. Leave empty if calling by contact name. NEVER invent random numbers!"
             )
         ))
 
@@ -92,10 +98,11 @@ object IshaToolRegistry {
         toolsArray.add(createFunction(
             name = "send_sms",
             desc = "Send a standard cellular text SMS message to a phone number or contact. Call ONLY for SMS/text messaging. For WhatsApp messages, ALWAYS use send_whatsapp instead.",
-            params = mapOf("phone_number" to "string", "message" to "string"),
-            required = listOf("phone_number", "message"),
+            params = mapOf("contact_name" to "string", "phone_number" to "string", "message" to "string"),
+            required = listOf("message"),
             paramDescriptions = mapOf(
-                "phone_number" to "Recipient phone number or contact name",
+                "contact_name" to "Recipient contact name as spoken by the user (e.g. 'Rahul', 'Mom')",
+                "phone_number" to "Recipient phone number with digits (optional if contact_name provided)",
                 "message" to "The exact text message content to send via SMS"
             )
         ))
@@ -1530,7 +1537,17 @@ object IshaToolRegistry {
                 val label = it.loadLabel(pm).toString()
                 label.contains(clean, ignoreCase = true) ||
                 it.activityInfo.packageName.contains(clean, ignoreCase = true)
-            }
+            } ?: if (clean == "game" || clean.contains("game")) {
+                resolveInfos.firstOrNull {
+                    val appInfo = try { pm.getApplicationInfo(it.activityInfo.packageName, 0) } catch (_: Exception) { null }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appInfo != null && appInfo.category == android.content.pm.ApplicationInfo.CATEGORY_GAME) {
+                        true
+                    } else {
+                        val label = it.loadLabel(pm).toString()
+                        label.contains("game", ignoreCase = true) || it.activityInfo.packageName.contains("game", ignoreCase = true)
+                    }
+                }
+            } else null
             if (matched != null) {
                 val intent = pm.getLaunchIntentForPackage(matched.activityInfo.packageName)
                 if (intent != null) return intent
@@ -1580,27 +1597,11 @@ object IshaToolRegistry {
         try {
             when (name) {
                 "make_call" -> {
-                    val phone = args.get("phone_number")?.asString ?: ""
-                    val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$phone")).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    context.startActivity(intent)
-                    result.addProperty("status", "success")
-                    result.addProperty("message", "Initiated call to $phone")
+                    executeMakeCall(context, args).entrySet().forEach { (k, v) -> result.add(k, v) }
                 }
 
                 "send_sms" -> {
-                    val phone = args.get("phone_number")?.asString ?: ""
-                    val msg = args.get("message")?.asString ?: ""
-                    val smsManager = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        context.getSystemService(SmsManager::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        SmsManager.getDefault()
-                    }) ?: @Suppress("DEPRECATION") SmsManager.getDefault()
-                    smsManager?.sendTextMessage(phone, null, msg, null, null)
-                    result.addProperty("status", "success")
-                    result.addProperty("message", "SMS sent to $phone")
+                    executeSendSms(context, args).entrySet().forEach { (k, v) -> result.add(k, v) }
                 }
 
                 "send_whatsapp" -> {
@@ -1838,82 +1839,7 @@ object IshaToolRegistry {
                 }
 
                 "send_whatsapp_media" -> {
-                    wakeAndUnlockIfNeeded(context)
-                    val contact = args.get("contact_name")?.asString
-                        ?: args.get("contact")?.asString
-                        ?: args.get("to")?.asString
-                        ?: ""
-                    val mediaType = (args.get("media_type")?.asString ?: "screenshot").lowercase()
-                    val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
-
-                    val a11y = IshaAccessibilityService.instance
-                    var imageUri: Uri? = null
-
-                    if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
-                        if (a11y != null) {
-                            var capturedBytes: ByteArray? = null
-                            try {
-                                withTimeoutOrNull(2000L) {
-                                    suspendCancellableCoroutine<Unit> { cont ->
-                                        a11y.takeScreenCapture { bytes ->
-                                            capturedBytes = bytes
-                                            if (cont.isActive) cont.resume(Unit)
-                                        }
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                            if (capturedBytes != null) {
-                                imageUri = saveBytesToGallery(context, capturedBytes!!)
-                            }
-                        }
-                        if (imageUri == null) {
-                            a11y?.performGlobalActionByKey("screenshot")
-                            try { Thread.sleep(1200) } catch (_: Exception) {}
-                            imageUri = getLatestScreenshotOrImageUri(context)
-                        }
-                    } else {
-                        imageUri = getLatestScreenshotOrImageUri(context)
-                    }
-
-                    if (imageUri == null) {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "Device par koi screenshot ya photo nahi mili Boss!")
-                        return result
-                    }
-
-                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-                    val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
-                    val digits = resolvedPhone?.replace(Regex("[^0-9]"), "") ?: ""
-                    val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
-                    val waPkg = try {
-                        context.packageManager.getPackageInfo("com.whatsapp", 0)
-                        "com.whatsapp"
-                    } catch (_: Exception) {
-                        "com.whatsapp.w4b"
-                    }
-
-                    try {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "image/*"
-                            setPackage(waPkg)
-                            putExtra(Intent.EXTRA_STREAM, imageUri)
-                            if (caption.isNotBlank()) {
-                                putExtra(Intent.EXTRA_TEXT, caption)
-                            }
-                            if (waNumber.isNotBlank()) {
-                                putExtra("jid", "$waNumber@s.whatsapp.net")
-                            }
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                        a11y?.armWhatsappSendImage()
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "Screenshot capture karke WhatsApp par ${contact.ifBlank { "chat" }} ko send kar diya gaya hai Boss! 📸💬")
-                    } catch (e: Exception) {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "WhatsApp me screenshot bhejne me issue aaya: ${e.message}")
-                    }
+                    executeSendWhatsappMedia(context, args).entrySet().forEach { (k, v) -> result.add(k, v) }
                 }
 
                 "clear_whatsapp_chat" -> {
@@ -1958,38 +1884,7 @@ object IshaToolRegistry {
                 }
 
                 "take_screenshot" -> {
-                    val a11y = IshaAccessibilityService.instance
-                    if (a11y != null) {
-                        var savedUri: Uri? = null
-                        var capturedBytes: ByteArray? = null
-                        try {
-                            withTimeoutOrNull(2500L) {
-                                suspendCancellableCoroutine<Unit> { cont ->
-                                    a11y.takeScreenCapture { bytes ->
-                                        capturedBytes = bytes
-                                        if (cont.isActive) cont.resume(Unit)
-                                    }
-                                }
-                            }
-                        } catch (_: Exception) {}
-
-                        if (capturedBytes != null) {
-                            savedUri = saveBytesToGallery(context, capturedBytes!!)
-                        }
-
-                        if (savedUri != null) {
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "Screenshot taken and saved to Gallery! 📸")
-                            result.addProperty("uri", savedUri.toString())
-                        } else {
-                            val sysOk = a11y.takeSystemScreenshot()
-                            result.addProperty("status", if (sysOk) "success" else "error")
-                            result.addProperty("message", if (sysOk) "Screenshot captured successfully! 📸" else "Could not capture screenshot.")
-                        }
-                    } else {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "ISHA Accessibility Service is not active. Please enable it in Android Settings to capture screenshots.")
-                    }
+                    executeTakeScreenshot(context).entrySet().forEach { (k, v) -> result.add(k, v) }
                 }
 
                 "share_media" -> {
@@ -5739,27 +5634,125 @@ object IshaToolRegistry {
         }
     }
 
+    data class ContactMatch(val number: String, val displayName: String)
+
+    private fun isDummyPhoneNumber(phone: String): Boolean {
+        val digits = phone.replace(Regex("[^0-9]"), "")
+        if (digits.length < 7) return true
+        val dummies = setOf(
+            "1234567890", "0123456789", "9876543210", "0987654321",
+            "12345678", "87654321", "1234567", "7654321",
+            "5551234", "5551234567", "0000000000", "1111111111",
+            "2222222222", "3333333333", "4444444444", "5555555555",
+            "6666666666", "7777777777", "8888888888", "9999999999"
+        )
+        if (dummies.contains(digits)) return true
+        if (digits.length >= 7 && digits.all { it == digits[0] }) return true
+        val seqAsc = "01234567890123456789"
+        val seqDesc = "98765432109876543210"
+        if (seqAsc.contains(digits) || seqDesc.contains(digits)) return true
+        return false
+    }
+
     /**
-     * Resolves a named contact query to a phone number using the device Contacts database.
+     * Normalizes a contact name or query string:
+     * - Maps fancy unicode glyphs (small-caps, circled/squared letters) to plain Latin
+     * - Removes emojis, symbols, and punctuation
+     * - Removes Hindi/English relational suffixes & honorifics (ko, ji, bhai, bhaiya, etc.)
      */
-    private fun resolveContactNumber(context: Context, query: String): String? {
+    fun normalizeContactSearchText(text: String): String {
+        if (text.isBlank()) return ""
+        val sb = java.lang.StringBuilder()
+        text.codePoints().forEach { cp ->
+            when (cp) {
+                0x1D00 -> sb.append('a') // ᴀ
+                0x0299 -> sb.append('b') // ʙ
+                0x1D04 -> sb.append('c') // ᴄ
+                0x1D05 -> sb.append('d') // ᴅ
+                0x1D07 -> sb.append('e') // ᴇ
+                0xA730 -> sb.append('f') // ꜰ
+                0x0262 -> sb.append('g') // ɢ
+                0x029C -> sb.append('h') // ʜ
+                0x026A -> sb.append('i') // ɪ
+                0x1D0A -> sb.append('j') // ᴊ
+                0x1D0B -> sb.append('k') // ᴋ
+                0x029F -> sb.append('l') // ʟ
+                0x1D0D -> sb.append('m') // ᴍ
+                0x0274 -> sb.append('n') // ɴ
+                0x1D0F -> sb.append('o') // ᴏ
+                0x1D18 -> sb.append('p') // ᴘ
+                0x0280 -> sb.append('r') // ʀ
+                0xA731 -> sb.append('s') // ꜱ
+                0x1D1B -> sb.append('t') // ᴛ
+                0x1D1C -> sb.append('u') // ᴜ
+                0x1D20 -> sb.append('v') // ᴠ
+                0x1D21 -> sb.append('w') // ᴡ
+                0x028F -> sb.append('y') // ʏ
+                0x1D22 -> sb.append('z') // ᴢ
+                // Squared/Enclosed Latin Letters (e.g. 🆂 U+1F182)
+                in 0x1F130..0x1F149 -> sb.append((cp - 0x1F130 + 'a'.code).toChar())
+                in 0x1F150..0x1F169 -> sb.append((cp - 0x1F150 + 'a'.code).toChar())
+                in 0x1F170..0x1F189 -> sb.append((cp - 0x1F170 + 'a'.code).toChar())
+                else -> {
+                    val chars = Character.toChars(cp)
+                    sb.append(chars)
+                }
+            }
+        }
+        val hasDevanagari = sb.any { it in '\u0900'..'\u097F' }
+        val stripped = if (hasDevanagari) {
+            // Collapse intra-word Devanagari whitespace (e.g. "यु ग राज" -> "युगराज")
+            sb.toString()
+                .replace(Regex("(?<=[\\u0900-\\u097F])\\s+(?=[\\u0900-\\u097F])"), "")
+                .replace(Regex("[^a-zA-Z0-9\\s\\u0900-\\u097F]"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .lowercase()
+        } else {
+            val nfd = java.text.Normalizer.normalize(sb.toString(), java.text.Normalizer.Form.NFD)
+            nfd.replace(Regex("\\p{M}"), "")
+                .replace(Regex("[^a-zA-Z0-9\\s]"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .lowercase()
+        }
+
+        return stripped
+            .replace(Regex("\\b(ko|ji|bhai|bhaiya|bro|sir|sahab|de|ka|ki|ke|se|pe|par|call|phone|karo|lagao)\\b", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    /**
+     * Resolves a named contact query to a phone number and verified display name
+     * using memory vault and device Contacts database with deep Unicode and phonetic normalization.
+     */
+    fun resolveContactDetails(context: Context, query: String): ContactMatch? {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return null
 
         val digitsOnly = trimmed.replace(Regex("[^0-9+]"), "")
         if (digitsOnly.length >= 7 && !trimmed.any { it.isLetter() }) {
-            return digitsOnly
+            return ContactMatch(digitsOnly, digitsOnly)
         }
 
-        // Clean honorifics, prepositions, etc. (Hindi & English)
-        val cleanName = trimmed.replace(Regex("\\b(ko|ji|bhai|bhaiya|bro|sir|sahab|de|ka|ki|ke|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-        val queriesToTry = if (cleanName.isNotBlank() && cleanName != trimmed) listOf(cleanName, trimmed) else listOf(trimmed)
+        // 0. Check ISHA's long-term memory vault first (user-taught contacts and relational facts)
+        val cleanName = trimmed.replace(Regex("\\b(ko|ji|bhai|bhaiya|bro|sir|sahab|de|ka|ki|ke|se|pe|par|call|phone|karo|lagao)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val queriesToTry = mutableListOf<String>()
+        if (cleanName.isNotBlank()) queriesToTry.add(cleanName)
+        if (trimmed != cleanName) queriesToTry.add(trimmed)
 
-        // 0. Check ISHA's long-term memory vault first (user-taught contacts)
         for (target in queriesToTry) {
-            val memoryNumber = IshaContactMemoryManager.getNumberByName(context, target)
-            if (!memoryNumber.isNullOrBlank()) {
-                return memoryNumber
+            val memoryEntry = IshaContactMemoryManager.getContactByName(context, target)
+            if (memoryEntry != null) {
+                return ContactMatch(memoryEntry.primaryNumber, memoryEntry.name)
+            }
+            val factValue = IshaMemoryManager.recallMemory(context, target)
+            if (!factValue.isNullOrBlank()) {
+                val numFromFact = IshaContactMemoryManager.getNumberByName(context, factValue)
+                if (!numFromFact.isNullOrBlank()) {
+                    return ContactMatch(numFromFact, factValue)
+                }
             }
         }
 
@@ -5769,40 +5762,400 @@ object IshaToolRegistry {
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 ContactsContract.CommonDataKinds.Phone.NUMBER
             )
-            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
 
+            // 1. Fast path: Direct SQL LIKE queries
+            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
             for (target in queriesToTry) {
-                // 1. Full name match
                 context.contentResolver.query(uri, projection, selection, arrayOf("%$target%"), null)?.use { cursor ->
                     if (cursor.moveToFirst()) {
                         val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        val nameCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                         if (numCol != -1) {
-                            val rawNum = cursor.getString(numCol)
-                            if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
-                        }
-                    }
-                }
-
-                // 2. Token match (e.g. "Ansh Kesharwani" -> search "Ansh")
-                val tokens = target.split(Regex("\\s+")).filter { it.length >= 2 }
-                if (tokens.size > 1) {
-                    for (token in tokens) {
-                        context.contentResolver.query(uri, projection, selection, arrayOf("%$token%"), null)?.use { cursor ->
-                            if (cursor.moveToFirst()) {
-                                val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                                if (numCol != -1) {
-                                    val rawNum = cursor.getString(numCol)
-                                    if (!rawNum.isNullOrBlank()) return rawNum.replace(Regex("[^0-9+]"), "")
-                                }
+                            val rawNum = cursor.getString(numCol)?.replace(Regex("[^0-9+]"), "")
+                            val dispName = if (nameCol != -1) cursor.getString(nameCol) ?: target else target
+                            if (!rawNum.isNullOrBlank()) {
+                                return ContactMatch(rawNum, dispName)
                             }
                         }
                     }
                 }
             }
+
+            // 2. Comprehensive in-memory matching (Handles fancy unicode fonts, emojis, diacritics, nicknames)
+            val normalizedQuery = normalizeContactSearchText(trimmed)
+            if (normalizedQuery.isBlank()) return null
+            val queryTokens = normalizedQuery.split(" ").filter { it.length >= 2 }
+
+            val allContacts = mutableListOf<Pair<String, String>>() // (DisplayName, Number)
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val nameCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                while (cursor.moveToNext()) {
+                    if (numCol != -1 && nameCol != -1) {
+                        val name = cursor.getString(nameCol) ?: ""
+                        val num = cursor.getString(numCol) ?: ""
+                        val cleanNum = num.replace(Regex("[^0-9+]"), "")
+                        if (name.isNotBlank() && cleanNum.isNotBlank()) {
+                            allContacts.add(Pair(name, cleanNum))
+                        }
+                    }
+                }
+            }
+
+            // Pass A: Exact normalized match
+            for ((dispName, phone) in allContacts) {
+                val normDisp = normalizeContactSearchText(dispName)
+                if (normDisp == normalizedQuery) {
+                    return ContactMatch(phone, dispName)
+                }
+            }
+
+            // Pass B: Token containment (e.g. query "kartik" in "kartik saini personal", or query "prashant dad" matching "prashant dad")
+            for ((dispName, phone) in allContacts) {
+                val normDisp = normalizeContactSearchText(dispName)
+                val dispTokens = normDisp.split(" ").filter { it.length >= 2 }
+
+                if (dispTokens.contains(normalizedQuery)) {
+                    return ContactMatch(phone, dispName)
+                }
+
+                if (queryTokens.isNotEmpty() && queryTokens.all { qTok -> dispTokens.any { dTok -> dTok == qTok || dTok.contains(qTok) || qTok.contains(dTok) } }) {
+                    return ContactMatch(phone, dispName)
+                }
+            }
+
+            // Pass C: Substring match on normalized string
+            for ((dispName, phone) in allContacts) {
+                val normDisp = normalizeContactSearchText(dispName)
+                if (normDisp.contains(normalizedQuery) || normalizedQuery.contains(normDisp)) {
+                    return ContactMatch(phone, dispName)
+                }
+            }
+
+            // Pass D: Common Hindi nickname / familial mappings
+            val aliasMap = mapOf(
+                "mummy" to listOf("mom", "mother", "maa", "मम्मी", "माँ", "माताजी"),
+                "mom" to listOf("mummy", "maa", "mother", "मम्मी", "माँ"),
+                "मम्मी" to listOf("mummy", "mom", "mother", "maa", "माँ"),
+                "माँ" to listOf("mummy", "mom", "mother", "maa", "मम्मी"),
+                "papa" to listOf("dad", "father", "pitaji", "पापा", "पिताजी"),
+                "dad" to listOf("papa", "father", "pitaji", "पापा", "पिताजी"),
+                "पापा" to listOf("papa", "dad", "father", "pitaji", "पिताजी"),
+                "bhai" to listOf("brother", "bro", "भाई"),
+                "भाई" to listOf("bhai", "brother", "bro")
+            )
+            val aliases = aliasMap[normalizedQuery] ?: emptyList()
+            if (aliases.isNotEmpty()) {
+                for ((dispName, phone) in allContacts) {
+                    val normDisp = normalizeContactSearchText(dispName)
+                    for (alias in aliases) {
+                        if (normDisp.contains(alias) || normDisp == alias) {
+                            return ContactMatch(phone, dispName)
+                        }
+                    }
+                }
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to resolve contact: $query", e)
         }
         return null
+    }
+
+    private fun resolveContactNumber(context: Context, query: String): String? {
+        return resolveContactDetails(context, query)?.number
+    }
+
+    private suspend fun executeMakeCall(context: Context, args: JsonObject): JsonObject {
+        val result = JsonObject()
+        wakeAndUnlockIfNeeded(context)
+        val rawPhone = args.get("phone_number")?.asString?.trim() ?: ""
+        val rawContact = (args.get("contact_name")?.asString
+            ?: args.get("contact")?.asString
+            ?: args.get("name")?.asString
+            ?: "").trim()
+
+        var targetName = rawContact
+        var targetPhone = rawPhone
+
+        // If phone_number contains alphabets (e.g. "Rahul"), treat it as contact name
+        if (targetPhone.any { it.isLetter() }) {
+            if (targetName.isBlank()) targetName = targetPhone
+            targetPhone = ""
+        }
+
+        var resolvedPhone: String? = null
+        var resolvedDisplayName: String = targetName
+
+        // 1. Check contact_name first if provided
+        if (targetName.isNotBlank()) {
+            val memoryEntry = IshaContactMemoryManager.getContactByName(context, targetName)
+            if (memoryEntry != null) {
+                resolvedPhone = memoryEntry.primaryNumber
+                resolvedDisplayName = memoryEntry.name
+            } else {
+                val contactMatch = resolveContactDetails(context, targetName)
+                if (contactMatch != null) {
+                    resolvedPhone = contactMatch.number
+                    resolvedDisplayName = contactMatch.displayName
+                }
+            }
+
+            // ANTI-HALLUCINATION GUARD: If user asked to call someone by name,
+            // NEVER fall back to dialing random/placeholder numbers!
+            if (resolvedPhone.isNullOrBlank()) {
+                result.addProperty("status", "not_found")
+                result.addProperty("message", "Contacts mein '$targetName' ka phone number nahi mila Boss. Kripya check karein ya number batayein.")
+                return result
+            }
+        } else if (targetPhone.isNotBlank()) {
+            // User explicitly provided digits to call (no contact name given)
+            val digits = targetPhone.replace(Regex("[^0-9+]"), "")
+            if (isDummyPhoneNumber(digits)) {
+                result.addProperty("status", "error")
+                result.addProperty("message", "Ye valid phone number nahi lag raha hai Boss.")
+                return result
+            }
+            if (digits.replace("+", "").length >= 7) {
+                resolvedPhone = digits
+                resolvedDisplayName = digits
+            } else {
+                // Short query or name without letters
+                val contactMatch = resolveContactDetails(context, targetPhone)
+                if (contactMatch != null) {
+                    resolvedPhone = contactMatch.number
+                    resolvedDisplayName = contactMatch.displayName
+                }
+            }
+        }
+
+        if (resolvedPhone.isNullOrBlank()) {
+            val missingTarget = if (targetName.isNotBlank()) targetName else rawPhone
+            result.addProperty("status", "not_found")
+            result.addProperty("message", "Contacts mein '$missingTarget' ka phone number nahi mila Boss. Kripya check karein ya number batayein.")
+            return result
+        }
+
+        val finalPhone = resolvedPhone
+        val callTarget = if (resolvedDisplayName.isNotBlank()) resolvedDisplayName else finalPhone
+
+        try {
+            val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$finalPhone")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            result.addProperty("status", "success")
+            result.addProperty("phone_number", finalPhone)
+            result.addProperty("contact_name", callTarget)
+            result.addProperty("message", "$callTarget ($finalPhone) ko call lagayi ja rahi hai Boss! 📞")
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_CALL failed, falling back to ACTION_DIAL", e)
+            val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$finalPhone")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(dialIntent)
+            result.addProperty("status", "success")
+            result.addProperty("phone_number", finalPhone)
+            result.addProperty("contact_name", callTarget)
+            result.addProperty("message", "Dialer open kar diya hai $callTarget ke number $finalPhone ke saath Boss!")
+        }
+        return result
+    }
+
+    private suspend fun executeSendSms(context: Context, args: JsonObject): JsonObject {
+        val result = JsonObject()
+        val rawPhone = args.get("phone_number")?.asString?.trim() ?: ""
+        val rawContact = (args.get("contact_name")?.asString ?: "").trim()
+        val msg = args.get("message")?.asString ?: ""
+
+        var resolvedPhone: String? = null
+        var resolvedDisplayName: String = rawContact
+
+        if (rawContact.isNotBlank()) {
+            val memoryEntry = IshaContactMemoryManager.getContactByName(context, rawContact)
+            if (memoryEntry != null) {
+                resolvedPhone = memoryEntry.primaryNumber
+                resolvedDisplayName = memoryEntry.name
+            } else {
+                val contactMatch = resolveContactDetails(context, rawContact)
+                if (contactMatch != null) {
+                    resolvedPhone = contactMatch.number
+                    resolvedDisplayName = contactMatch.displayName
+                }
+            }
+            if (resolvedPhone.isNullOrBlank()) {
+                result.addProperty("status", "not_found")
+                result.addProperty("message", "Contacts mein '$rawContact' ka phone number nahi mila SMS bhejne ke liye Boss.")
+                return result
+            }
+        } else if (rawPhone.isNotBlank()) {
+            val digits = rawPhone.replace(Regex("[^0-9+]"), "")
+            if (!isDummyPhoneNumber(digits) && digits.replace("+", "").length >= 7) {
+                resolvedPhone = digits
+                resolvedDisplayName = digits
+            }
+        }
+
+        if (resolvedPhone.isNullOrBlank()) {
+            val target = rawContact.ifBlank { rawPhone }
+            result.addProperty("status", "not_found")
+            result.addProperty("message", "Contacts mein '$target' ka phone number nahi mila SMS bhejne ke liye Boss.")
+            return result
+        }
+
+        val finalPhone = resolvedPhone
+        val smsTarget = if (resolvedDisplayName.isNotBlank()) resolvedDisplayName else finalPhone
+        val smsManager = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(SmsManager::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            SmsManager.getDefault()
+        }) ?: @Suppress("DEPRECATION") SmsManager.getDefault()
+        smsManager?.sendTextMessage(finalPhone, null, msg, null, null)
+        result.addProperty("status", "success")
+        result.addProperty("phone_number", finalPhone)
+        result.addProperty("message", "$smsTarget ($finalPhone) ko SMS bhej diya hai Boss!")
+        return result
+    }
+
+    private suspend fun executeSendWhatsappMedia(context: Context, args: JsonObject): JsonObject {
+        val result = JsonObject()
+        wakeAndUnlockIfNeeded(context)
+        val contact = args.get("contact_name")?.asString
+            ?: args.get("contact")?.asString
+            ?: args.get("to")?.asString
+            ?: ""
+        val mediaType = (args.get("media_type")?.asString ?: "screenshot").lowercase()
+        val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
+
+        val a11y = IshaAccessibilityService.instance
+        var imageUri: Uri? = null
+
+        // If a screenshot was captured within the last 30 seconds (e.g. chained from take_screenshot), use it immediately!
+        val recentScreenshot = lastCapturedScreenshotUri
+        if (recentScreenshot != null && (System.currentTimeMillis() - lastCapturedScreenshotTime) < 30_000L) {
+            imageUri = recentScreenshot
+        } else if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
+            if (a11y != null) {
+                var capturedBytes: ByteArray? = null
+                try {
+                    withTimeoutOrNull(2000L) {
+                        suspendCancellableCoroutine<Unit> { cont ->
+                            a11y.takeScreenCapture { bytes ->
+                                capturedBytes = bytes
+                                if (cont.isActive) cont.resume(Unit)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+                if (capturedBytes != null) {
+                    imageUri = saveBytesToGallery(context, capturedBytes!!)
+                }
+            }
+            if (imageUri == null) {
+                a11y?.performGlobalActionByKey("screenshot")
+                try { Thread.sleep(1200) } catch (_: Exception) {}
+                imageUri = getLatestScreenshotOrImageUri(context)
+            }
+        } else {
+            imageUri = getLatestScreenshotOrImageUri(context)
+        }
+
+        if (imageUri == null) {
+            result.addProperty("status", "error")
+            result.addProperty("message", "Device par koi screenshot ya photo nahi mili Boss!")
+            return result
+        }
+
+        var cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val cLower = cleanContact.lowercase()
+        if (cLower.isBlank() || cLower in listOf("this person", "is person", "current", "here", "him", "her", "unhe", "usse", "inhe", "ise", "isko")) {
+            val activeTitle = (if (a11y != null && a11y.isWhatsappChatOpen()) a11y.getWhatsappActiveContactTitle() else null)
+                ?: a11y?.lastKnownWhatsappContactTitle
+            if (!activeTitle.isNullOrBlank()) {
+                cleanContact = activeTitle.trim()
+            }
+        }
+        val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+        val digits = resolvedPhone?.replace(Regex("[^0-9]"), "") ?: ""
+        val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+        val waPkg = try {
+            context.packageManager.getPackageInfo("com.whatsapp", 0)
+            "com.whatsapp"
+        } catch (_: Exception) {
+            "com.whatsapp.w4b"
+        }
+
+        try {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/*"
+                setPackage(waPkg)
+                putExtra(Intent.EXTRA_STREAM, imageUri)
+                if (caption.isNotBlank()) {
+                    putExtra(Intent.EXTRA_TEXT, caption)
+                }
+                if (waNumber.isNotBlank()) {
+                    putExtra("jid", "$waNumber@s.whatsapp.net")
+                }
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            a11y?.armWhatsappSendImage()
+            result.addProperty("status", "success")
+            result.addProperty("message", "Screenshot capture karke WhatsApp par ${cleanContact.ifBlank { "chat" }} ko send kar diya gaya hai Boss! 📸💬")
+        } catch (e: Exception) {
+            result.addProperty("status", "error")
+            result.addProperty("message", "WhatsApp me screenshot bhejne me issue aaya: ${e.message}")
+        }
+        return result
+    }
+
+    private suspend fun executeTakeScreenshot(context: Context): JsonObject {
+        val result = JsonObject()
+        val a11y = IshaAccessibilityService.instance
+        if (a11y != null) {
+            var savedUri: Uri? = null
+            var capturedBytes: ByteArray? = null
+            try {
+                withTimeoutOrNull(2500L) {
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        a11y.takeScreenCapture { bytes ->
+                            capturedBytes = bytes
+                            if (cont.isActive) cont.resume(Unit)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (capturedBytes != null) {
+                savedUri = saveBytesToGallery(context, capturedBytes!!)
+            }
+
+            if (savedUri != null) {
+                lastCapturedScreenshotUri = savedUri
+                lastCapturedScreenshotTime = System.currentTimeMillis()
+                result.addProperty("status", "success")
+                result.addProperty("message", "Screenshot taken and saved to Gallery! 📸")
+                result.addProperty("uri", savedUri.toString())
+            } else {
+                val sysOk = a11y.takeSystemScreenshot()
+                if (sysOk) {
+                    try { Thread.sleep(800) } catch (_: Exception) {}
+                    val latest = getLatestScreenshotOrImageUri(context)
+                    if (latest != null) {
+                        lastCapturedScreenshotUri = latest
+                        lastCapturedScreenshotTime = System.currentTimeMillis()
+                    }
+                }
+                result.addProperty("status", if (sysOk) "success" else "error")
+                result.addProperty("message", if (sysOk) "Screenshot captured successfully! 📸" else "Could not capture screenshot.")
+            }
+        } else {
+            result.addProperty("status", "error")
+            result.addProperty("message", "ISHA Accessibility Service is not active. Please enable it in Android Settings to capture screenshots.")
+        }
+        return result
     }
 
     /**

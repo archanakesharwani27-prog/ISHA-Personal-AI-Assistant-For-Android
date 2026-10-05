@@ -134,6 +134,7 @@ open class IshaAccessibilityService : AccessibilityService() {
     @Volatile var pendingNavigationMode: String? = null
     @Volatile var pendingWifiToggle: Boolean? = null
     @Volatile var pendingBluetoothToggle: Boolean? = null
+    @Volatile var lastKnownWhatsappContactTitle: String? = null
 
     // ── New action queue ───────────────────────────────────────────────────────
     private data class A11yStep(
@@ -184,8 +185,14 @@ open class IshaAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
 
         // Legacy handlers
-        if (pendingWhatsappSend && (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ)) {
-            if (clickFirstMatch(root, SEND_HINTS)) pendingWhatsappSend = false
+        if (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ) {
+            val contactTitle = getWhatsappActiveContactTitle()
+            if (!contactTitle.isNullOrBlank()) {
+                lastKnownWhatsappContactTitle = contactTitle
+            }
+            if (pendingWhatsappSend && clickFirstMatch(root, SEND_HINTS)) {
+                pendingWhatsappSend = false
+            }
         }
         if (pendingAutoInstall) {
             // Only tap Install on the Play Store or Package Installer screens

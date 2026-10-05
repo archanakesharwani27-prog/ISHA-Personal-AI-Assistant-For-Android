@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         @Volatile var instance: MainActivity? = null
     }
 
-    private val viewModel: IshaAssistantViewModel by viewModels()
+    val viewModel: IshaAssistantViewModel by viewModels()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ── Shake Sensor State ─────────────────────────────────────────────────────
@@ -128,12 +128,24 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == WakeWordService.ACTION_WAKE) {
                 val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON) ?: "wake"
-                Log.i(TAG, "Wake broadcast received: reason=$reason")
+                Log.i(TAG, "Wake broadcast received: reason=$reason — engaging Gemini Live Voice")
                 if (reason != "shake") {
                     mainHandler.post {
-                        viewModel.onMicButtonPressed()
+                        startVoiceModeDirectly()
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Directly engages Gemini Bidirectional Live Voice mode with low-latency WebSocket ("Aoede").
+     */
+    fun startVoiceModeDirectly() {
+        runOnUiThread {
+            if (!viewModel.isVoiceModeActive.value) {
+                Log.i(TAG, "Starting Gemini Live Voice duplex mode directly")
+                viewModel.startVoiceMode()
             }
         }
     }
@@ -206,7 +218,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         com.aura.assistant.sync.IshaDeviceRegistry.init(this)
         com.aura.assistant.sync.IshaCrossDeviceBridge.init(this)
 
-        startWakeWordService()
+        val isVoiceWake = intent.getBooleanExtra("open_voice_mode", false) ||
+                intent.action == WakeWordService.ACTION_WAKE ||
+                intent.action == "com.aura.assistant.WAKE_ACTIVATE" ||
+                intent.action == Intent.ACTION_ASSIST ||
+                intent.action == "android.intent.action.VOICE_COMMAND"
+
+        if (!isVoiceWake) {
+            startWakeWordService()
+        }
         handleWakeIntent(intent)
 
         setContent {
@@ -273,27 +293,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             return
         }
         val reason = intent.getStringExtra(WakeWordService.EXTRA_REASON)
-        if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null) {
-            mainHandler.postDelayed({
-                viewModel.onMicButtonPressed()
-            }, 300)
-        } else if (action == Intent.ACTION_ASSIST || action == "android.intent.action.VOICE_COMMAND") {
-            mainHandler.postDelayed({
-                viewModel.onMicButtonPressed()
-            }, 300)
-        } else if (intent.getBooleanExtra("open_voice_mode", false)) {
-            mainHandler.postDelayed({
-                if (!viewModel.isVoiceModeActive.value) {
-                    viewModel.startVoiceMode()
-                }
-            }, 200)
+        if (action == "com.aura.assistant.WAKE_ACTIVATE" || action == WakeWordService.ACTION_WAKE || reason != null || intent.getBooleanExtra("open_voice_mode", false) || action == Intent.ACTION_ASSIST || action == "android.intent.action.VOICE_COMMAND") {
+            startVoiceModeDirectly()
         }
     }
 
     private fun startWakeWordService() {
         try {
             val prefs = getSharedPreferences("aura_settings", Context.MODE_PRIVATE)
-            val isWakeEnabled = prefs.getBoolean("wake_word_enabled", false)
+            val isWakeEnabled = prefs.getBoolean("wake_word_enabled", true)
             val isShakeEnabled = prefs.getBoolean("shake_enabled", true)
             val serviceIntent = Intent(this, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_CONFIG

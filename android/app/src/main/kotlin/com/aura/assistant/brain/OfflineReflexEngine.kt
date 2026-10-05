@@ -55,6 +55,13 @@ object OfflineReflexEngine {
                                    clean.contains("kya hua") || clean.contains("kyu")
         if (isNegativeOrComplaint) return null
 
+        // Guard: Never trigger single-action offline reflex on multi-task / compound / sequential workflows!
+        // Multi-task commands require Gemini LLM reasoning and multi-step execution.
+        if (isCompoundOrMultiActionCommand(clean)) {
+            android.util.Log.i("OfflineReflexEngine", "Multi-task compound command detected: '$prompt'. Routing to Gemini reasoning engine.")
+            return null
+        }
+
         // 0. Cross-Device Command Interceptor (e.g. "Pixel par torch jalao", "OnePlus par WhatsApp open karo", "Phone B par volume 80 karo")
         val otherDevs = com.aura.assistant.sync.IshaDeviceRegistry.getOtherDevices()
         val matchedDev = otherDevs.firstOrNull { dev ->
@@ -353,30 +360,6 @@ object OfflineReflexEngine {
             }
         }
 
-        // 10b. Take Photo / Open Camera / Selfie / Video Recording
-        val isCameraPhotoCmd = clean.contains("take photo") || clean.contains("take a photo") ||
-                clean.contains("photo le") || clean.contains("photo lo") || clean.contains("photo kheencho") ||
-                clean.contains("photo kheecho") || clean.contains("click photo") || clean.contains("capture photo") ||
-                clean.contains("take picture") || clean.contains("take a picture") || clean.contains("picture lo") ||
-                clean.contains("selfie") || clean.contains("video record") || clean.contains("record video") ||
-                clean == "camera" || clean == "camera open" || clean == "open camera" || clean == "camera kholo"
-        if (isCameraPhotoCmd) {
-            val mode = when {
-                clean.contains("selfie") -> "selfie"
-                clean.contains("video") -> "video"
-                else -> "photo"
-            }
-            val args = JsonObject().apply { addProperty("mode", mode) }
-            val result = if (execute) IshaToolRegistry.executeTool(context, "open_camera", args) else JsonObject().apply { addProperty("status", "success") }
-            val success = isSuccess(result)
-            val resp = when (mode) {
-                "selfie" -> "Front camera open kar diya hai Boss, badhiya selfie lijiye! 🤳"
-                "video" -> "Video recording camera open kar diya hai Boss! 🎥"
-                else -> "Camera open kar diya hai Boss, photo kheench lijiye! 📷"
-            }
-            return OfflineReflexResult("open_camera", resp, success)
-        }
-
         // 11. Open Quick Apps (Camera, Settings, YouTube, WhatsApp, Chrome, Gallery)
         val isOpenAppCmd = clean.startsWith("open ") || clean.startsWith("kholo ") || 
                            clean.endsWith(" kholo") || clean.endsWith(" open karo") ||
@@ -668,5 +651,63 @@ object OfflineReflexEngine {
         var clean = text.replace(Regex("\\b(isha|aura|mobile|number|phone|contact|ka|ki|ke|ko|se|hai|tha|the|kya|batao|bataiye|dikhao|bata|what|is|the|tell|me|show|details|please|purana|old|naya|new)\\b", RegexOption.IGNORE_CASE), " ")
         clean = clean.replace(Regex("[^a-zA-Z\\s]"), " ")
         return clean.trim().replace(Regex("\\s+"), " ")
+    }
+
+    /**
+     * Determines whether the given prompt contains multiple tasks, sequential actions,
+     * or compound chained requests that require full Gemini LLM multi-step execution.
+     */
+    fun isCompoundOrMultiActionCommand(cleanPrompt: String): Boolean {
+        val clean = cleanPrompt.lowercase().trim()
+
+        // 1. Explicit multi-action conjunctions and sequence connectors
+        val compoundConnectors = listOf(
+            " aur ", " and ", " & ", " then ", " phir ", " fir ",
+            " karke ", " kar ke ", " krke ", " kr ke ",
+            " ke baad ", " k baad ", " after ", " along with ",
+            " saath me ", " sath me ", " sath hi ", " saath hi "
+        )
+        if (compoundConnectors.any { clean.contains(it) }) {
+            return true
+        }
+
+        // 2. Chained follow-up markers (e.g. "ye bhi bta do", "ye bhi kar do", "battery kitna charge hai ye bhi bta do")
+        if (clean.contains("bhi") && (clean.contains("bta") || clean.contains("bata") || clean.contains("kar") || clean.contains("kr") || clean.contains("check") || clean.contains("dekh") || clean.contains("play"))) {
+            val beforeBhi = clean.substringBefore("bhi")
+            if (beforeBhi.length > 8 && (beforeBhi.contains("play") || beforeBhi.contains("on") || beforeBhi.contains("off") || beforeBhi.contains("start") || beforeBhi.contains("khol") || beforeBhi.contains("do") || beforeBhi.contains("karo") || beforeBhi.contains("krdo"))) {
+                return true
+            }
+        }
+
+        // 3. Comma-separated or semicolon-separated clauses
+        if (clean.contains(",") || clean.contains(";")) {
+            val parts = clean.split(Regex("[,;]+")).map { it.trim() }.filter { it.isNotBlank() }
+            if (parts.size >= 2) {
+                return true
+            }
+        }
+
+        // 4. Chained screenshot workflow (e.g. "take screenshot and send it to whatsapp to this person", "screenshot whatsapp par bhej do")
+        if ((clean.contains("screenshot") || clean.contains("screen shot")) &&
+            (clean.contains("send") || clean.contains("bhej") || clean.contains("share") ||
+             clean.contains("whatsapp") || clean.contains("kisi ko") || clean.contains("person") ||
+             clean.contains("to ") || clean.contains("ko "))) {
+            return true
+        }
+
+        // 5. Multiple distinct action intent domains in one prompt
+        var actionDomainCount = 0
+        if (clean.contains("youtube") || clean.contains("song") || clean.contains("gaana") || clean.contains("music") || clean.contains("video")) actionDomainCount++
+        if (clean.contains("battery") || clean.contains("charging") || clean.contains("charge kitna")) actionDomainCount++
+        if (clean.contains("dnd") || clean.contains("do not disturb")) actionDomainCount++
+        if (clean.contains("game") || clean.contains("app")) actionDomainCount++
+        if (clean.contains("torch") || clean.contains("flashlight")) actionDomainCount++
+        if (clean.contains("volume") || clean.contains("awaaz") || clean.contains("sound")) actionDomainCount++
+        if (clean.contains("wifi") || clean.contains("wi-fi") || clean.contains("hotspot")) actionDomainCount++
+        if (clean.contains("bluetooth")) actionDomainCount++
+        if (clean.contains("call") || clean.contains("phone lagao") || clean.contains("dial")) actionDomainCount++
+        if (clean.contains("whatsapp") || clean.contains("message") || clean.contains("sms")) actionDomainCount++
+
+        return actionDomainCount >= 2
     }
 }

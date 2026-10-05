@@ -309,7 +309,10 @@ object IshaCloudSyncBridge {
 
                                     if (repo.getCurrentUserId() == expectedSanitized) {
                                         val localMsgs = repo.getMessages(id)
-                                        if (chatMessages.size >= localMsgs.size) {
+                                        val localSession = repo.getAllSessions().find { it.id == id }
+                                        val isNewer = updatedAt > (localSession?.updatedAt ?: 0L)
+                                        val hasNewMsgs = chatMessages.size > localMsgs.size
+                                        if (hasNewMsgs || (isNewer && chatMessages.size >= localMsgs.size && chatMessages != localMsgs)) {
                                             repo.upsertSessionAndMessages(session, chatMessages)
                                             hasUpdates = true
                                         }

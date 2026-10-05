@@ -62,6 +62,7 @@ fun IshaMainScreen(
     val textSize by viewModel.textSize.collectAsState()
     val selectedVoice by viewModel.selectedVoice.collectAsState()
     val selectedLanguage by viewModel.selectedLanguage.collectAsState()
+    val voiceLanguage by viewModel.voiceLanguage.collectAsState()
     val isSoundEnabled by viewModel.isSoundEnabled.collectAsState()
     val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
@@ -230,7 +231,9 @@ fun IshaMainScreen(
                     onStopScreenSharing = {
                         viewModel.stopLiveScreenShare()
                     },
-                    userName = "Ansh"
+                    userName = "Ansh",
+                    selectedLanguage = voiceLanguage,
+                    onSelectLanguage = { viewModel.setVoiceLanguage(it) }
                 )
             }
 

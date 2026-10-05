@@ -187,6 +187,49 @@ class GeminiLiveClient(private val context: Context) {
     // ── Pending text queue (for messages sent before LISTENING state) ──────────
     private val pendingTextMessages = ArrayDeque<String>()
 
+    // ── Active Voice Language ("hinglish", "hindi", "english") ──────────────
+    @Volatile private var activeLanguage: String = "hinglish"
+    var onLanguageChanged: ((String) -> Unit)? = null
+
+    fun setVoiceLanguage(lang: String) {
+        val normalized = when (lang.trim().lowercase()) {
+            "hindi", "hi", "हिंदी" -> "hindi"
+            "english", "en", "अंग्रेजी" -> "english"
+            else -> "hinglish"
+        }
+        val previous = activeLanguage
+        activeLanguage = normalized
+        Log.i(TAG, "Voice language switched from $previous to $normalized")
+        onLanguageChanged?.invoke(normalized)
+
+        if (_liveState.value == AuraLiveState.LISTENING || _liveState.value == AuraLiveState.CONNECTED) {
+            val directive = when (normalized) {
+                "hindi" -> "[SYSTEM INSTRUCTION: Switch immediately to speaking in fluent, warm Hindi, and provide output transcription in Hindi (Devanagari script). User requested: Hindi.]"
+                "english" -> "[SYSTEM INSTRUCTION: Switch immediately to speaking in fluent, friendly English, and provide output transcription in English. User requested: English.]"
+                else -> "[SYSTEM INSTRUCTION: Switch immediately to speaking in warm, natural Hinglish (Hindi in Roman script). User requested: Hinglish.]"
+            }
+            sendTextMessage(directive)
+        }
+    }
+
+    fun getVoiceLanguage(): String = activeLanguage
+
+    /**
+     * Sends an immediate audioStreamEnd event to Gemini Live WebSocket.
+     * Triggers instant server turn finalization without waiting for server silence timeout.
+     */
+    fun sendAudioStreamEnd() {
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+        val inputObj = JsonObject().apply {
+            val realtime = JsonObject().apply {
+                addProperty("audioStreamEnd", true)
+            }
+            add("realtimeInput", realtime)
+        }
+        webSocket?.send(inputObj.toString())
+        Log.d(TAG, "Sent audioStreamEnd (Hybrid VAD fast turn finalization)")
+    }
+
     // ── Native AudioTrack for Instant 24kHz PCM Playback ──────────────────────
     private var audioTrack: AudioTrack? = null
     private val audioBufferSize = AudioTrack.getMinBufferSize(
@@ -409,7 +452,7 @@ class GeminiLiveClient(private val context: Context) {
                         val part = JsonObject().apply {
                             addProperty(
                                 "text",
-                                AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = true)
+                                AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = true, language = activeLanguage)
                             )
                         }
                         add(part)
@@ -426,26 +469,33 @@ class GeminiLiveClient(private val context: Context) {
                 }
                 add("tools", toolsArray)
 
-                // Explicitly enable input and output audio transcriptions.
-                // Per Gemini Live API spec: AudioTranscriptionConfig = empty object = enabled.
-                add("inputAudioTranscription", JsonObject())
+                // Explicitly enable input and output audio transcriptions with active language hints.
+                val inputTxConfig = JsonObject().apply {
+                    val langCodes = JsonArray()
+                    when (activeLanguage) {
+                        "hindi" -> langCodes.add("hi-IN")
+                        "english" -> {
+                            langCodes.add("en-IN")
+                            langCodes.add("en-US")
+                        }
+                    }
+                    add("languageCodes", langCodes)
+                }
+                add("inputAudioTranscription", inputTxConfig)
                 add("outputAudioTranscription", JsonObject())
             }
             add("setup", setup)
         }
 
         webSocket?.send(setupObj.toString())
-        Log.i(TAG, "Setup message sent to Gemini Live")
+        Log.i(TAG, "Setup message sent to Gemini Live (language=$activeLanguage)")
     }
 
     private fun startMicRecording() {
         stopMicRecording()
         micJob = scope.launch(Dispatchers.IO) {
-            // Give audio hardware 200ms to settle after WakeWordService released its AudioRecord.
-            // The ViewModel already waits 500ms before calling connect(), so by the time
-            // setupComplete arrives and this runs, total elapsed time is well over 500ms.
-            // The extra 200ms here is a safety margin for the hardware pipeline.
-            delay(200)
+            // Give audio hardware 50ms to settle after WakeWordService released its AudioRecord.
+            delay(50)
 
             // Acquire exclusive mic ownership from MicOwnershipManager
             if (!MicOwnershipManager.requestOwnership(MicOwner.GEMINI_LIVE)) {
@@ -563,6 +613,10 @@ class GeminiLiveClient(private val context: Context) {
                 val shortBuf = ShortArray(640)
                 val byteBuf = ByteArray(1280)
 
+                // Hybrid VAD Turn Tracking for Instant End-of-Speech Finalization
+                var hasSpokenInTurn = false
+                var consecutiveSilenceFrames = 0
+
                 while (isActive && isMicRecordingActive && webSocket != null) {
                     val readShorts = record.read(shortBuf, 0, shortBuf.size)
                     if (readShorts > 0) {
@@ -584,6 +638,8 @@ class GeminiLiveClient(private val context: Context) {
                         // ── 1. Acoustic Echo Gate & Intentional Barge-In ─────────────────
                         val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 350L)
                         if (isActivelyPlayingAudio) {
+                            hasSpokenInTurn = false
+                            consecutiveSilenceFrames = 0
                             // Phone speaker output easily reaches RMS 0.08 - 0.25 at the mic.
                             // To prevent speaker echo from falsely interrupting Aura, require deliberate user speech (RMS > 0.38)
                             // and sustained energy over at least 8 frames (~320ms).
@@ -627,12 +683,25 @@ class GeminiLiveClient(private val context: Context) {
                             continue
                         }
 
-                        // ── 2. Adaptive Far-Field Audio Gain with Smart Ambient Floor Gate ──
+                        // ── Hybrid VAD: Fast Turn Finalization (Bypasses server silence timeout) ──
+                        val isUserSpeaking = vadResult.isSpeech || rms > 0.035
+                        if (isUserSpeaking) {
+                            hasSpokenInTurn = true
+                            consecutiveSilenceFrames = 0
+                        } else if (hasSpokenInTurn) {
+                            consecutiveSilenceFrames++
+                            if (consecutiveSilenceFrames == 12) { // 12 * ~40ms = ~480ms silence after speech
+                                sendAudioStreamEnd()
+                                hasSpokenInTurn = false
+                            }
+                        }
+
+                        // ── 2. Adaptive Far-Field Audio Gain with Clean Silence Gating ──
                         // Does NOT amplify low ambient noise floors (fans, horns, background radio),
                         // while intelligently boosting conversational speech at natural desk/arm distance.
                         val adaptiveGain = when {
-                            rms < 0.005 -> 1.0f  // Background noise floor / silence - do not amplify ambient noise
-                            rms < 0.020 -> if (vadResult.isSpeech) 3.2f else 1.2f  // Soft human speech
+                            rms < 0.005 -> 0.2f  // Silence floor - attenuate so server VAD detects silence immediately
+                            rms < 0.020 -> if (vadResult.isSpeech) 3.2f else 0.2f  // Soft speech boosted, ambient noise floor attenuated!
                             rms < 0.050 -> 2.5f  // Normal conversational speech
                             rms < 0.100 -> 1.8f  // Close / elevated speech
                             else -> 1.2f         // Very loud / near mic
@@ -914,6 +983,14 @@ class GeminiLiveClient(private val context: Context) {
                         clearAssistantStreamer()
                         _transcriptFlow.value = tx
                         currentUserTurnAccumulator.append(tx).append(" ")
+                        val lower = tx.lowercase()
+                        if (lower.contains("hindi me baat") || lower.contains("hindi mein baat") || lower.contains("hindi me bolo") || lower.contains("hindi mein bolo") || lower.contains("shuddh hindi") || lower.contains("speak in hindi")) {
+                            setVoiceLanguage("hindi")
+                        } else if (lower.contains("english me bolo") || lower.contains("english mein bolo") || lower.contains("speak in english") || lower.contains("talk in english")) {
+                            setVoiceLanguage("english")
+                        } else if (lower.contains("hinglish me") || lower.contains("hinglish mein")) {
+                            setVoiceLanguage("hinglish")
+                        }
                         if (_liveState.value != AuraLiveState.SPEAKING) {
                             _liveState.value = AuraLiveState.THINKING
                         }

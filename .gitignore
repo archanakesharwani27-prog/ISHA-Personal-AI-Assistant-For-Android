@@ -69,3 +69,4 @@ build_output.txt
 *.txt
 scratch/
 scratch_*.py
+/hey_isha*.onnx

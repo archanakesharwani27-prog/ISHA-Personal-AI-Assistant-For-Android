@@ -74,6 +74,8 @@ fun IshaVoiceScreen(
     isScreenSharing: Boolean = false,
     onStopScreenSharing: () -> Unit = {},
     userName: String = "Ansh",
+    selectedLanguage: String = "hinglish",
+    onSelectLanguage: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -201,6 +203,44 @@ fun IshaVoiceScreen(
                     letterSpacing = 1.sp
                 )
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // ── Language Selector Chips (Hindi, Hinglish, English) ──────────
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val languages = listOf(
+                    "hindi" to "हिंदी",
+                    "hinglish" to "Hinglish",
+                    "english" to "English"
+                )
+                languages.forEach { (key, label) ->
+                    val isSelected = selectedLanguage.equals(key, ignoreCase = true)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isSelected) Color(0x3300E5FF) else Color(0x1AFFFFFF),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isSelected) Color(0xFF00E5FF) else Color(0x22FFFFFF)
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { onSelectLanguage(key) }
+                    ) {
+                        Text(
+                            text = label,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            style = AuraTypography.bodySmall.copy(
+                                color = if (isSelected) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.65f),
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                }
+            }
         }
 
         // ── 3. Center Stage (Cosmic Energy Orb + Live Transcript) ───────────────
