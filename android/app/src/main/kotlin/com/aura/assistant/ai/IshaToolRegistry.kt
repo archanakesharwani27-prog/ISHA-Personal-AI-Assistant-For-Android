@@ -79,6 +79,24 @@ object IshaToolRegistry {
         }
     }
 
+    /**
+     * Returns a pruned JSON array containing only the specified tool declarations.
+     * Used for sub-second confirmation turns, reducing payload from 70KB to <1KB!
+     */
+    fun getSpecificToolDeclarations(toolNames: Collection<String>): JsonArray {
+        val all = getGeminiToolDeclarations()
+        val nameSet = toolNames.map { normalizeToolName(it) }.toSet()
+        val filtered = JsonArray()
+        for (i in 0 until all.size()) {
+            val obj = all.get(i).asJsonObject
+            val n = obj.get("name")?.asString ?: continue
+            if (n in nameSet) {
+                filtered.add(obj)
+            }
+        }
+        return if (filtered.size() > 0) filtered else all
+    }
+
     private fun buildGeminiToolDeclarations(): JsonArray {
         val toolsArray = JsonArray()
 
@@ -1589,9 +1607,10 @@ object IshaToolRegistry {
      * Executes a tool call requested by Gemini and returns the structured result.
      */
     @SuppressLint("MissingPermission")
-    suspend fun executeTool(context: Context, name: String, args: JsonObject): JsonObject {
+    suspend fun executeTool(context: Context, rawName: String, rawArgs: JsonObject): JsonObject {
         val toolStartTime = System.currentTimeMillis()
-        Log.i(TAG, "Executing tool: $name with args: $args")
+        val (name, args) = normalizeToolCall(rawName, rawArgs)
+        Log.i(TAG, "Executing tool: $name (original: $rawName) with args: $args")
         val result = JsonObject()
 
         try {
@@ -3218,7 +3237,7 @@ object IshaToolRegistry {
                 }
 
                 "toggle_flashlight" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
                     if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
                         val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
@@ -3653,7 +3672,7 @@ object IshaToolRegistry {
                 }
 
                 "toggle_hotspot" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val targetDeviceArg = args.get("target_device")?.asString?.trim() ?: ""
                     if (targetDeviceArg.isNotBlank() && !targetDeviceArg.equals("this", true) && !targetDeviceArg.equals("current", true) && !targetDeviceArg.equals("local", true)) {
                         val executionResult = com.aura.assistant.sync.IshaCrossDeviceBridge.dispatchRemoteCommand(
@@ -3724,7 +3743,7 @@ object IshaToolRegistry {
                 }
 
                 "toggle_wifi" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armWifiToggle(enable)
@@ -3741,7 +3760,7 @@ object IshaToolRegistry {
                 }
 
                 "toggle_bluetooth" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         a11y.armBluetoothToggle(enable)
@@ -3876,7 +3895,7 @@ object IshaToolRegistry {
                 }
 
                 "toggle_dark_mode" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val a11y = IshaAccessibilityService.instance
                     a11y?.armToggleDarkMode(enable)
                     result.addProperty("status", "success")
@@ -4136,7 +4155,7 @@ object IshaToolRegistry {
 
                 // 39. Do Not Disturb (DND)
                 "set_dnd" -> {
-                    val enable = args.get("enable")?.asBoolean ?: true
+                    val enable = extractBoolean(args, defaultVal = true, "enable", "enabled", "state", "status", "on", "active", "turn_on")
                     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && notificationManager != null) {
                         if (notificationManager.isNotificationPolicyAccessGranted) {
@@ -5529,21 +5548,31 @@ object IshaToolRegistry {
                         uiExecuted = a11y.armAutonomousUiAction(queryWords)
                     }
 
-                    // 2. Ultra-fast Internet Knowledge Retrieval
-                    val webKnowledge = performFastWebSearch("Android how to ${name.replace("_", " ")}")
+                    // 2. Ultra-fast Internet Knowledge Retrieval (only if not handled by UI and query-like)
+                    val isQueryLike = name.contains("search") || name.contains("find") || name.contains("how") ||
+                                      name.contains("what") || name.contains("info") || name.contains("query")
+                    val webKnowledge = if (!uiExecuted && isQueryLike) {
+                        try {
+                            kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                                performFastWebSearch("Android how to ${name.replace("_", " ")}")
+                            } ?: ""
+                        } catch (_: Exception) { "" }
+                    } else ""
                     val elapsed = System.currentTimeMillis() - startMs
 
-                    result.addProperty("status", "success")
+                    result.addProperty("status", if (uiExecuted || webKnowledge.isNotBlank()) "success" else "not_supported")
                     result.addProperty("tool_name", name)
                     result.addProperty("autonomous_ui_clicked", uiExecuted)
                     result.addProperty("elapsed_ms", elapsed)
-                    result.addProperty("knowledge", webKnowledge)
+                    if (webKnowledge.isNotBlank()) {
+                        result.addProperty("knowledge", webKnowledge)
+                    }
                     result.addProperty(
                         "message",
-                        if (uiExecuted) {
-                            "Action \"$name\" screen par match karke autonomously execute kar di gayi hai Boss ($elapsed ms me)!"
-                        } else {
-                            "Boss, \"$name\" ke liye internet se knowledge nikal li hai ($elapsed ms me): $webKnowledge"
+                        when {
+                            uiExecuted -> "Action \"$name\" screen par match karke autonomously execute kar di gayi hai Boss ($elapsed ms me)!"
+                            webKnowledge.isNotBlank() -> "Boss, \"$name\" ke liye internet se knowledge nikal li hai ($elapsed ms me): $webKnowledge"
+                            else -> "Action '$name' is device par directly supported nahi hai Boss."
                         }
                     )
                 }
@@ -5582,6 +5611,212 @@ object IshaToolRegistry {
         AuraMemoryManager.recordLastAction(name, args.toString(), result.get("status")?.asString ?: "unknown")
 
         return result
+    }
+
+    /**
+     * Universal Tool Name Normalizer for 100% Accuracy.
+     * Maps any Gemini variations, synonyms, or action stems to exact canonical tool names.
+     */
+    fun normalizeToolName(rawName: String): String {
+        val lower = rawName.lowercase().trim()
+        return when {
+            // Flashlight / Torch
+            lower in listOf("turn_on_flashlight", "turn_off_flashlight", "flashlight", "torch", "set_flashlight", "flash_light", "toggle_torch") -> "toggle_flashlight"
+            lower.contains("flashlight") || lower.contains("torch") -> "toggle_flashlight"
+
+            // Battery
+            lower in listOf("battery", "battery_status", "battery_level", "get_battery", "check_battery", "device_battery", "battery_info") -> "get_battery_status"
+            lower.contains("battery") && (lower.contains("status") || lower.contains("level") || lower.contains("percent") || lower.contains("get") || lower == "battery") -> "get_battery_status"
+
+            // Wi-Fi
+            lower in listOf("wifi", "turn_on_wifi", "turn_off_wifi", "enable_wifi", "disable_wifi", "toggle_wifi_state", "set_wifi", "wifi_toggle") -> "toggle_wifi"
+            lower.contains("wifi") && (lower.contains("toggle") || lower.contains("turn") || lower.contains("set") || lower == "wifi") -> "toggle_wifi"
+
+            // Bluetooth
+            lower in listOf("bluetooth", "turn_on_bluetooth", "turn_off_bluetooth", "enable_bluetooth", "disable_bluetooth", "toggle_bluetooth_state", "set_bluetooth", "bt") -> "toggle_bluetooth"
+            lower.contains("bluetooth") && (lower.contains("toggle") || lower.contains("turn") || lower.contains("set") || lower == "bluetooth") -> "toggle_bluetooth"
+
+            // Hotspot
+            lower in listOf("hotspot", "turn_on_hotspot", "turn_off_hotspot", "tethering", "toggle_tethering", "enable_hotspot", "disable_hotspot") -> "toggle_hotspot"
+            lower.contains("hotspot") || lower.contains("tethering") -> "toggle_hotspot"
+
+            // Web Search
+            lower in listOf("search", "google_search", "internet_search", "web_search", "search_web", "search_google", "bing_search", "duckduckgo_search", "search_internet") -> "search_internet"
+
+            // Weather
+            lower in listOf("weather", "get_weather", "check_weather", "forecast", "current_weather", "weather_info") -> "get_weather_info"
+
+            // App Launch
+            lower in listOf("launch_app", "start_app", "open", "open_application", "launch", "open_app") -> "open_app"
+
+            // Alarms & Timers
+            lower in listOf("set_alarm", "alarm", "new_alarm", "add_alarm", "create_alarm") -> "create_alarm"
+            lower in listOf("timer", "create_timer", "start_timer", "set_timer") -> "set_timer"
+
+            // Time & Date
+            lower in listOf("time", "get_time", "current_time", "what_time_is_it", "clock", "get_current_time") -> "get_current_time"
+            lower in listOf("date", "get_date", "current_date", "today_date") -> "get_current_time"
+
+            // Calls
+            lower in listOf("call", "phone_call", "dial", "dial_number", "make_phone_call", "call_contact", "make_call") -> "make_call"
+
+            // SMS
+            lower in listOf("sms", "send_text", "send_sms_message", "text_sms", "send_sms") -> "send_sms"
+
+            // WhatsApp
+            lower in listOf("whatsapp", "send_whatsapp_message", "whatsapp_message", "send_wa_message", "wa_message", "send_whatsapp") -> "send_whatsapp"
+            lower in listOf("chat_whatsapp", "whatsapp_chat", "chat_on_whatsapp") -> "chat_on_whatsapp"
+
+            // Volume & Brightness
+            lower in listOf("volume", "change_volume", "set_sound_volume", "adjust_volume", "sound_volume", "set_volume") -> "set_volume"
+            lower in listOf("brightness", "change_brightness", "set_screen_brightness", "adjust_brightness", "set_brightness") -> "set_brightness"
+
+            // Camera
+            lower in listOf("camera", "click_photo", "take_picture", "open_camera_app", "capture_image", "take_photo", "open_camera") -> "open_camera"
+
+            // Maps & Navigation
+            lower in listOf("maps", "google_maps", "directions", "navigate", "map", "get_directions", "navigate_maps") -> "navigate_maps"
+
+            // Media & YouTube
+            lower in listOf("play_music", "youtube", "play_song", "play_video", "search_youtube", "play_youtube") -> "play_youtube"
+            lower in listOf("media_control", "music_control", "playback_control") -> "media_control"
+
+            // Screen & Screenshot
+            lower in listOf("screenshot", "capture_screen", "screen_capture", "take_screenshot") -> "take_screenshot"
+            lower in listOf("screen_tap", "tap", "click_screen", "tap_screen") -> "screen_tap"
+            lower in listOf("screen_scroll", "scroll", "scroll_down", "scroll_up") -> "screen_scroll"
+            lower in listOf("read_screen", "read_screen_text", "screen_text", "get_screen_text") -> "read_screen_text"
+
+            // Health & System
+            lower in listOf("device_health", "phone_health", "system_health", "device_info", "check_health", "check_device_health") -> "check_device_health"
+            lower in listOf("briefing", "daily_briefing", "morning_briefing", "get_briefing", "get_daily_briefing") -> "get_daily_briefing"
+            lower in listOf("dnd", "do_not_disturb", "toggle_dnd", "set_dnd") -> "set_dnd"
+            lower in listOf("dark_mode", "night_mode", "toggle_night_mode", "toggle_dark_mode") -> "toggle_dark_mode"
+
+            else -> rawName
+        }
+    }
+
+    /**
+     * Resilient Tool Call Normalizer. Pre-processes arguments and resolves intent aliases.
+     */
+    fun normalizeToolCall(rawName: String, rawArgs: JsonObject): Pair<String, JsonObject> {
+        val normName = normalizeToolName(rawName)
+        val args = rawArgs.deepCopy()
+        val lowerRaw = rawName.lowercase().trim()
+
+        // 1. Hardware State Inference from tool name:
+        if (lowerRaw.contains("off") || lowerRaw.contains("disable") || lowerRaw.contains("deactivate") || lowerRaw.contains("stop") || lowerRaw.contains("band")) {
+            if (!args.has("enable")) args.addProperty("enable", false)
+            if (!args.has("state")) args.addProperty("state", "off")
+        } else if (lowerRaw.contains("on") || lowerRaw.contains("enable") || lowerRaw.contains("activate") || lowerRaw.contains("start") || lowerRaw.contains("chalu")) {
+            if (!args.has("enable")) args.addProperty("enable", true)
+            if (!args.has("state")) args.addProperty("state", "on")
+        }
+
+        // 2. Weather mapping:
+        if (normName == "get_weather_info") {
+            val loc = extractString(args, "location", "city", "place", "query", "q").ifBlank { "today" }
+            args.addProperty("query", "current weather $loc")
+            return Pair("search_internet", args)
+        }
+
+        // 3. Search query normalization:
+        if (normName == "search_internet" || normName == "web_search") {
+            if (!args.has("query") || args.get("query").asString.isBlank()) {
+                val q = extractString(args, "search_query", "q", "query_text", "text", "term", "keyword", "topic")
+                if (q.isNotBlank()) args.addProperty("query", q)
+            }
+        }
+
+        // 4. App Launch normalization:
+        if (normName == "open_app") {
+            if (!args.has("app_name") || args.get("app_name").asString.isBlank()) {
+                val app = extractString(args, "appName", "app", "name", "package", "target", "application")
+                if (app.isNotBlank()) args.addProperty("app_name", app)
+            }
+        }
+
+        // 5. WhatsApp normalization:
+        if (normName == "send_whatsapp") {
+            if (!args.has("contact_name") || args.get("contact_name").asString.isBlank()) {
+                val c = extractString(args, "contact", "recipient", "to", "person", "target", "phone_number")
+                if (c.isNotBlank()) args.addProperty("contact_name", c)
+            }
+            if (!args.has("message") || args.get("message").asString.isBlank()) {
+                val m = extractString(args, "msg", "text", "body", "content")
+                if (m.isNotBlank()) args.addProperty("message", m)
+            }
+        }
+
+        // 6. Make Call normalization:
+        if (normName == "make_call") {
+            if (!args.has("contact_name") || args.get("contact_name").asString.isBlank()) {
+                val c = extractString(args, "contact", "name", "person", "to", "recipient")
+                if (c.isNotBlank()) args.addProperty("contact_name", c)
+            }
+            if (!args.has("phone_number") || args.get("phone_number").asString.isBlank()) {
+                val n = extractString(args, "number", "digits", "phone", "cell", "mobile")
+                if (n.isNotBlank()) args.addProperty("phone_number", n)
+            }
+        }
+
+        // 7. Volume normalization:
+        if (normName == "set_volume") {
+            if (!args.has("level_percent")) {
+                val lvl = extractPercent(args, "level", "volume", "value", "percent", "target_volume")
+                args.addProperty("level_percent", lvl)
+            }
+        }
+
+        // 8. Brightness normalization:
+        if (normName == "set_brightness") {
+            if (!args.has("level_percent")) {
+                val lvl = extractPercent(args, "level", "brightness", "value", "percent", "target_brightness")
+                args.addProperty("level_percent", lvl)
+            }
+        }
+
+        return Pair(normName, args)
+    }
+
+    /**
+     * Resilient Boolean extractor supporting aliases and diverse string representations.
+     */
+    fun extractBoolean(args: JsonObject, defaultVal: Boolean = true, vararg keys: String): Boolean {
+        val checkKeys = if (keys.isNotEmpty()) keys.toList() else listOf("enable", "enabled", "state", "status", "on", "active", "value", "turn_on", "action")
+        for (k in checkKeys) {
+            val elem = args.get(k) ?: continue
+            if (elem.isJsonPrimitive) {
+                val prim = elem.asJsonPrimitive
+                if (prim.isBoolean) {
+                    return prim.asBoolean
+                }
+                if (prim.isString) {
+                    val str = prim.asString.trim().lowercase()
+                    if (str in listOf("true", "on", "enable", "enabled", "1", "chalu", "start", "activate", "yes", "open")) return true
+                    if (str in listOf("false", "off", "disable", "disabled", "0", "band", "stop", "deactivate", "no", "close")) return false
+                }
+                if (prim.isNumber) {
+                    return prim.asInt != 0
+                }
+            }
+        }
+        return defaultVal
+    }
+
+    /**
+     * Resilient String extractor checking multiple candidate parameter aliases.
+     */
+    fun extractString(args: JsonObject, vararg keys: String): String {
+        for (k in keys) {
+            val elem = args.get(k) ?: continue
+            if (elem.isJsonPrimitive && elem.asJsonPrimitive.isString) {
+                val s = elem.asString.trim()
+                if (s.isNotBlank()) return s
+            }
+        }
+        return ""
     }
 
     private fun extractPercent(args: JsonObject, vararg keys: String): Int {

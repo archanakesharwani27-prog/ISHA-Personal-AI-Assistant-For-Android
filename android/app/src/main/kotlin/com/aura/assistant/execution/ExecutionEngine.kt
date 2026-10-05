@@ -13,7 +13,9 @@ import com.aura.assistant.tools.ToolResult
 import com.aura.assistant.tools.ToolStatus
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -195,20 +197,22 @@ object ExecutionEngine {
         result: ToolResult,
         success: Boolean
     ) {
-        try {
-            AuraExperienceDatabase.getInstance(context).recordExecution(
-                ExperienceRecord(
-                    normalizedIntent = tool.name,
-                    userInput = tool.description,
-                    tool = tool.name,
-                    arguments = arguments.toString(),
-                    executionStatus = result.status.name,
-                    verificationStatus = if (result.evidence?.verified == true) "VERIFIED_SUCCESS" else "UNVERIFIED",
-                    failureReason = result.error?.message ?: result.message,
-                    latencyMs = result.durationMs
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                AuraExperienceDatabase.getInstance(context).recordExecution(
+                    ExperienceRecord(
+                        normalizedIntent = tool.name,
+                        userInput = tool.description,
+                        tool = tool.name,
+                        arguments = arguments.toString(),
+                        executionStatus = result.status.name,
+                        verificationStatus = if (result.evidence?.verified == true) "VERIFIED_SUCCESS" else "UNVERIFIED",
+                        failureReason = result.error?.message ?: result.message,
+                        latencyMs = result.durationMs
+                    )
                 )
-            )
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
     }
 
     /**

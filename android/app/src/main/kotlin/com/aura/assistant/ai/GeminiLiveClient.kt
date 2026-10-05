@@ -1120,23 +1120,31 @@ class GeminiLiveClient(private val context: Context) {
                 }
 
                 scope.launch {
-                    val responseArray = JsonArray()
-                    for (j in 0 until fnCalls.size()) {
+                    val calls = (0 until fnCalls.size()).map { j ->
                         val call = fnCalls.get(j).asJsonObject
                         val name = call.get("name").asString
                         val id = call.get("id").asString
                         val args = call.getAsJsonObject("args") ?: JsonObject()
-                        val result = com.aura.assistant.execution.ExecutionEngine.executeTool(context, name, args, scope)
-                        val fnResp = JsonObject().apply {
-                            addProperty("id", id)
-                            addProperty("name", name)
-                            val resp = JsonObject().apply {
-                                add("output", result)
-                            }
-                            add("response", resp)
-                        }
-                        responseArray.add(fnResp)
+                        Triple(id, name, args)
                     }
+
+                    val deferredList = calls.map { (id, name, args) ->
+                        async(Dispatchers.IO) {
+                            val result = com.aura.assistant.execution.ExecutionEngine.executeTool(context, name, args, scope)
+                            JsonObject().apply {
+                                addProperty("id", id)
+                                addProperty("name", name)
+                                val resp = JsonObject().apply {
+                                    add("output", result)
+                                }
+                                add("response", resp)
+                            }
+                        }
+                    }
+
+                    val responses = deferredList.awaitAll()
+                    val responseArray = JsonArray()
+                    responses.forEach { responseArray.add(it) }
 
                     val toolResponseObj = JsonObject().apply {
                         val toolResponse = JsonObject().apply {
@@ -1145,7 +1153,7 @@ class GeminiLiveClient(private val context: Context) {
                         add("toolResponse", toolResponse)
                     }
                     webSocket?.send(toolResponseObj.toString())
-                    Log.i(TAG, "Sent toolResponse to Gemini Live")
+                    Log.i(TAG, "Sent toolResponse to Gemini Live (${responses.size} tools executed in parallel)")
                 }
             }
         } catch (e: Exception) {

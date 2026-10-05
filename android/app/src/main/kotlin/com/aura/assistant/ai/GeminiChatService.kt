@@ -394,9 +394,18 @@ class GeminiChatService(private val context: Context) {
             add("contents", contents)
 
             // Include tool declarations so model has schema context
+            // Prune to executed tools schema (<1KB) for instant confirmation turn unless multi-step chained intent
+            val executedNames = executedTools.map { it.first }.toSet()
+            val hasChainedIntent = originalPrompt.contains(Regex("\\b(aur|then|uske baad|and|phir|also|bhejo|send|dono|teeno)\\b", RegexOption.IGNORE_CASE))
+            val declarations = if (hasChainedIntent) {
+                IshaToolRegistry.getGeminiToolDeclarations()
+            } else {
+                IshaToolRegistry.getSpecificToolDeclarations(executedNames)
+            }
+
             val tools = JsonArray().apply {
                 val toolHolder = JsonObject()
-                toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
+                toolHolder.add("function_declarations", declarations)
                 add(toolHolder)
             }
             add("tools", tools)
@@ -694,31 +703,33 @@ class GeminiChatService(private val context: Context) {
                     callback.onToolExecution(toolName = fnName, args = fnArgs.toString(), result = resultSummary)
                 }
 
-                // Verify and record to Experience Database
-                try {
-                    val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
-                    val record = com.aura.assistant.memory.ExperienceRecord(
-                        id = java.util.UUID.randomUUID().toString(),
-                        taskId = "turn_" + System.currentTimeMillis(),
-                        normalizedIntent = fnName,
-                        userInput = fnArgs.toString(),
-                        entities = fnArgs.toString(),
-                        deviceProfile = android.os.Build.MODEL,
-                        appPackage = context.packageName,
-                        screenContext = null,
-                        strategy = "sequential_gemini_call",
-                        tool = fnName,
-                        arguments = fnArgs.toString(),
-                        executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
-                        verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
-                        failureReason = if (!evidence.verified) evidence.observedState else null,
-                        recoveryAction = null,
-                        latencyMs = 0L,
-                        userFeedback = null,
-                        timestamp = System.currentTimeMillis()
-                    )
-                    AuraExperienceDatabase.getInstance(context).recordExecution(record)
-                } catch (_: Exception) {}
+                // Verify and record to Experience Database asynchronously in background
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
+                        val record = com.aura.assistant.memory.ExperienceRecord(
+                            id = java.util.UUID.randomUUID().toString(),
+                            taskId = "turn_" + System.currentTimeMillis(),
+                            normalizedIntent = fnName,
+                            userInput = fnArgs.toString(),
+                            entities = fnArgs.toString(),
+                            deviceProfile = android.os.Build.MODEL,
+                            appPackage = context.packageName,
+                            screenContext = null,
+                            strategy = "sequential_gemini_call",
+                            tool = fnName,
+                            arguments = fnArgs.toString(),
+                            executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
+                            verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
+                            failureReason = if (!evidence.verified) evidence.observedState else null,
+                            recoveryAction = null,
+                            latencyMs = 0L,
+                            userFeedback = null,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        AuraExperienceDatabase.getInstance(context).recordExecution(record)
+                    } catch (_: Exception) {}
+                }
 
                 results.add(Triple(fnName, fnArgs, toolResult))
             }
@@ -747,31 +758,33 @@ class GeminiChatService(private val context: Context) {
                         }
                     }
 
-                    // Verify and record to Experience Database
-                    try {
-                        val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
-                        val record = com.aura.assistant.memory.ExperienceRecord(
-                            id = java.util.UUID.randomUUID().toString(),
-                            taskId = "turn_" + System.currentTimeMillis(),
-                            normalizedIntent = fnName,
-                            userInput = fnArgs.toString(),
-                            entities = fnArgs.toString(),
-                            deviceProfile = android.os.Build.MODEL,
-                            appPackage = context.packageName,
-                            screenContext = null,
-                            strategy = "parallel_gemini_call",
-                            tool = fnName,
-                            arguments = fnArgs.toString(),
-                            executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
-                            verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
-                            failureReason = if (!evidence.verified) evidence.observedState else null,
-                            recoveryAction = null,
-                            latencyMs = 0L,
-                            userFeedback = null,
-                            timestamp = System.currentTimeMillis()
-                        )
-                        AuraExperienceDatabase.getInstance(context).recordExecution(record)
-                    } catch (_: Exception) {}
+                    // Verify and record to Experience Database asynchronously in background
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, fnName, fnArgs, toolResult)
+                            val record = com.aura.assistant.memory.ExperienceRecord(
+                                id = java.util.UUID.randomUUID().toString(),
+                                taskId = "turn_" + System.currentTimeMillis(),
+                                normalizedIntent = fnName,
+                                userInput = fnArgs.toString(),
+                                entities = fnArgs.toString(),
+                                deviceProfile = android.os.Build.MODEL,
+                                appPackage = context.packageName,
+                                screenContext = null,
+                                strategy = "parallel_gemini_call",
+                                tool = fnName,
+                                arguments = fnArgs.toString(),
+                                executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
+                                verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
+                                failureReason = if (!evidence.verified) evidence.observedState else null,
+                                recoveryAction = null,
+                                latencyMs = 0L,
+                                userFeedback = null,
+                                timestamp = System.currentTimeMillis()
+                            )
+                            AuraExperienceDatabase.getInstance(context).recordExecution(record)
+                        } catch (_: Exception) {}
+                    }
 
                     Triple(fnName, fnArgs, toolResult)
                 }

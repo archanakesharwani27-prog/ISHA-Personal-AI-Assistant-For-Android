@@ -236,7 +236,7 @@ object ExecutionVerifier {
     private fun verifyDnd(context: Context, args: JsonObject): VerificationEvidence {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             ?: return VerificationEvidence(verified = false)
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
+        val enable = com.aura.assistant.ai.IshaToolRegistry.extractBoolean(args, defaultVal = true)
         val currentFilter = nm.currentInterruptionFilter
         val isDndActive = currentFilter != NotificationManager.INTERRUPTION_FILTER_ALL
         val isMatch = isDndActive == enable
@@ -251,7 +251,7 @@ object ExecutionVerifier {
         val bm = context.getSystemService(android.bluetooth.BluetoothManager::class.java)
         val adapter = bm?.adapter
             ?: return VerificationEvidence(verified = false, method = "bluetooth_unsupported")
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
+        val enable = com.aura.assistant.ai.IshaToolRegistry.extractBoolean(args, defaultVal = true)
         val isEnabled = adapter.isEnabled
         return VerificationEvidence(
             verified = isEnabled == enable,
@@ -286,7 +286,7 @@ object ExecutionVerifier {
     }
 
     private fun verifyFlashlight(args: JsonObject): VerificationEvidence {
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = false)
+        val enable = com.aura.assistant.ai.IshaToolRegistry.extractBoolean(args, defaultVal = true)
         return VerificationEvidence(
             verified = true,
             observedState = if (enable) "Flashlight state changed to ON" else "Flashlight state changed to OFF",
@@ -297,7 +297,7 @@ object ExecutionVerifier {
     private fun verifyWifi(context: Context, args: JsonObject): VerificationEvidence {
         val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
             ?: return VerificationEvidence(verified = true, method = "wifi_manager_unavailable")
-        val enable = args.get("enable")?.asBoolean ?: return VerificationEvidence(verified = true)
+        val enable = com.aura.assistant.ai.IshaToolRegistry.extractBoolean(args, defaultVal = true)
         val isEnabled = wm.isWifiEnabled
         return VerificationEvidence(
             verified = isEnabled == enable,

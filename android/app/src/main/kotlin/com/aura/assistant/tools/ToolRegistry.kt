@@ -86,7 +86,8 @@ object ToolRegistry {
 
     fun getTool(name: String): AuraTool? {
         ensureInitialized()
-        return tools[name] ?: createDynamicTool(name)
+        val normalized = com.aura.assistant.ai.IshaToolRegistry.normalizeToolName(name)
+        return tools[normalized] ?: tools[name] ?: createDynamicTool(normalized)
     }
 
     fun getAllTools(): List<AuraTool> {
