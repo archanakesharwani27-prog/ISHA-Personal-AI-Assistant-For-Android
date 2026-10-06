@@ -650,14 +650,17 @@ class GeminiLiveClient(private val context: Context) {
                         // Process VAD for human speech classification and UI visualizer
                         val vadResult = vadDetector.process(shortBuf, readShorts)
 
-                        // ── 1. Acoustic Echo Gate & Fast Sub-100ms Barge-In ───────────
+                        // ── 1. Acoustic Echo Gate & Intentional User Barge-In ───────────
                         val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 250L)
                         if (isActivelyPlayingAudio) {
                             hasSpokenInTurn = false
                             consecutiveSilenceFrames = 0
 
-                            // Instant user speech barge-in detection (user speech over phone speaker)
-                            val isUserSpeechIntent = (vadResult.isSpeech && rms >= 0.08) || rms >= 0.16
+                            // User speech barge-in detection (user speech over phone speaker)
+                            // CRITICAL FIX: On physical devices (e.g. LAVA LEX402), phone speaker audio reflects into the mic at RMS ~0.09-0.13.
+                            // To prevent the assistant from interrupting HERSELF, intentional user speech must be clearly louder than speaker echo:
+                            // Require RMS >= 0.22 with speech classification, or RMS >= 0.30 for at least 4 consecutive frames (~160ms).
+                            val isUserSpeechIntent = (vadResult.isSpeech && rms >= 0.22) || rms >= 0.30
                             if (isUserSpeechIntent) {
                                 bargeInConsecutiveFrames++
                                 val frameCopy = ByteArray(readShorts * 2)
@@ -666,11 +669,11 @@ class GeminiLiveClient(private val context: Context) {
                                     frameCopy[j * 2] = (s.toInt() and 0xFF).toByte()
                                     frameCopy[j * 2 + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
                                 }
-                                if (preBargeInBuffer.size >= 2) preBargeInBuffer.removeFirst()
+                                if (preBargeInBuffer.size >= 3) preBargeInBuffer.removeFirst()
                                 preBargeInBuffer.addLast(frameCopy)
 
-                                if (bargeInConsecutiveFrames >= 2) { // 2 frames (~80ms) = instant speech cutoff!
-                                    Log.i(TAG, "Instant user barge-in detected (RMS=$rms, isSpeech=${vadResult.isSpeech}). Stopping playback immediately!")
+                                if (bargeInConsecutiveFrames >= 4) { // 4 frames (~160ms) guarantees intentional human speech over speaker
+                                    Log.i(TAG, "Confirmed intentional user barge-in (RMS=$rms, isSpeech=${vadResult.isSpeech}). Stopping assistant speech!")
                                     flushAudioPlayback()
                                     playbackEndTime = 0L
                                     isBargeInActive = true
@@ -700,7 +703,7 @@ class GeminiLiveClient(private val context: Context) {
                                         )
                                     }
 
-                                    // Immediately stream buffered speech frames to Gemini Live so first syllable is never lost!
+                                    // Stream buffered speech frames so first syllable is preserved
                                     while (preBargeInBuffer.isNotEmpty()) {
                                         val b = preBargeInBuffer.removeFirst()
                                         sendAudioChunk(b, b.size)
@@ -716,33 +719,29 @@ class GeminiLiveClient(private val context: Context) {
                             }
                         }
 
-                        // ── Hybrid VAD: Fast Turn Finalization (Bypasses server silence timeout) ──
+                        // ── Hybrid VAD: Natural Conversational Turn Finalization ──
                         val isUserSpeaking = vadResult.isSpeech || rms > 0.035
                         if (isUserSpeaking) {
                             hasSpokenInTurn = true
                             consecutiveSilenceFrames = 0
                         } else if (hasSpokenInTurn) {
                             consecutiveSilenceFrames++
-                            if (consecutiveSilenceFrames == 7) { // 7 * ~40ms = ~280ms fast silence detection (Sub-300ms end-of-speech finalization!)
+                            if (consecutiveSilenceFrames == 12) { // 12 frames (~480ms) = natural conversational pause (prevents cutting off user mid-thought)
                                 sendAudioStreamEnd()
                                 hasSpokenInTurn = false
                             }
                         }
 
-                        // ── 2. Adaptive Far-Field Audio Gain with Clean Silence Gating ──
-                        // When user stops speaking, immediately stream digital silence (zeroes)
-                        // so Google's server-side VAD detects silence in <200ms without waiting for 2s timeout.
-                        val isPostSpeechSilence = hasSpokenInTurn && consecutiveSilenceFrames >= 4
+                        // ── 2. Natural Conversational Audio Stream ──
                         val adaptiveGain = when {
-                            isPostSpeechSilence -> 0.0f
-                            rms < 0.005 -> 0.2f  // Silence floor - attenuate so server VAD detects silence immediately
-                            rms < 0.020 -> if (vadResult.isSpeech) 3.2f else 0.2f  // Soft speech boosted, ambient noise floor attenuated!
-                            rms < 0.050 -> 2.5f  // Normal conversational speech
-                            rms < 0.100 -> 1.8f  // Close / elevated speech
-                            else -> 1.2f         // Very loud / near mic
+                            rms < 0.005 -> 0.3f
+                            rms < 0.020 -> if (vadResult.isSpeech) 3.0f else 0.5f
+                            rms < 0.050 -> 2.2f
+                            rms < 0.100 -> 1.5f
+                            else -> 1.0f
                         }
                         for (i in 0 until readShorts) {
-                            val sample = if (isPostSpeechSilence) 0 else (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)
+                            val sample = (shortBuf[i] * adaptiveGain).toInt().coerceIn(-32768, 32767)
                             byteBuf[i * 2] = (sample and 0xFF).toByte()
                             byteBuf[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
                         }
