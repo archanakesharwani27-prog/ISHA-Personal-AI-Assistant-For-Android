@@ -719,25 +719,30 @@ class GeminiLiveClient(private val context: Context) {
                             }
                         }
 
-                        // ── Hybrid VAD: Natural Conversational Turn Finalization ──
-                        val isUserSpeaking = vadResult.isSpeech || rms > 0.035
+                        // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
+                        // Background TV/YouTube chatter in the room typically has RMS < 0.025.
+                        // Direct user speech near phone (0-80cm) produces RMS >= 0.028.
+                        val isUserSpeaking = (vadResult.isSpeech && rms >= 0.028) || rms >= 0.045
                         if (isUserSpeaking) {
                             hasSpokenInTurn = true
                             consecutiveSilenceFrames = 0
                         } else if (hasSpokenInTurn) {
                             consecutiveSilenceFrames++
-                            if (consecutiveSilenceFrames == 12) { // 12 frames (~480ms) = natural conversational pause (prevents cutting off user mid-thought)
+                            if (consecutiveSilenceFrames == 9) { // 9 frames (~360ms) = ultra-snappy turn finalization
                                 sendAudioStreamEnd()
                                 hasSpokenInTurn = false
                             }
                         }
 
-                        // ── 2. Natural Conversational Audio Stream ──
+                        // ── 2. Background TV & Noise Suppression Audio Stream ──
+                        // Distant audio (TV, fans, background room chatter) is attenuated so Google server VAD doesn't latch onto it.
+                        val isSilenceEnding = hasSpokenInTurn && consecutiveSilenceFrames >= 5
                         val adaptiveGain = when {
-                            rms < 0.005 -> 0.3f
-                            rms < 0.020 -> if (vadResult.isSpeech) 3.0f else 0.5f
-                            rms < 0.050 -> 2.2f
-                            rms < 0.100 -> 1.5f
+                            isSilenceEnding -> 0.05f // Silence gate: starve server VAD of ambient noise to trigger immediate response!
+                            rms < 0.015 -> 0.1f      // Ambient room floor / faint TV: aggressively suppressed
+                            rms < 0.028 -> 0.4f      // Distant chatter: attenuated
+                            rms < 0.060 -> 1.5f      // Natural near-field user voice: clear and boosted
+                            rms < 0.120 -> 1.2f      // Normal elevated speech
                             else -> 1.0f
                         }
                         for (i in 0 until readShorts) {

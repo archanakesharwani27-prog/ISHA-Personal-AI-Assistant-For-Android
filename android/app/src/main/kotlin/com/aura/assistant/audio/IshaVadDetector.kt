@@ -16,9 +16,9 @@ import kotlin.math.sqrt
  */
 class IshaVadDetector(
     private val sampleRate: Int = 16000,
-    private val minSpeechEnergyDb: Float = -62.0f,   // Far-field sensitivity (picks up natural speech at 30-70 cm)
-    private val speechMarginDb: Float = 2.5f,        // 2.5 dB above ambient room noise
-    private val hangoverFrames: Int = 15             // Keeps gate open for ~450ms after speech ends
+    private val minSpeechEnergyDb: Float = -48.0f,   // Near-field sensitivity: captures user near phone, rejects distant TV/room audio
+    private val speechMarginDb: Float = 3.5f,        // 3.5 dB above ambient room noise
+    private val hangoverFrames: Int = 8              // Keeps gate open for ~240ms (prevents TV latching while preserving word endings)
 ) {
     // Dynamic noise floor estimate (slow moving average)
     private var noiseFloorDb: Float = -62.0f
