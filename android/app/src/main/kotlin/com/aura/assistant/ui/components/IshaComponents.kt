@@ -661,30 +661,34 @@ private fun DrawerSessionRow(
 // ── Thinking Indicator & Streaming Cursor ─────────────────────────────────────
 @Composable
 fun IshaThinkingIndicator(modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "ThinkingAnim")
-
-    val textAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 1.0f,
+    val text = "Thinking..."
+    val infiniteTransition = rememberInfiniteTransition(label = "ThinkingWave")
+    val phase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = text.length.toFloat() + 2f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(durationMillis = 1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "ThinkingBlink"
+        label = "ThinkingPhase"
     )
 
     Row(
         modifier = modifier.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Thinking…",
-            style = AuraTypography.bodyLarge.copy(
-                color = ChatGptTextSecondary.copy(alpha = textAlpha),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium
+        text.forEachIndexed { index, char ->
+            val dist = kotlin.math.abs(phase - index.toFloat())
+            val alpha = (1.0f - (dist / 2.2f).coerceIn(0f, 1f)) * 0.75f + 0.25f
+            Text(
+                text = char.toString(),
+                style = AuraTypography.bodyLarge.copy(
+                    color = ChatGptTextSecondary.copy(alpha = alpha),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
+                )
             )
-        )
+        }
     }
 }
 

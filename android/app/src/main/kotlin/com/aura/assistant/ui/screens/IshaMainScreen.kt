@@ -103,10 +103,30 @@ fun IshaMainScreen(
 
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
 
-    // Auto-scroll on new messages or when keyboard opens
-    LaunchedEffect(chatMessages.size, chatMessages.lastOrNull()?.text?.length, imeBottom) {
-        if (chatMessages.isNotEmpty()) {
-            listState.animateScrollToItem(chatMessages.size - 1)
+    val groupedItems = remember(chatMessages) {
+        val result = mutableListOf<ChatUiItem>()
+        var currentTools = mutableListOf<com.aura.assistant.data.ChatMessage>()
+        for (msg in chatMessages) {
+            if (msg.role == com.aura.assistant.data.MessageRole.TOOL) {
+                currentTools.add(msg)
+            } else {
+                if (currentTools.isNotEmpty()) {
+                    result.add(ChatUiItem.ToolGroup(currentTools.toList()))
+                    currentTools = mutableListOf()
+                }
+                result.add(ChatUiItem.SingleMessage(msg))
+            }
+        }
+        if (currentTools.isNotEmpty()) {
+            result.add(ChatUiItem.ToolGroup(currentTools.toList()))
+        }
+        result
+    }
+
+    // Auto-scroll on new messages or when keyboard opens - fast, non-blocking scrollToItem
+    LaunchedEffect(groupedItems.size, imeBottom) {
+        if (groupedItems.isNotEmpty()) {
+            listState.scrollToItem(groupedItems.size - 1)
         }
     }
 
@@ -192,25 +212,7 @@ fun IshaMainScreen(
                             onPromptClick = { prompt -> viewModel.onSendTextMessage(prompt) }
                         )
                     } else {
-                        val groupedItems = remember(chatMessages) {
-                            val result = mutableListOf<ChatUiItem>()
-                            var currentTools = mutableListOf<com.aura.assistant.data.ChatMessage>()
-                            for (msg in chatMessages) {
-                                if (msg.role == com.aura.assistant.data.MessageRole.TOOL) {
-                                    currentTools.add(msg)
-                                } else {
-                                    if (currentTools.isNotEmpty()) {
-                                        result.add(ChatUiItem.ToolGroup(currentTools.toList()))
-                                        currentTools = mutableListOf()
-                                    }
-                                    result.add(ChatUiItem.SingleMessage(msg))
-                                }
-                            }
-                            if (currentTools.isNotEmpty()) {
-                                result.add(ChatUiItem.ToolGroup(currentTools.toList()))
-                            }
-                            result
-                        }
+
 
                         LazyColumn(
                             state = listState,
