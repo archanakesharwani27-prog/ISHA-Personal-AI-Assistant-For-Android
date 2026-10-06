@@ -275,6 +275,7 @@ class GeminiLiveClient(private val context: Context) {
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setFlags(AudioAttributes.FLAG_LOW_LATENCY)
                         .build()
                 )
                 .setAudioFormat(
@@ -284,8 +285,9 @@ class GeminiLiveClient(private val context: Context) {
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build()
                 )
-                .setBufferSizeInBytes(maxOf(audioBufferSize * 2, 8192))
+                .setBufferSizeInBytes(maxOf(audioBufferSize * 2, 4096))
                 .setTransferMode(AudioTrack.MODE_STREAM)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                 .build()
 
             audioTrack?.play()
@@ -721,7 +723,7 @@ class GeminiLiveClient(private val context: Context) {
                             consecutiveSilenceFrames = 0
                         } else if (hasSpokenInTurn) {
                             consecutiveSilenceFrames++
-                            if (consecutiveSilenceFrames == 12) { // 12 * ~40ms = ~480ms silence after speech
+                            if (consecutiveSilenceFrames == 7) { // 7 * ~40ms = ~280ms fast silence detection (Sub-300ms end-of-speech finalization!)
                                 sendAudioStreamEnd()
                                 hasSpokenInTurn = false
                             }
@@ -729,8 +731,8 @@ class GeminiLiveClient(private val context: Context) {
 
                         // ── 2. Adaptive Far-Field Audio Gain with Clean Silence Gating ──
                         // When user stops speaking, immediately stream digital silence (zeroes)
-                        // so Google's server-side VAD detects silence in <300ms without waiting for 2s timeout.
-                        val isPostSpeechSilence = hasSpokenInTurn && consecutiveSilenceFrames >= 6
+                        // so Google's server-side VAD detects silence in <200ms without waiting for 2s timeout.
+                        val isPostSpeechSilence = hasSpokenInTurn && consecutiveSilenceFrames >= 4
                         val adaptiveGain = when {
                             isPostSpeechSilence -> 0.0f
                             rms < 0.005 -> 0.2f  // Silence floor - attenuate so server VAD detects silence immediately

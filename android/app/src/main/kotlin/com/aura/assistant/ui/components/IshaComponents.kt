@@ -905,6 +905,145 @@ fun ToolExecutionStepPill(
     }
 }
 
+// ── 2c. ChatGPT-style Collapsible Tool Group Accordion ───────────────────────
+@Composable
+fun CollapsibleToolGroup(
+    tools: List<ChatMessage>,
+    textSize: String = "Default",
+    modifier: Modifier = Modifier
+) {
+    if (tools.isEmpty()) return
+    val textScale = when (textSize) {
+        "Small" -> 0.85f
+        "Large" -> 1.25f
+        else -> 1.0f
+    }
+
+    if (tools.size == 1) {
+        ToolExecutionStepPill(message = tools.first(), textScale = textScale, modifier = modifier)
+        return
+    }
+
+    val isAnyRunning = tools.any { it.isStreaming }
+    val errorCount = tools.count { msg ->
+        val result = (msg.toolResult ?: msg.text).trim()
+        !msg.isStreaming && (
+            result.contains("error", ignoreCase = true) ||
+            result.contains("fail", ignoreCase = true) ||
+            result.contains("denied", ignoreCase = true) ||
+            result.contains("unavailable", ignoreCase = true)
+        )
+    }
+    val successCount = tools.size - errorCount
+
+    var manuallyExpanded by remember { mutableStateOf<Boolean?>(null) }
+    val isExpanded = manuallyExpanded ?: isAnyRunning
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Surface(
+            color = Color(0xFF16161A),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF282830)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { manuallyExpanded = !isExpanded }
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(if (isAnyRunning) Color(0xFF2E2412) else Color(0xFF132F20)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isAnyRunning) Icons.Outlined.Build else Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = if (isAnyRunning) Color(0xFFF6AD55) else ChatGptAccentGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        val firstTime = tools.minOfOrNull { it.timestamp } ?: 0L
+                        val lastTime = tools.maxOfOrNull { it.timestamp } ?: 0L
+                        val elapsedSec = maxOf(1L, (lastTime - firstTime) / 1000L)
+                        val durationStr = if (elapsedSec < 60) "${elapsedSec}s" else "${elapsedSec / 60}m ${elapsedSec % 60}s"
+
+                        Column {
+                            val headerTitle = if (isAnyRunning) {
+                                val currentTool = tools.lastOrNull { it.isStreaming }?.toolName?.replace('_', ' ') ?: "actions"
+                                "Working on $currentTool..."
+                            } else {
+                                "Worked for $durationStr"
+                            }
+                            Text(
+                                text = headerTitle,
+                                style = AuraTypography.labelMedium.copy(
+                                    color = ChatGptTextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = (13.5 * textScale).sp
+                                )
+                            )
+                            val statusSubtitle = if (isAnyRunning) {
+                                "${tools.count { !it.isStreaming }}/${tools.size} completed"
+                            } else if (errorCount == 0) {
+                                "All ${tools.size} actions completed"
+                            } else {
+                                "$successCount passed, $errorCount issues"
+                            }
+                            Text(
+                                text = statusSubtitle,
+                                style = AuraTypography.bodySmall.copy(
+                                    color = if (errorCount > 0 && !isAnyRunning) Color(0xFFEF4444) else ChatGptTextSecondary,
+                                    fontSize = (11 * textScale).sp
+                                )
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = ChatGptTextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = isExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        tools.forEach { toolMsg ->
+                            ToolExecutionStepPill(
+                                message = toolMsg,
+                                textScale = textScale * 0.95f
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── 3. ChatGPT Message Bubble / Markdown Item ────────────────────────────────
 @Composable
 fun ChatMessageItem(

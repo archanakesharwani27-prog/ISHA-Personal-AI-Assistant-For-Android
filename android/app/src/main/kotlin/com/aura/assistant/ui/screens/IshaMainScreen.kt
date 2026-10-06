@@ -27,6 +27,11 @@ import com.aura.assistant.ui.theme.ChatGptBackground
 import com.aura.assistant.auth.UserProfile
 import kotlinx.coroutines.launch
 
+sealed class ChatUiItem(val key: String) {
+    data class SingleMessage(val message: com.aura.assistant.data.ChatMessage) : ChatUiItem(message.id)
+    data class ToolGroup(val tools: List<com.aura.assistant.data.ChatMessage>) : ChatUiItem("group_" + (tools.firstOrNull()?.id ?: java.util.UUID.randomUUID().toString()))
+}
+
 /**
  * Main Screen for ISHA Assistant.
  * Pure black clean aesthetic.
@@ -187,6 +192,26 @@ fun IshaMainScreen(
                             onPromptClick = { prompt -> viewModel.onSendTextMessage(prompt) }
                         )
                     } else {
+                        val groupedItems = remember(chatMessages) {
+                            val result = mutableListOf<ChatUiItem>()
+                            var currentTools = mutableListOf<com.aura.assistant.data.ChatMessage>()
+                            for (msg in chatMessages) {
+                                if (msg.role == com.aura.assistant.data.MessageRole.TOOL) {
+                                    currentTools.add(msg)
+                                } else {
+                                    if (currentTools.isNotEmpty()) {
+                                        result.add(ChatUiItem.ToolGroup(currentTools.toList()))
+                                        currentTools = mutableListOf()
+                                    }
+                                    result.add(ChatUiItem.SingleMessage(msg))
+                                }
+                            }
+                            if (currentTools.isNotEmpty()) {
+                                result.add(ChatUiItem.ToolGroup(currentTools.toList()))
+                            }
+                            result
+                        }
+
                         LazyColumn(
                             state = listState,
                             modifier = Modifier
@@ -194,14 +219,20 @@ fun IshaMainScreen(
                                 .padding(horizontal = 14.dp),
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
-                            items(chatMessages, key = { it.id }) { message ->
-                                ChatMessageItem(
-                                    message = message,
-                                    onSpeak = { text -> viewModel.speakText(text) },
-                                    onRegenerate = { viewModel.regenerateLastMessage() },
-                                    onEditPrompt = { prompt -> editingPrompt = prompt },
-                                    textSize = textSize
-                                )
+                            items(groupedItems, key = { it.key }) { item ->
+                                when (item) {
+                                    is ChatUiItem.SingleMessage -> ChatMessageItem(
+                                        message = item.message,
+                                        onSpeak = { text -> viewModel.speakText(text) },
+                                        onRegenerate = { viewModel.regenerateLastMessage() },
+                                        onEditPrompt = { prompt -> editingPrompt = prompt },
+                                        textSize = textSize
+                                    )
+                                    is ChatUiItem.ToolGroup -> CollapsibleToolGroup(
+                                        tools = item.tools,
+                                        textSize = textSize
+                                    )
+                                }
                             }
                         }
                     }
