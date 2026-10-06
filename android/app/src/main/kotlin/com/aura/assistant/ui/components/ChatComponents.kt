@@ -80,28 +80,6 @@ fun ChatMessageBubble(
             .padding(vertical = 5.dp),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        if (!isUser) {
-            // AURA Avatar Pill
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(AuraNeonCyan, AuraCyberPurple)
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "I",
-                    color = Color.Black,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 13.sp
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-        }
 
         Surface(
             color = if (isUser) AuraCyberPurple.copy(alpha = 0.25f) else AuraSurfaceCard,

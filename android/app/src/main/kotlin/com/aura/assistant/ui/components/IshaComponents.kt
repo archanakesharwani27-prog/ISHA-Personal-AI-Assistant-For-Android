@@ -663,71 +663,28 @@ private fun DrawerSessionRow(
 fun IshaThinkingIndicator(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "ThinkingAnim")
 
-    val dot1Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f, targetValue = 1.0f,
+    val textAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
-        ), label = "Dot1"
-    )
-    val dot2Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f, targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = 200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "Dot2"
-    )
-    val dot3Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f, targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = 400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "Dot3"
+        ),
+        label = "ThinkingBlink"
     )
 
     Row(
         modifier = modifier.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Surface(
-            color = ChatGptCard,
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text = "Thinking",
-                    style = AuraTypography.bodyMedium.copy(
-                        color = ChatGptAccentGreen,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-                Box(
-                    modifier = Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(ChatGptAccentGreen.copy(alpha = dot1Alpha))
-                )
-                Box(
-                    modifier = Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(ChatGptAccentGreen.copy(alpha = dot2Alpha))
-                )
-                Box(
-                    modifier = Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(ChatGptAccentGreen.copy(alpha = dot3Alpha))
-                )
-            }
-        }
+        Text(
+            text = "Thinking…",
+            style = AuraTypography.bodyLarge.copy(
+                color = ChatGptTextSecondary.copy(alpha = textAlpha),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium
+            )
+        )
     }
 }
 
@@ -1140,92 +1097,67 @@ fun ChatMessageItem(
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Subtle AURA icon
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(ChatGptAccentGreen),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "I",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
+            if (message.isStreaming && message.text.isBlank()) {
+                ChatGPTThinkingIndicator()
+            } else {
+                SelectionContainer {
+                    RenderMarkdownText(text = message.text, textScale = textScale)
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                if (message.isStreaming) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    StreamingCursor()
+                }
+            }
 
-                Column(modifier = Modifier.weight(1f)) {
-                    if (message.isStreaming && message.text.isBlank()) {
-                        ChatGPTThinkingIndicator()
-                    } else {
-                        SelectionContainer {
-                            RenderMarkdownText(text = message.text, textScale = textScale)
-                        }
-
-                        if (message.isStreaming) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            StreamingCursor()
-                        }
+            // Action Buttons Row (Copy, Read Aloud, Regenerate)
+            if (!message.isStreaming && message.text.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Copy button
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("ISHA Message", message.text))
+                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = ChatGptTextMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
 
-                    // Action Buttons Row (Copy, Read Aloud, Regenerate)
-                    if (!message.isStreaming && message.text.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Copy button
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("ISHA Message", message.text))
-                                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.ContentCopy,
-                                    contentDescription = "Copy",
-                                    tint = ChatGptTextMuted,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                    // Read Aloud (TTS)
+                    IconButton(
+                        onClick = { onSpeak(message.text) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.VolumeUp,
+                            contentDescription = "Read Aloud",
+                            tint = ChatGptTextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
 
-                            // Read Aloud (TTS)
-                            IconButton(
-                                onClick = { onSpeak(message.text) },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.VolumeUp,
-                                    contentDescription = "Read Aloud",
-                                    tint = ChatGptTextMuted,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
-                            // Regenerate
-                            IconButton(
-                                onClick = onRegenerate,
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Refresh,
-                                    contentDescription = "Regenerate",
-                                    tint = ChatGptTextMuted,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
+                    // Regenerate
+                    IconButton(
+                        onClick = onRegenerate,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Refresh,
+                            contentDescription = "Regenerate",
+                            tint = ChatGptTextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -1395,22 +1327,7 @@ fun IshaEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(CircleShape)
-                .background(ChatGptAccentGreen),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "I",
-                color = Color.White,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 32.sp
-            )
-        }
 
-        Spacer(modifier = Modifier.height(18.dp))
 
         Text(
             text = "What can I help with today?",
