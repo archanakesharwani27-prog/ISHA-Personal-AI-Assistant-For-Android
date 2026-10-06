@@ -504,11 +504,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         sensorManager?.unregisterListener(this)
         AuraDynamicIsland.isAppInForeground = false
         super.onPause()
-        try {
-            if (Settings.canDrawOverlays(this) && (viewModel.isVoiceModeActive.value || viewModel.isLiveScreenSharing.value)) {
-                AuraDynamicIsland.show(this, if (viewModel.isLiveScreenSharing.value) "screen_share" else "voice_mode")
-            }
-        } catch (_: Exception) {}
+        if (!isFinishing) {
+            try {
+                if (Settings.canDrawOverlays(this) && (viewModel.isVoiceModeActive.value || viewModel.isLiveScreenSharing.value)) {
+                    AuraDynamicIsland.show(this, if (viewModel.isLiveScreenSharing.value) "screen_share" else "voice_mode")
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isFinishing) {
+            try { AuraDynamicIsland.hide() } catch (_: Exception) {}
+            try { viewModel.stopVoiceMode() } catch (_: Exception) {}
+        }
     }
 
     override fun onDestroy() {
@@ -521,6 +531,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         try { unregisterReceiver(shakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wakeToggleReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(screenShareStopReceiver) } catch (_: Exception) {}
+        try { AuraDynamicIsland.hide() } catch (_: Exception) {}
+        try { viewModel.stopVoiceMode() } catch (_: Exception) {}
         super.onDestroy()
     }
 

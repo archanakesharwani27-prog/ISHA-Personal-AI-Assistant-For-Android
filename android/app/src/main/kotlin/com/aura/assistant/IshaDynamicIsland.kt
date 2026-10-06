@@ -98,21 +98,14 @@ object IshaDynamicIsland {
 
     /** Real-time live state update from Gemini Live (Listening, Thinking, Speaking) */
     fun updateLiveState(ctx: Context? = null, state: com.aura.assistant.ai.AuraLiveState, amplitude: Float = 0f) {
+        if (state == com.aura.assistant.ai.AuraLiveState.IDLE || state == com.aura.assistant.ai.AuraLiveState.ERROR) {
+            handler.post { _hide() }
+            return
+        }
+        if (isAppInForeground || overlayView == null) return
+
         handler.post {
-            if (isAppInForeground) return@post
-            val targetCtx = ctx ?: overlayView?.context
-            // If Aura is engaged in background and island is not visible, spawn it immediately
-            if (overlayView == null && targetCtx != null && state in listOf(
-                    com.aura.assistant.ai.AuraLiveState.LISTENING,
-                    com.aura.assistant.ai.AuraLiveState.THINKING,
-                    com.aura.assistant.ai.AuraLiveState.SPEAKING,
-                    com.aura.assistant.ai.AuraLiveState.CONNECTED
-                )) {
-                if (android.provider.Settings.canDrawOverlays(targetCtx)) {
-                    _show(targetCtx, "voice_mode")
-                }
-            }
-            if (overlayView == null) return@post
+            if (isAppInForeground || overlayView == null) return@post
 
             when (state) {
                 com.aura.assistant.ai.AuraLiveState.LISTENING -> {

@@ -251,18 +251,27 @@ class GeminiLiveClient(private val context: Context) {
         scope.launch {
             _liveState.collect { state ->
                 try {
-                    com.aura.assistant.AuraDynamicIsland.updateLiveState(context, state, _amplitudeFlow.value)
+                    if (state == AuraLiveState.IDLE || state == AuraLiveState.ERROR) {
+                        com.aura.assistant.AuraDynamicIsland.hide()
+                    } else if (!com.aura.assistant.IshaDynamicIsland.isAppInForeground) {
+                        com.aura.assistant.AuraDynamicIsland.updateLiveState(context, state, _amplitudeFlow.value)
+                    }
                 } catch (_: Exception) {}
             }
         }
         scope.launch {
+            var lastUpdateMs = 0L
             _amplitudeFlow.collect { amp ->
-                try {
-                    val st = _liveState.value
-                    if (st == AuraLiveState.LISTENING || st == AuraLiveState.SPEAKING) {
-                        com.aura.assistant.AuraDynamicIsland.updateLiveState(context, st, amp)
-                    }
-                } catch (_: Exception) {}
+                val now = System.currentTimeMillis()
+                if (now - lastUpdateMs >= 120L) { // Throttle to 8fps max — prevents flooding MainLooper!
+                    lastUpdateMs = now
+                    try {
+                        val st = _liveState.value
+                        if (!com.aura.assistant.IshaDynamicIsland.isAppInForeground && (st == AuraLiveState.LISTENING || st == AuraLiveState.SPEAKING)) {
+                            com.aura.assistant.AuraDynamicIsland.updateLiveState(context, st, amp)
+                        }
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
@@ -720,9 +729,7 @@ class GeminiLiveClient(private val context: Context) {
                         }
 
                         // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
-                        // Background TV/YouTube chatter in the room typically has RMS < 0.025.
-                        // Direct user speech near phone (0-80cm) produces RMS >= 0.028.
-                        val isUserSpeaking = (vadResult.isSpeech && rms >= 0.028) || rms >= 0.045
+                        val isUserSpeaking = (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
                         if (isUserSpeaking) {
                             hasSpokenInTurn = true
                             consecutiveSilenceFrames = 0
@@ -735,14 +742,12 @@ class GeminiLiveClient(private val context: Context) {
                         }
 
                         // ── 2. Background TV & Noise Suppression Audio Stream ──
-                        // Distant audio (TV, fans, background room chatter) is attenuated so Google server VAD doesn't latch onto it.
-                        val isSilenceEnding = hasSpokenInTurn && consecutiveSilenceFrames >= 5
+                        val isSilenceEnding = hasSpokenInTurn && consecutiveSilenceFrames >= 4
                         val adaptiveGain = when {
                             isSilenceEnding -> 0.05f // Silence gate: starve server VAD of ambient noise to trigger immediate response!
-                            rms < 0.015 -> 0.1f      // Ambient room floor / faint TV: aggressively suppressed
-                            rms < 0.028 -> 0.4f      // Distant chatter: attenuated
+                            rms < 0.008 -> 0.2f      // Ambient room floor
+                            rms < 0.016 -> 0.7f      // Faint background TV/music attenuated
                             rms < 0.060 -> 1.5f      // Natural near-field user voice: clear and boosted
-                            rms < 0.120 -> 1.2f      // Normal elevated speech
                             else -> 1.0f
                         }
                         for (i in 0 until readShorts) {
