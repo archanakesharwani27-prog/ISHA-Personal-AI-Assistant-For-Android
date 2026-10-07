@@ -593,14 +593,39 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             }
         }
 
-        // If user asks about the screen and hasn't manually attached an image, inject active screen context if accessibility is available
-        if (attached == null && (lowerPrompt.contains("screen") || lowerPrompt.contains("ye kya chal raha") || lowerPrompt.contains("dekh kar") || lowerPrompt.contains("dekh kr"))) {
+        // If user asks about the screen and hasn't manually attached an image, inject active screen context & visual capture (<50ms)
+        val isScreenRelated = attached == null && (
+            lowerPrompt.contains("screen") ||
+            lowerPrompt.contains("ye kya chal raha") ||
+            lowerPrompt.contains("dekh kar") ||
+            lowerPrompt.contains("dekh kr") ||
+            lowerPrompt.contains("ye page") ||
+            lowerPrompt.contains("page padho") ||
+            lowerPrompt.contains("padh kar") ||
+            lowerPrompt.contains("padh kr") ||
+            lowerPrompt.contains("kya likha") ||
+            lowerPrompt.contains("summarize") ||
+            lowerPrompt.contains("read this") ||
+            lowerPrompt.contains("batao isme") ||
+            lowerPrompt.contains("kiski post") ||
+            lowerPrompt.contains("kisne bheja")
+        )
+        var autoScreenCaptureBytes: ByteArray? = null
+        if (isScreenRelated) {
             val a11y = com.aura.assistant.IshaAccessibilityService.instance
             if (a11y != null) {
                 val screenSummary = a11y.getScreenTextHierarchy()
                 if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
                     promptToSend = "$promptToSend\n\n[Active Screen Context]:\n$screenSummary"
                 }
+                val latch = java.util.concurrent.CountDownLatch(1)
+                a11y.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes ->
+                    autoScreenCaptureBytes = bytes
+                    latch.countDown()
+                }
+                try {
+                    latch.await(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+                } catch (_: Exception) {}
             }
         }
 
@@ -651,7 +676,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         chatService.sendChatStream(
             history = previousHistory,
             newPrompt = promptToSend,
-            imageBytes = attached?.bytes,
+            imageBytes = attached?.bytes ?: autoScreenCaptureBytes,
             callback = object : ChatStreamCallback {
                 override fun onToken(chunk: String) {
                     viewModelScope.launch(Dispatchers.Main) {
@@ -875,23 +900,29 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
         screenShareJob?.cancel()
         screenShareJob = viewModelScope.launch(Dispatchers.IO) {
-            // Initial briefing to Gemini Live
-            liveClient.sendTextMessage("Boss has started live screen sharing. You are now seeing their device screen in real-time. Greet Boss briefly, tell them what you see on screen, and let them know you are watching and ready to help.")
-
+            var isFirstFrame = true
             while (isActive && _isLiveScreenSharing.value) {
                 val a11y = com.aura.assistant.IshaAccessibilityService.instance
                 if (a11y != null) {
                     val frameDeferred = CompletableDeferred<ByteArray?>()
-                    a11y.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes: ByteArray? ->
+                    a11y.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes: ByteArray? ->
                         frameDeferred.complete(bytes)
                     }
-                    val bytes = withTimeoutOrNull(2500L) { frameDeferred.await() }
+                    val bytes = withTimeoutOrNull(1800L) { frameDeferred.await() }
                     if (bytes != null && bytes.isNotEmpty() && _isLiveScreenSharing.value) {
-                        // Route through ScreenFrameSampler: drops identical frames, throttles to ≤2fps
-                        liveClient.sendScreenJpeg(bytes)
+                        // Ultra-fast 640px JPEG (~25KB) stream matching official Google Gemini Live
+                        liveClient.sendScreenJpeg(bytes, forceSend = isFirstFrame)
+                        if (isFirstFrame) {
+                            isFirstFrame = false
+                            val quickText = a11y.getScreenTextHierarchy().take(1200)
+                            liveClient.sendTextMessage(
+                                "Boss has started live screen sharing. You are now seeing their device screen in real-time. " +
+                                "Active screen content: $quickText. Greet Boss briefly, tell them what you see on screen, and let them know you are watching and ready to help."
+                            )
+                        }
                     }
                 }
-                delay(1600L) // Continuous live stream at ~1.6s interval matching Gemini Live
+                delay(900L) // Continuous live stream at ~1 FPS matching Gemini Live
             }
         }
     }

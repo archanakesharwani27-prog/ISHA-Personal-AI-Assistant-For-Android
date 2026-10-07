@@ -40,6 +40,9 @@ open class IshaAccessibilityService : AccessibilityService() {
         var instance: IshaAccessibilityService? = null
 
         private const val TAG = "IshaA11y"
+        private val screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "IshaScreenCaptureWorker").apply { priority = Thread.NORM_PRIORITY }
+        }
 
         const val ACTION_PLAN_DONE = "com.aura.A11Y_PLAN_DONE"
         const val EXTRA_PLAN_TAG   = "planTag"
@@ -1496,12 +1499,12 @@ open class IshaAccessibilityService : AccessibilityService() {
         callback(null)
     }
 
-    fun takeOptimizedScreenCapture(maxDim: Int = 1024, quality: Int = 75, callback: (ByteArray?) -> Unit) {
+    fun takeOptimizedScreenCapture(maxDim: Int = 640, quality: Int = 60, callback: (ByteArray?) -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 takeScreenshot(
                     Display.DEFAULT_DISPLAY,
-                    applicationContext.mainExecutor,
+                    screenshotExecutor,
                     object : TakeScreenshotCallback {
                         override fun onSuccess(screenshotResult: ScreenshotResult) {
                             val buffer = screenshotResult.hardwareBuffer

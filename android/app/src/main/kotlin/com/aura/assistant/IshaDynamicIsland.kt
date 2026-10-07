@@ -579,11 +579,16 @@ object IshaDynamicIsland {
                 updateBackgroundColor("Thinking")
                 waveView?.setThinking(true)
 
-                a11y?.takeOptimizedScreenCapture(maxDim = 1024, quality = 75) { bytes ->
+                a11y?.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes ->
                     handler.post {
                         if (bytes != null && bytes.isNotEmpty()) {
+                            val screenHierarchy = a11y.getScreenTextHierarchy().take(1200)
                             val chatService = GeminiChatService(ctx)
-                            val prompt = if (command.length < 15) "Boss ne kaha hai screen dekho aur batao kya dikh raha hai. Screen ko analyze karke short me batao." else command
+                            val prompt = if (command.length < 15) {
+                                "Boss ne kaha hai screen dekho aur batao kya dikh raha hai. Screen text:\n$screenHierarchy\nScreen ko analyze karke short crisp me batao."
+                            } else {
+                                "$command\n\n[Active Screen Context]:\n$screenHierarchy"
+                            }
                             chatService.sendChatStream(
                                 history = emptyList(),
                                 newPrompt = prompt,
