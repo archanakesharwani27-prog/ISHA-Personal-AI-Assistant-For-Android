@@ -201,6 +201,16 @@ object IshaCloudSyncBridge {
         val userId = user.uid
         if (userId.isBlank() || user.provider == "GUEST" || userId.startsWith("guest") || !user.isLoggedIn) return
 
+        val prefs = context.getSharedPreferences("isha_sync_prefs", Context.MODE_PRIVATE)
+        val lastSyncKey = "last_full_sessions_sync_" + IshaChatRepository.sanitizeUserId(userId)
+        val lastSyncTime = prefs.getLong(lastSyncKey, 0L)
+        // If full bulk sync ran in the last 12 hours, skip full scan.
+        // Active chats are continuously synced in real-time as the user sends prompts.
+        if (System.currentTimeMillis() - lastSyncTime < 12 * 3600 * 1000L) {
+            Log.d(TAG, "Skipping full sessions bulk sync (recently synced)")
+            return
+        }
+
         scope.launch {
             try {
                 val sanitizedExpected = IshaChatRepository.sanitizeUserId(userId)
@@ -209,13 +219,15 @@ object IshaCloudSyncBridge {
                     return@launch
                 }
                 val allSessions = repo.getAllSessions()
-                Log.i(TAG, "Syncing ${allSessions.size} local sessions to cloud for user $userId")
+                Log.i(TAG, "Pacing background sync of ${allSessions.size} local sessions to cloud for user $userId")
                 for (sess in allSessions) {
                     val msgs = repo.getMessages(sess.id)
                     if (msgs.isNotEmpty()) {
                         syncSessionToCloud(context, sess, msgs)
+                        kotlinx.coroutines.delay(60L) // Pace writes to prevent Firestore burst rate limiting
                     }
                 }
+                prefs.edit().putLong(lastSyncKey, System.currentTimeMillis()).apply()
             } catch (e: Exception) {
                 Log.w(TAG, "Error in syncAllLocalSessionsToCloud", e)
             }
@@ -263,6 +275,8 @@ object IshaCloudSyncBridge {
                     if (snapshot != null && !snapshot.isEmpty) {
                         scope.launch {
                             var hasUpdates = false
+                            val localSessionsMap = repo.getAllSessions().associateBy { it.id }.toMutableMap()
+
                             for (doc in snapshot.documents) {
                                 try {
                                     val id = doc.getString("id") ?: doc.id
@@ -308,12 +322,13 @@ object IshaCloudSyncBridge {
                                     )
 
                                     if (repo.getCurrentUserId() == expectedSanitized) {
+                                        val localSession = localSessionsMap[id]
                                         val localMsgs = repo.getMessages(id)
-                                        val localSession = repo.getAllSessions().find { it.id == id }
                                         val isNewer = updatedAt > (localSession?.updatedAt ?: 0L)
                                         val hasNewMsgs = chatMessages.size > localMsgs.size
                                         if (hasNewMsgs || (isNewer && chatMessages.size >= localMsgs.size && chatMessages != localMsgs)) {
                                             repo.upsertSessionAndMessages(session, chatMessages)
+                                            localSessionsMap[id] = session
                                             hasUpdates = true
                                         }
                                     }

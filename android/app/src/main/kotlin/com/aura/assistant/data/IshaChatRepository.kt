@@ -52,6 +52,7 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
 
     private val gson = Gson()
     @Volatile private var currentUserId: String = sanitizeUserId(initialUserId)
+    private var cachedSessions: MutableList<ChatSession>? = null
 
     private fun getUserDir(): File {
         val dir = File(context.filesDir, "$CHATS_DIR/user_$currentUserId")
@@ -69,6 +70,7 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
         if (clean != currentUserId) {
             Log.i(TAG, "Switching chat partition strictly: $currentUserId -> $clean")
             currentUserId = clean
+            cachedSessions = null
             val dir = getUserDir()
             if (!dir.exists()) {
                 dir.mkdirs()
@@ -99,6 +101,10 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
 
     @Synchronized
     fun getAllSessions(): MutableList<ChatSession> {
+        val cached = cachedSessions
+        if (cached != null) {
+            return cached.toMutableList()
+        }
         val sessionsFile = getSessionsFile()
         return try {
             if (!sessionsFile.exists()) {
@@ -117,6 +123,7 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
                     newList
                 } else {
                     list.sortByDescending { it.updatedAt }
+                    cachedSessions = list.toMutableList()
                     list
                 }
             }
@@ -174,8 +181,9 @@ class IshaChatRepository(private val context: Context, initialUserId: String = "
     }
 
     @Synchronized
-    private fun saveSessions(sessions: List<ChatSession>) {
+    fun saveSessions(sessions: List<ChatSession>) {
         try {
+            cachedSessions = sessions.toMutableList()
             getSessionsFile().writeText(gson.toJson(sessions))
         } catch (e: Exception) {
             Log.e(TAG, "Error saving sessions", e)

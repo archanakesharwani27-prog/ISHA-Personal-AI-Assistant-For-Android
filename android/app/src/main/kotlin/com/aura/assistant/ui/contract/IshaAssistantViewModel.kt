@@ -182,7 +182,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
         viewModelScope.launch {
             liveClient.amplitudeFlow.collect { amp ->
-                if (_isVoiceModeActive.value) {
+                if (!IshaDynamicIsland.isAppInForeground && _isVoiceModeActive.value) {
                     IshaDynamicIsland.updateLiveState(application, liveClient.liveState.value, amp)
                 }
             }
@@ -275,14 +275,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                 if (targetUid != "guest") {
                     com.aura.assistant.sync.IshaCloudSyncBridge.syncAllLocalSessionsToCloud(application, repository)
                     com.aura.assistant.sync.IshaCloudSyncBridge.startSessionsListener(application, repository) {
-                        viewModelScope.launch(Dispatchers.Main) {
-                            val updatedSessions = repository.getAllSessions()
-                            _sessions.value = updatedSessions
-                            val activeId = _activeSessionId.value
-                            if (activeId.isNotBlank()) {
-                                _chatMessages.value = repository.getMessages(activeId)
-                            }
-                        }
+                        reloadSessionsFromDisk()
                     }
                 } else {
                     com.aura.assistant.sync.IshaCloudSyncBridge.stopSessionsListener()
@@ -297,6 +290,24 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                 tts?.language = Locale("hi", "IN")
                 tts?.setSpeechRate(0.95f)
                 isTtsReady = true
+            }
+        }
+    }
+
+    private var sessionReloadJob: Job? = null
+
+    private fun reloadSessionsFromDisk() {
+        sessionReloadJob?.cancel()
+        sessionReloadJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(180L)
+            val updatedSessions = repository.getAllSessions()
+            val activeId = _activeSessionId.value
+            val activeMsgs = if (activeId.isNotBlank()) repository.getMessages(activeId) else null
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                _sessions.value = updatedSessions
+                if (activeMsgs != null) {
+                    _chatMessages.value = activeMsgs
+                }
             }
         }
     }
@@ -1034,14 +1045,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             if (targetUid != "guest") {
                 com.aura.assistant.sync.IshaCloudSyncBridge.syncAllLocalSessionsToCloud(getApplication(), repository)
                 com.aura.assistant.sync.IshaCloudSyncBridge.startSessionsListener(getApplication(), repository) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val updatedSessions = repository.getAllSessions()
-                        _sessions.value = updatedSessions
-                        val activeId = _activeSessionId.value
-                        if (activeId.isNotBlank()) {
-                            _chatMessages.value = repository.getMessages(activeId)
-                        }
-                    }
+                    reloadSessionsFromDisk()
                 }
             }
         }

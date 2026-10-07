@@ -53,8 +53,6 @@ fun IshaMainScreen(
 
     val isVoiceModeActive by viewModel.isVoiceModeActive.collectAsState()
     val liveState by viewModel.voiceState.collectAsState()
-    val amplitude by viewModel.audioAmplitude.collectAsState()
-    val liveTranscript by viewModel.liveTranscript.collectAsState()
     val isLiveScreenSharing by viewModel.isLiveScreenSharing.collectAsState()
 
     val selectedAttachment by viewModel.selectedAttachment.collectAsState()
@@ -247,6 +245,9 @@ fun IshaMainScreen(
                 enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
             ) {
+                val amplitude by viewModel.audioAmplitude.collectAsState()
+                val liveTranscript by viewModel.liveTranscript.collectAsState()
+
                 IshaVoiceScreen(
                     liveState = liveState,
                     amplitude = amplitude,
