@@ -184,6 +184,11 @@ class GeminiLiveClient(private val context: Context) {
     @Volatile private var bargeInCooldownUntil = 0L
     private var bargeInConsecutiveFrames = 0
 
+    // Reconnection and silence keep-alive state
+    @Volatile private var isAutoReconnecting = false
+    private var reconnectJob: Job? = null
+    @Volatile private var lastAudioSentTime = System.currentTimeMillis()
+
     // Progressive word streaming (prevents spoiling assistant transcript ahead of spoken audio)
     private val pendingAssistantWords = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private var wordStreamerJob: Job? = null
@@ -389,12 +394,42 @@ class GeminiLiveClient(private val context: Context) {
     /**
      * Connects to Gemini Live using the primary verified API key.
      */
+    fun triggerAutoReconnect() {
+        if (_liveState.value == AuraLiveState.IDLE) return
+        if (isAutoReconnecting) return
+        isAutoReconnecting = true
+
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            try {
+                Log.i(TAG, "Transparent Gemini Live auto-reconnection starting...")
+                _liveState.value = AuraLiveState.CONNECTING
+                try { webSocket?.close(1000, "Reconnecting") } catch (_: Exception) {}
+                webSocket = null
+                IshaGatewayConfig.invalidateEphemeralToken()
+                delay(300)
+                connectInternal()
+            } catch (e: Exception) {
+                Log.e(TAG, "Auto-reconnect failed: ${e.message}")
+            } finally {
+                isAutoReconnecting = false
+            }
+        }
+    }
+
+    /**
+     * Connects to Gemini Live using the primary verified API key.
+     */
     fun connect() {
         if (_liveState.value == AuraLiveState.CONNECTED ||
             _liveState.value == AuraLiveState.CONNECTING ||
             _liveState.value == AuraLiveState.LISTENING ||
             _liveState.value == AuraLiveState.SPEAKING) return
 
+        connectInternal()
+    }
+
+    private fun connectInternal() {
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
         AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
@@ -410,6 +445,7 @@ class GeminiLiveClient(private val context: Context) {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
                     _liveState.value = AuraLiveState.CONNECTED
+                    lastAudioSentTime = System.currentTimeMillis()
                     AuraDiagnostics.updateLive { it.copy(wsConnected = true, sessionState = AuraLiveState.CONNECTED) }
                     sendSetupMessage()
                 }
@@ -427,19 +463,30 @@ class GeminiLiveClient(private val context: Context) {
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                     Log.i(TAG, "WebSocket closing: $code / $reason")
-                    IshaGatewayConfig.invalidateEphemeralToken()
-                    _liveState.value = AuraLiveState.IDLE
-                    AuraDiagnostics.updateLive { it.copy(wsConnected = false, sessionState = AuraLiveState.IDLE) }
-                    stopMicRecording()
+                    webSocket.close(1000, null)
+                    if (_liveState.value != AuraLiveState.IDLE) {
+                        triggerAutoReconnect()
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.i(TAG, "WebSocket closed: $code / $reason")
+                    if (_liveState.value != AuraLiveState.IDLE) {
+                        triggerAutoReconnect()
+                    }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val code = response?.code
-                    Log.e(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
-                    IshaGatewayConfig.invalidateEphemeralToken()
-                    stopMicRecording()
-                    _liveState.value = AuraLiveState.ERROR
-                    AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
+                    Log.w(TAG, "WebSocket failure on $activeModel: ${t.message}, HTTP=$code")
+                    if (_liveState.value != AuraLiveState.IDLE) {
+                        triggerAutoReconnect()
+                    } else {
+                        IshaGatewayConfig.invalidateEphemeralToken()
+                        stopMicRecording()
+                        _liveState.value = AuraLiveState.ERROR
+                        AuraDiagnostics.updateLive { it.copy(wsConnected = false, lastError = t.message, sessionState = AuraLiveState.ERROR) }
+                    }
                 }
             })
         }
@@ -504,6 +551,12 @@ class GeminiLiveClient(private val context: Context) {
                 }
                 add("inputAudioTranscription", inputTxConfig)
                 add("outputAudioTranscription", JsonObject())
+
+                // Sliding-window context compression prevents 15-minute / token-limit termination
+                val compressionConfig = JsonObject().apply {
+                    add("slidingWindow", JsonObject())
+                }
+                add("contextWindowCompression", compressionConfig)
             }
             add("setup", setup)
         }
@@ -641,6 +694,9 @@ class GeminiLiveClient(private val context: Context) {
                 // Pre-barge-in audio buffer to ensure the very first word spoken by the user is streamed to server
                 val preBargeInBuffer = ArrayDeque<ByteArray>(3)
 
+                // Rolling pre-roll buffer to keep last ~160ms (4 frames) of audio during silence
+                val preRollBuffer = ArrayDeque<ByteArray>(4)
+
                 while (isActive && isMicRecordingActive && webSocket != null) {
                     val readShorts = record.read(shortBuf, 0, shortBuf.size)
                     if (readShorts > 0) {
@@ -731,13 +787,23 @@ class GeminiLiveClient(private val context: Context) {
                         // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
                         val isUserSpeaking = (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
                         if (isUserSpeaking) {
-                            hasSpokenInTurn = true
-                            consecutiveSilenceFrames = 0
+                            if (!hasSpokenInTurn) {
+                                hasSpokenInTurn = true
+                                consecutiveSilenceFrames = 0
+                                // Flush pre-roll buffer so the beginning syllable/consonant is streamed cleanly
+                                while (preRollBuffer.isNotEmpty()) {
+                                    val preChunk = preRollBuffer.removeFirst()
+                                    sendAudioChunk(preChunk, preChunk.size)
+                                }
+                            } else {
+                                consecutiveSilenceFrames = 0
+                            }
                         } else if (hasSpokenInTurn) {
                             consecutiveSilenceFrames++
                             if (consecutiveSilenceFrames == 9) { // 9 frames (~360ms) = ultra-snappy turn finalization
                                 sendAudioStreamEnd()
                                 hasSpokenInTurn = false
+                                preRollBuffer.clear()
                             }
                         }
 
@@ -756,15 +822,29 @@ class GeminiLiveClient(private val context: Context) {
                             byteBuf[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
                         }
 
-                        // Update UI orb with normalized amplitude
+                        // Update UI orb with normalized amplitude (local orb stays completely alive)
                         _amplitudeFlow.value = if (vadResult.isSpeech) {
                             vadResult.normalizedEnergy.coerceIn(0.15f, 1.0f)
                         } else {
                             (rms * 4.0).toFloat().coerceIn(0.02f, 0.15f)
                         }
 
-                        // Stream directly to Gemini Live — no destructive zero-filling during listening
-                        sendAudioChunk(byteBuf, readShorts * 2)
+                        if (hasSpokenInTurn) {
+                            // Stream user speech chunk
+                            sendAudioChunk(byteBuf, readShorts * 2)
+                        } else {
+                            // Idle/silent: keep 4 frames (~160ms) in rolling pre-roll buffer
+                            val frameCopy = ByteArray(readShorts * 2)
+                            System.arraycopy(byteBuf, 0, frameCopy, 0, readShorts * 2)
+                            if (preRollBuffer.size >= 4) preRollBuffer.removeFirst()
+                            preRollBuffer.addLast(frameCopy)
+
+                            // Heartbeat keepalive every 15s to guarantee WebSocket connection never drops during long silence
+                            val now = System.currentTimeMillis()
+                            if (now - lastAudioSentTime > 15000L) {
+                                sendKeepAlivePing()
+                            }
+                        }
                     } else if (readShorts < 0) {
                         Log.e(TAG, "AudioRecord.read() returned error code: $readShorts — stopping mic")
                         break
@@ -935,10 +1015,35 @@ class GeminiLiveClient(private val context: Context) {
 
 
     /**
+     * Sends a keepalive ping when user is silent to prevent edge proxy or server timeout.
+     */
+    fun sendKeepAlivePing() {
+        if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+        val ws = webSocket ?: run {
+            triggerAutoReconnect()
+            return
+        }
+        val pingObj = JsonObject().apply {
+            add("realtimeInput", JsonObject())
+        }
+        val sent = ws.send(pingObj.toString())
+        if (!sent) {
+            Log.w(TAG, "sendKeepAlivePing failed! Auto-reconnecting...")
+            triggerAutoReconnect()
+        } else {
+            lastAudioSentTime = System.currentTimeMillis()
+        }
+    }
+
+    /**
      * Streams raw 16kHz mono PCM audio to Gemini Live.
      */
     fun sendAudioChunk(pcmBytes: ByteArray, length: Int = pcmBytes.size) {
         if (_liveState.value == AuraLiveState.IDLE || _liveState.value == AuraLiveState.ERROR) return
+        val ws = webSocket ?: run {
+            triggerAutoReconnect()
+            return
+        }
 
         val base64Data = Base64.encodeToString(pcmBytes, 0, length, Base64.NO_WRAP)
         val inputObj = JsonObject().apply {
@@ -951,8 +1056,14 @@ class GeminiLiveClient(private val context: Context) {
             }
             add("realtimeInput", realtime)
         }
-        webSocket?.send(inputObj.toString())
-        AuraDiagnostics.updateLive { it.copy(audioPacketsSent = it.audioPacketsSent + 1) }
+        val sent = ws.send(inputObj.toString())
+        if (sent) {
+            lastAudioSentTime = System.currentTimeMillis()
+            AuraDiagnostics.updateLive { it.copy(audioPacketsSent = it.audioPacketsSent + 1) }
+        } else {
+            Log.w(TAG, "sendAudioChunk failed (ws.send returned false), auto-reconnecting...")
+            triggerAutoReconnect()
+        }
     }
 
     private fun handleServerMessage(jsonText: String) {
@@ -1201,6 +1312,10 @@ class GeminiLiveClient(private val context: Context) {
 
     fun disconnect() {
         try {
+            _liveState.value = AuraLiveState.IDLE
+            isAutoReconnecting = false
+            reconnectJob?.cancel()
+            reconnectJob = null
             stopMicRecording()
             flushAudioPlayback()
             pendingTextMessages.clear()
@@ -1213,7 +1328,6 @@ class GeminiLiveClient(private val context: Context) {
             IshaGatewayConfig.invalidateEphemeralToken()
             webSocket?.close(1000, "User disconnected")
             webSocket = null
-            _liveState.value = AuraLiveState.IDLE
             _amplitudeFlow.value = 0.0f
         } catch (e: Exception) {
             Log.e(TAG, "Error disconnecting", e)
