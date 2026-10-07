@@ -1,10 +1,10 @@
-# ISHA 2.0 — Autonomous Personal AI Companion for Android
+# ISHA 2.1 — Autonomous Personal AI Companion for Android
 
 <p align="center">
-  <img src="https://img.shields.io/badge/ISHA-2.0.0-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="ISHA 2.0.0" />
+  <img src="https://img.shields.io/badge/ISHA-2.1.0-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="ISHA 2.1.0" />
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Gemini-Live%20Multimodal-10A37F?style=for-the-badge&logo=google&logoColor=white" alt="Gemini Live" />
-  <img src="https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge" alt="Status" />
+  <img src="https://img.shields.io/badge/Status-Production%20Stable-success?style=for-the-badge" alt="Status" />
   <img src="https://img.shields.io/badge/Developer-Ansh%20Kesharwani-FF6B35?style=for-the-badge" alt="Developer" />
 </p>
 
@@ -12,16 +12,19 @@
 
 ## 🌟 Overview
 
-**ISHA 2.0** is an autonomous personal AI companion designed and created by **Ansh Kesharwani** exclusively for Android. Designed to be a warm, intelligent, and proactive female AI companion, ISHA combines:
+**ISHA 2.1** is an autonomous personal AI companion designed and created by **Ansh Kesharwani** exclusively for Android. Designed to be a warm, intelligent, and proactive female AI companion, ISHA combines:
 
-- **Gemini Live Multimodal Intelligence**: Real-time bidirectional voice & vision streaming over low-latency WebSocket.
+- **Ultra-Low Latency Voice Duplex (<500ms)**: High-speed bi-directional voice streaming over WebSocket with 360ms client-side silence finalization and acoustic echo barge-in protection.
+- **Distraction-Free Chat & Wave Thinking Indicator**: Clean avatar-free layout with text-by-text sequential wave blinking `Thinking...` animations and 60fps non-blocking rendering.
+- **Collapsible Reasoning & Tool UI**: Compact `Worked for Xs >` accordions with discrete status pills (`✓ <tool_name> finished >`) for multi-step tasks.
 - **Persistent Long-Term Memory**: Remembers user facts, preferences, and custom taught workflows with supreme priority execution.
 - **Dynamic Contact Memory with Versioning**: Remembers phone numbers naturally from speech, preserves historical numbers when updated, and identifies old numbers during incoming calls.
 - **Truecaller-Style Call Announcer & Gesture Response**: Announces callers (*"Incoming call from [Name]"* / *"Incoming call from [Name] ke purane number se"*) with hands-free voice Accept/Decline and proximity wave gestures.
 - **Multi-User Account Isolation**: Complete per-user data sandboxing ensuring private chats never cross-contaminate between different accounts.
-- **Autonomous Tool Engine**: 52+ native Android device tools (calling, WhatsApp messaging, typing, system settings, media playback, alarms, timers, SOS).
-- **ChatGPT-Style Context-Preserving Barge-In**: Interrupt ISHA naturally mid-speech without losing conversational context.
+- **Autonomous Tool Engine**: 52+ native Android device tools (calling, WhatsApp messaging, typing, system settings, media playback, alarms, timers, SOS, organize gallery).
 - **Background Wake Word Detection**: Offline, high-precision keyword spotting (*"Hey ISHA"*) via OpenWakeWord ONNX.
+
+> 📊 **Current Project Health & Subsystem Status**: See [PROJECT_STATUS.md](file:///d:/Projects/aura_shell_backup/PROJECT_STATUS.md) for live hardware metrics and architectural freeze reports.
 
 ---
 
