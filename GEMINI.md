@@ -56,6 +56,10 @@ The following working features and components are production-tested and **STRICT
    - `armWhatsappTypeMessage`, click, scroll, `getScreenTextHierarchy()`, and node inspection actions are working and frozen.
 7. **Execution & Recovery (`ExecutionEngine.kt` & `ExecutionVerifier.kt`)**:
    - Backoff retry, evidence verification (`search_internet`, `open_app`, etc.), and fallback tool execution logic must be preserved.
+8. **Clean Avatar-Free Chat & Text-by-Text Wave Thinking Indicator**:
+   - Avatars/DPs are completely removed from chat messages and the empty greeting screen for a distraction-free, full-width layout.
+   - `IshaThinkingIndicator` renders a lightweight sequential wave animation across `Thinking...` characters with phase-based alpha calculations.
+   - In `IshaMainScreen.kt`, auto-scroll strictly uses `scrollToItem(groupedItems.size - 1)`, avoiding continuous `animateScrollToItem` cancellations during token streaming that cause frame drops.
 
 ### 4. BUILD & LINT CONSTRAINTS
 - Java Target: JDK 17 (`D:\applications\jdk-17`).
