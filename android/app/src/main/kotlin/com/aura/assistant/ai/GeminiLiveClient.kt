@@ -18,6 +18,9 @@ import com.aura.assistant.audio.MicOwner
 import com.aura.assistant.config.Secrets
 import com.aura.assistant.config.IshaGatewayConfig
 import com.aura.assistant.vision.ScreenFrameSampler
+import android.os.PowerManager
+import com.aura.assistant.IshaDynamicIsland
+import com.aura.assistant.AuraDynamicIsland
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -102,6 +105,29 @@ class GeminiLiveClient(private val context: Context) {
         private const val PRIMARY_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
         private const val FALLBACK_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
         const val FROZEN_VOICE_NAME = "Aoede" // 🔒 FROZEN: Sweet natural female persona
+
+        // ── Smart Inactivity Auto-Sleep Timeouts (Gemini Live / ChatGPT style) ──────
+        private const val INACTIVITY_TIMEOUT_FOREGROUND_MS = 180_000L // 3 minutes idle in foreground
+        private const val INACTIVITY_TIMEOUT_BACKGROUND_MS = 90_000L  // 1.5 minutes idle in background / screen-off
+    }
+
+    // ── Smart Inactivity Auto-Sleep State ──────────────────────────────────────
+    @Volatile private var lastActivityTimestamp = System.currentTimeMillis()
+    var onInactivityTimeout: (() -> Unit)? = null
+
+    private fun isBackgroundOrScreenOff(): Boolean {
+        return try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isInteractive = pm?.isInteractive ?: true
+            val isForeground = IshaDynamicIsland.isAppInForeground || AuraDynamicIsland.isAppInForeground
+            !isInteractive || !isForeground
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun refreshActivityTimestamp() {
+        lastActivityTimestamp = System.currentTimeMillis()
     }
 
     private var activeModel = PRIMARY_LIVE_MODEL
@@ -430,6 +456,7 @@ class GeminiLiveClient(private val context: Context) {
     }
 
     private fun connectInternal() {
+        refreshActivityTimestamp()
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
         AuraDiagnostics.updateLive { it.copy(sessionState = AuraLiveState.CONNECTING, lastError = null) }
@@ -445,6 +472,7 @@ class GeminiLiveClient(private val context: Context) {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     Log.i(TAG, "WebSocket connected successfully to Gemini Live ($activeModel)")
                     _liveState.value = AuraLiveState.CONNECTED
+                    refreshActivityTimestamp()
                     lastAudioSentTime = System.currentTimeMillis()
                     AuraDiagnostics.updateLive { it.copy(wsConnected = true, sessionState = AuraLiveState.CONNECTED) }
                     sendSetupMessage()
@@ -718,6 +746,7 @@ class GeminiLiveClient(private val context: Context) {
                         // ── 1. Acoustic Echo Gate & Intentional User Barge-In ───────────
                         val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 250L)
                         if (isActivelyPlayingAudio) {
+                            refreshActivityTimestamp()
                             hasSpokenInTurn = false
                             consecutiveSilenceFrames = 0
 
@@ -787,6 +816,7 @@ class GeminiLiveClient(private val context: Context) {
                         // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
                         val isUserSpeaking = (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
                         if (isUserSpeaking) {
+                            refreshActivityTimestamp()
                             if (!hasSpokenInTurn) {
                                 hasSpokenInTurn = true
                                 consecutiveSilenceFrames = 0
@@ -839,8 +869,20 @@ class GeminiLiveClient(private val context: Context) {
                             if (preRollBuffer.size >= 4) preRollBuffer.removeFirst()
                             preRollBuffer.addLast(frameCopy)
 
-                            // Heartbeat keepalive every 15s to guarantee WebSocket connection never drops during long silence
                             val now = System.currentTimeMillis()
+
+                            // ── Smart Inactivity Auto-Sleep Check (Gemini Live / ChatGPT style) ──
+                            val isBgOrScreenOff = isBackgroundOrScreenOff()
+                            val maxIdleDuration = if (isBgOrScreenOff) INACTIVITY_TIMEOUT_BACKGROUND_MS else INACTIVITY_TIMEOUT_FOREGROUND_MS
+                            if (now - lastActivityTimestamp > maxIdleDuration) {
+                                Log.i(TAG, "Inactivity timeout reached (${now - lastActivityTimestamp}ms idle, backgroundOrScreenOff=$isBgOrScreenOff). Auto-sleeping voice session.")
+                                scope.launch(Dispatchers.Main) {
+                                    onInactivityTimeout?.invoke()
+                                }
+                                break
+                            }
+
+                            // Heartbeat keepalive every 15s to guarantee WebSocket connection never drops during active conversation pauses
                             if (now - lastAudioSentTime > 15000L) {
                                 sendKeepAlivePing()
                             }
@@ -1068,6 +1110,7 @@ class GeminiLiveClient(private val context: Context) {
 
     private fun handleServerMessage(jsonText: String) {
         try {
+            refreshActivityTimestamp()
             AuraDiagnostics.updateLive { it.copy(serverEventsReceived = it.serverEventsReceived + 1) }
             val root = JsonParser.parseString(jsonText).asJsonObject
 
@@ -1218,12 +1261,14 @@ class GeminiLiveClient(private val context: Context) {
                             if (_liveState.value == AuraLiveState.SPEAKING) {
                                 _amplitudeFlow.value = 0.05f
                                 _liveState.value = AuraLiveState.LISTENING
+                                refreshActivityTimestamp()
                                 Log.i(TAG, "Audio playback finished → back to LISTENING")
                             }
                         }
                     } else {
                         _amplitudeFlow.value = 0.05f
                         _liveState.value = AuraLiveState.LISTENING
+                        refreshActivityTimestamp()
                         Log.i(TAG, "Turn complete → back to LISTENING")
                     }
                 }

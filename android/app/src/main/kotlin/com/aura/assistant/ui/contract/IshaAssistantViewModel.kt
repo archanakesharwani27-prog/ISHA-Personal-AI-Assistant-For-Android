@@ -174,6 +174,14 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
         liveClient.setVoiceLanguage(_voiceLanguage.value)
 
+        // Smart Inactivity Auto-Sleep (Gemini / ChatGPT style)
+        liveClient.onInactivityTimeout = {
+            viewModelScope.launch(Dispatchers.Main) {
+                Log.i(TAG, "Live Voice auto-sleep triggered due to inactivity. Stopping voice mode to save battery.")
+                stopVoiceMode()
+            }
+        }
+
         // Forward real-time Gemini Live states to Dynamic Island floating overlay
         viewModelScope.launch {
             liveClient.liveState.collect { state ->
