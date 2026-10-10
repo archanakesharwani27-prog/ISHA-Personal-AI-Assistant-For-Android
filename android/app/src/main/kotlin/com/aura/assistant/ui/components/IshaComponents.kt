@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.painterResource
+import com.aura.assistant.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Canvas
@@ -187,11 +189,15 @@ fun IshaTopBar(
                     }
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    IshaNeuralLotus(
-                        lotusSize = 26.dp,
-                        modifier = Modifier.graphicsLayer {
-                            rotationZ = animatedRotation
-                        }
+                    Image(
+                        painter = painterResource(id = R.mipmap.ic_launcher_round),
+                        contentDescription = "New Chat",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .graphicsLayer {
+                                rotationZ = animatedRotation
+                            }
                     )
                 }
             }

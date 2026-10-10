@@ -30,10 +30,18 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import com.aura.assistant.R
 import com.aura.assistant.ui.components.*
 import com.aura.assistant.ui.contract.IshaAssistantViewModel
 import com.aura.assistant.ui.contract.AuraAssistantViewModel
 import com.aura.assistant.ui.theme.ChatGptBackground
+import com.aura.assistant.ui.theme.ChatGptAccentCyan
+import com.aura.assistant.ui.theme.ChatGptAccentGreen
 import com.aura.assistant.auth.UserProfile
 import kotlinx.coroutines.launch
 
@@ -81,6 +89,7 @@ fun IshaMainScreen(
     val settingsState by viewModel.settingsState.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
     var isOpeningActive by remember { mutableStateOf(true) }
+    var actionIconCenter by remember { mutableStateOf<Offset?>(null) }
 
     // Activity Launchers for Attachments
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -193,6 +202,9 @@ fun IshaMainScreen(
                         },
                         onNewChat = {
                             viewModel.createNewChat()
+                        },
+                        onActionPositioned = { center ->
+                            actionIconCenter = center
                         }
                     )
                 },
@@ -252,6 +264,7 @@ fun IshaMainScreen(
 
             if (isOpeningActive) {
                 IshaOpeningLaunchAnimation(
+                    targetOffset = actionIconCenter,
                     onDismiss = { isOpeningActive = false }
                 )
             }
@@ -404,21 +417,17 @@ fun AuraMainScreen(
 )
 
 /**
- * YouTube-style opening launch animation:
- * 1. Centered Neural Lotus pops and spins rapidly (0 -> 720 deg) with radiant bloom.
- * 2. Smoothly translates and scales up/across into the TopBar New Chat action button position.
- * 3. Settles seamlessly into the TopBar button while revealing the clean chat screen underneath.
- * Dismisses immediately upon tap so the user is never blocked.
- */
-/**
- * ChatGPT-style opening launch animation:
- * 1. Centered Neural Lotus blooms and spins smoothly (0 -> 360 deg) on AMOLED pitch-black background.
- * 2. As the spin concludes, the flower gracefully zooms out (scale 1.0 -> 0.0) with a swirling dissolve.
- * 3. The black splash overlay cross-fades out to reveal the clean, minimal chat screen.
+ * Isha App Opening Animation:
+ * 1. Centered Original Master Round Icon (R.mipmap.ic_launcher_round) blooms and spins smoothly (0 -> 360 deg)
+ *    with a glowing cyan/emerald halo on AMOLED pitch-black background.
+ * 2. As the spin concludes (~730ms), the icon smoothly shifts and scales down towards the top-right
+ *    header action button (targetOffset), docking seamlessly into place.
+ * 3. The black splash scrim cross-fades out to reveal the clean, minimal chat screen.
  * Dismisses immediately upon tap so the user is never blocked.
  */
 @Composable
 fun IshaOpeningLaunchAnimation(
+    targetOffset: Offset? = null,
     onDismiss: () -> Unit
 ) {
     val progress = remember { Animatable(0f) }
@@ -427,49 +436,65 @@ fun IshaOpeningLaunchAnimation(
         progress.animateTo(
             targetValue = 1f,
             animationSpec = tween(
-                durationMillis = 1250,
+                durationMillis = 1400,
                 easing = LinearEasing
             )
         )
         onDismiss()
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onDismiss
-            ),
-        contentAlignment = Alignment.Center
+            )
     ) {
+        val density = LocalDensity.current
+        val screenWidthPx = with(density) { maxWidth.toPx() }
+        val screenHeightPx = with(density) { maxHeight.toPx() }
+
+        val startCenter = Offset(screenWidthPx / 2f, screenHeightPx / 2f)
+        val endCenter = targetOffset ?: Offset(
+            screenWidthPx - with(density) { 31.dp.toPx() },
+            with(density) { 56.dp.toPx() }
+        )
+
         val p = progress.value
 
-        // Phase 1 (0f..0.58f ~ 725ms): Centered flower spin & bloom
-        // Phase 2 (0.58f..1.0f ~ 525ms): Graceful zoom-out & dissolve
-        val phase1Frac = (p / 0.58f).coerceIn(0f, 1f)
-        val phase2Frac = ((p - 0.58f) / 0.42f).coerceIn(0f, 1f)
+        // Phase 1 (0f..0.52f ~ 730ms): Centered spin & bloom
+        // Phase 2 (0.52f..1.0f ~ 670ms): Graceful shift to top-right & dock into header
+        val phase1Frac = (p / 0.52f).coerceIn(0f, 1f)
+        val phase2Frac = ((p - 0.52f) / 0.48f).coerceIn(0f, 1f)
 
         val easeP1 = FastOutSlowInEasing.transform(phase1Frac)
         val easeP2 = FastOutSlowInEasing.transform(phase2Frac)
 
-        // Splash background cross-fades out during zoom-out
+        // Splash background cross-fades out during Phase 2
         val scrimAlpha = (1f - easeP2).coerceIn(0f, 1f)
 
-        // Rotation: 0 -> 360 deg during Phase 1, finishing with an extra 90 deg swirl as it zooms out
-        val currentRotation = (easeP1 * 360f) + (easeP2 * 90f)
+        // Full rotation: 360 deg during Phase 1, plus additional 180 deg swirl while moving to header
+        val currentRotation = (easeP1 * 360f) + (easeP2 * 180f)
 
-        // Scale: Pops in (0.7 -> 1.0) during Phase 1, then ZOOMS OUT (1.0 -> 0.0) during Phase 2
+        // Interpolated center position
+        val currentX = startCenter.x + (endCenter.x - startCenter.x) * easeP2
+        val currentY = startCenter.y + (endCenter.y - startCenter.y) * easeP2
+
+        // Size & Scale: Pops from 70dp to 105dp during Phase 1, then scales down to 24dp as it reaches header
+        val baseSizeDp = 105.dp
+        val startScale = 0.7f + 0.3f * easeP1
+        val targetScale = 24f / 105f // dock into top bar size (~0.23)
         val currentScale = if (phase2Frac > 0f) {
-            (1.0f - easeP2).coerceAtLeast(0f)
+            startScale + (targetScale - startScale) * easeP2
         } else {
-            0.7f + (0.3f * easeP1)
+            startScale
         }
 
-        // Alpha of the spinning flower
-        val flowerAlpha = if (phase2Frac > 0f) {
-            (1.0f - easeP2).coerceIn(0f, 1f)
+        // Floating icon alpha
+        val iconAlpha = if (phase2Frac >= 0.96f) {
+            ((1f - phase2Frac) / 0.04f).coerceIn(0f, 1f)
         } else {
             (phase1Frac / 0.25f).coerceIn(0f, 1f)
         }
@@ -484,20 +509,57 @@ fun IshaOpeningLaunchAnimation(
             )
         }
 
-        // The spinning & zooming-out Neural Lotus in the exact center
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    scaleX = currentScale
-                    scaleY = currentScale
-                    rotationZ = currentRotation
-                    alpha = flowerAlpha
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            IshaNeuralLotus(
-                lotusSize = 90.dp
-            )
+        // Shifting Original Master Icon
+        if (iconAlpha > 0.01f) {
+            val baseSizePx = with(density) { baseSizeDp.toPx() }
+            val halfSizePx = (baseSizePx * currentScale) / 2f
+
+            Box(
+                modifier = Modifier
+                    .offset {
+                        androidx.compose.ui.unit.IntOffset(
+                            (currentX - halfSizePx).toInt(),
+                            (currentY - halfSizePx).toInt()
+                        )
+                    }
+                    .size(baseSizeDp)
+                    .graphicsLayer {
+                        scaleX = currentScale
+                        scaleY = currentScale
+                        rotationZ = currentRotation
+                        alpha = iconAlpha
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                // Soft Cyan-Emerald radial halo glow behind the icon during Phase 1
+                if (phase2Frac < 0.6f) {
+                    val haloAlpha = (1f - phase2Frac * 1.5f).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .size(130.dp)
+                            .graphicsLayer { alpha = haloAlpha }
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        ChatGptAccentCyan.copy(alpha = 0.40f),
+                                        ChatGptAccentGreen.copy(alpha = 0.20f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                shape = CircleShape
+                            )
+                    )
+                }
+
+                Image(
+                    painter = painterResource(id = R.mipmap.ic_launcher_round),
+                    contentDescription = "ISHA",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .size(baseSizeDp)
+                        .clip(CircleShape)
+                )
+            }
         }
     }
 }
