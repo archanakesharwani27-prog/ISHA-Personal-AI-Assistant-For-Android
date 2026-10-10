@@ -167,7 +167,7 @@ fun IshaTopBar(
             var iconRotation by remember { mutableStateOf(0f) }
             val animatedRotation by animateFloatAsState(
                 targetValue = iconRotation,
-                animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
                 label = "newChatLotusSpin"
             )
 
@@ -184,7 +184,7 @@ fun IshaTopBar(
                         onActionPositioned?.invoke(bounds.center)
                     }
                     .clickable {
-                        iconRotation += 360f
+                        iconRotation += 720f
                         onNewChat()
                     }
             ) {

@@ -210,7 +210,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             )
         }
 
-        checkAndRequestPermissions()
+        mainHandler.postDelayed({
+            checkAndRequestPermissions()
+        }, 2500L)
         registerReceivers()
         initShakeSensor()
         IshaCallAnnouncerManager.init(this)

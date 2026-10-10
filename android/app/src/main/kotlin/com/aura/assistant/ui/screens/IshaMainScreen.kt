@@ -433,10 +433,12 @@ fun IshaOpeningLaunchAnimation(
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
+        // Settle first frame so cold-start rendering does not skip spin animation
+        kotlinx.coroutines.delay(100)
         progress.animateTo(
             targetValue = 1f,
             animationSpec = tween(
-                durationMillis = 1400,
+                durationMillis = 2100,
                 easing = LinearEasing
             )
         )
@@ -449,7 +451,11 @@ fun IshaOpeningLaunchAnimation(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onDismiss
+                onClick = {
+                    if (progress.value > 0.45f) {
+                        onDismiss()
+                    }
+                }
             )
     ) {
         val density = LocalDensity.current
@@ -464,10 +470,10 @@ fun IshaOpeningLaunchAnimation(
 
         val p = progress.value
 
-        // Phase 1 (0f..0.52f ~ 730ms): Centered spin & bloom
-        // Phase 2 (0.52f..1.0f ~ 670ms): Graceful shift to top-right & dock into header
-        val phase1Frac = (p / 0.52f).coerceIn(0f, 1f)
-        val phase2Frac = ((p - 0.52f) / 0.48f).coerceIn(0f, 1f)
+        // Phase 1 (0f..0.60f ~ 1260ms): Centered turbine spin & bloom
+        // Phase 2 (0.60f..1.0f ~ 840ms): Graceful shift to top-right & dock into header
+        val phase1Frac = (p / 0.60f).coerceIn(0f, 1f)
+        val phase2Frac = ((p - 0.60f) / 0.40f).coerceIn(0f, 1f)
 
         val easeP1 = FastOutSlowInEasing.transform(phase1Frac)
         val easeP2 = FastOutSlowInEasing.transform(phase2Frac)
@@ -475,17 +481,17 @@ fun IshaOpeningLaunchAnimation(
         // Splash background cross-fades out during Phase 2
         val scrimAlpha = (1f - easeP2).coerceIn(0f, 1f)
 
-        // Full rotation: 360 deg during Phase 1, plus additional 180 deg swirl while moving to header
-        val currentRotation = (easeP1 * 360f) + (easeP2 * 180f)
+        // Rotation: 720 deg in Phase 1 (2 full 360 deg spins) + 360 deg in Phase 2 = 1080 deg total (ends 0 deg upright)
+        val currentRotation = (easeP1 * 720f) + (easeP2 * 360f)
 
         // Interpolated center position
         val currentX = startCenter.x + (endCenter.x - startCenter.x) * easeP2
         val currentY = startCenter.y + (endCenter.y - startCenter.y) * easeP2
 
-        // Size & Scale: Pops from 70dp to 105dp during Phase 1, then scales down to 24dp as it reaches header
-        val baseSizeDp = 105.dp
-        val startScale = 0.7f + 0.3f * easeP1
-        val targetScale = 24f / 105f // dock into top bar size (~0.23)
+        // Size & Scale: Blooms from 70dp to 110dp during Phase 1, then scales down to 24dp as it docks into header
+        val baseSizeDp = 110.dp
+        val startScale = 0.65f + 0.35f * easeP1
+        val targetScale = 24f / 110f // dock into top bar size (~0.218)
         val currentScale = if (phase2Frac > 0f) {
             startScale + (targetScale - startScale) * easeP2
         } else {
@@ -496,7 +502,7 @@ fun IshaOpeningLaunchAnimation(
         val iconAlpha = if (phase2Frac >= 0.96f) {
             ((1f - phase2Frac) / 0.04f).coerceIn(0f, 1f)
         } else {
-            (phase1Frac / 0.25f).coerceIn(0f, 1f)
+            (phase1Frac / 0.20f).coerceIn(0f, 1f)
         }
 
         // AMOLED Black Splash Background
@@ -512,37 +518,41 @@ fun IshaOpeningLaunchAnimation(
         // Shifting Original Master Icon
         if (iconAlpha > 0.01f) {
             val baseSizePx = with(density) { baseSizeDp.toPx() }
-            val halfSizePx = (baseSizePx * currentScale) / 2f
+            val unscaledHalfPx = baseSizePx / 2f
 
             Box(
                 modifier = Modifier
                     .offset {
                         androidx.compose.ui.unit.IntOffset(
-                            (currentX - halfSizePx).toInt(),
-                            (currentY - halfSizePx).toInt()
+                            (currentX - unscaledHalfPx).toInt(),
+                            (currentY - unscaledHalfPx).toInt()
                         )
                     }
                     .size(baseSizeDp)
                     .graphicsLayer {
                         scaleX = currentScale
                         scaleY = currentScale
-                        rotationZ = currentRotation
                         alpha = iconAlpha
                     },
                 contentAlignment = Alignment.Center
             ) {
                 // Soft Cyan-Emerald radial halo glow behind the icon during Phase 1
-                if (phase2Frac < 0.6f) {
-                    val haloAlpha = (1f - phase2Frac * 1.5f).coerceIn(0f, 1f)
+                if (phase2Frac < 0.7f) {
+                    val haloAlpha = ((1f - phase2Frac * 1.4f) * 0.6f).coerceIn(0f, 0.6f)
+                    val pulse = 1f + 0.08f * kotlin.math.sin(phase1Frac * Math.PI.toFloat())
                     Box(
                         modifier = Modifier
-                            .size(130.dp)
-                            .graphicsLayer { alpha = haloAlpha }
+                            .size(140.dp)
+                            .graphicsLayer {
+                                scaleX = pulse
+                                scaleY = pulse
+                                alpha = haloAlpha
+                            }
                             .background(
                                 Brush.radialGradient(
                                     colors = listOf(
-                                        ChatGptAccentCyan.copy(alpha = 0.40f),
-                                        ChatGptAccentGreen.copy(alpha = 0.20f),
+                                        ChatGptAccentCyan.copy(alpha = 0.50f),
+                                        ChatGptAccentGreen.copy(alpha = 0.25f),
                                         Color.Transparent
                                     )
                                 ),
@@ -557,6 +567,9 @@ fun IshaOpeningLaunchAnimation(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .size(baseSizeDp)
+                        .graphicsLayer {
+                            rotationZ = currentRotation
+                        }
                         .clip(CircleShape)
                 )
             }
