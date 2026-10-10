@@ -80,8 +80,7 @@ fun IshaMainScreen(
     val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
-    var isOpeningActive by rememberSaveable { mutableStateOf(true) }
-    var newChatActionPosition by remember { mutableStateOf<Offset?>(null) }
+    var isOpeningActive by remember { mutableStateOf(true) }
 
     // Activity Launchers for Attachments
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -194,9 +193,6 @@ fun IshaMainScreen(
                         },
                         onNewChat = {
                             viewModel.createNewChat()
-                        },
-                        onActionPositioned = { pos ->
-                            newChatActionPosition = pos
                         }
                     )
                 },
@@ -256,7 +252,6 @@ fun IshaMainScreen(
 
             if (isOpeningActive) {
                 IshaOpeningLaunchAnimation(
-                    targetActionPos = newChatActionPosition,
                     onDismiss = { isOpeningActive = false }
                 )
             }
@@ -415,14 +410,18 @@ fun AuraMainScreen(
  * 3. Settles seamlessly into the TopBar button while revealing the clean chat screen underneath.
  * Dismisses immediately upon tap so the user is never blocked.
  */
+/**
+ * ChatGPT-style opening launch animation:
+ * 1. Centered Neural Lotus blooms and spins smoothly (0 -> 360 deg) on AMOLED pitch-black background.
+ * 2. As the spin concludes, the flower gracefully zooms out (scale 1.0 -> 0.0) with a swirling dissolve.
+ * 3. The black splash overlay cross-fades out to reveal the clean, minimal chat screen.
+ * Dismisses immediately upon tap so the user is never blocked.
+ */
 @Composable
 fun IshaOpeningLaunchAnimation(
-    targetActionPos: Offset?,
     onDismiss: () -> Unit
 ) {
     val progress = remember { Animatable(0f) }
-    val density = LocalDensity.current
-    val statusBarHeight = WindowInsets.statusBars.getTop(density)
 
     LaunchedEffect(Unit) {
         progress.animateTo(
@@ -435,58 +434,47 @@ fun IshaOpeningLaunchAnimation(
         onDismiss()
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onDismiss
-            )
+            ),
+        contentAlignment = Alignment.Center
     ) {
-        val widthPx = constraints.maxWidth.toFloat()
-        val heightPx = constraints.maxHeight.toFloat()
-
-        val centerX = widthPx / 2f
-        val centerY = heightPx / 2f
-
-        val fallbackTargetX = widthPx - with(density) { 31.dp.toPx() }
-        val fallbackTargetY = statusBarHeight + with(density) { 32.dp.toPx() }
-
-        val targetCenterPxX = targetActionPos?.x?.takeIf { it > 0f } ?: fallbackTargetX
-        val targetCenterPxY = targetActionPos?.y?.takeIf { it > 0f } ?: fallbackTargetY
-
-        val targetOffsetX = targetCenterPxX - centerX
-        val targetOffsetY = targetCenterPxY - centerY
-
         val p = progress.value
 
-        val phase1Frac = (p / 0.48f).coerceIn(0f, 1f)
-        val phase2Frac = ((p - 0.48f) / 0.52f).coerceIn(0f, 1f)
+        // Phase 1 (0f..0.58f ~ 725ms): Centered flower spin & bloom
+        // Phase 2 (0.58f..1.0f ~ 525ms): Graceful zoom-out & dissolve
+        val phase1Frac = (p / 0.58f).coerceIn(0f, 1f)
+        val phase2Frac = ((p - 0.58f) / 0.42f).coerceIn(0f, 1f)
 
         val easeP1 = FastOutSlowInEasing.transform(phase1Frac)
         val easeP2 = FastOutSlowInEasing.transform(phase2Frac)
 
+        // Splash background cross-fades out during zoom-out
         val scrimAlpha = (1f - easeP2).coerceIn(0f, 1f)
-        val currentRotation = (easeP1 * 720f) + (easeP2 * 180f)
 
-        val initialScale = 0.35f + (0.65f * easeP1)
-        val targetScaleRatio = with(density) { 26.dp.toPx() / 120.dp.toPx() }
+        // Rotation: 0 -> 360 deg during Phase 1, finishing with an extra 90 deg swirl as it zooms out
+        val currentRotation = (easeP1 * 360f) + (easeP2 * 90f)
+
+        // Scale: Pops in (0.7 -> 1.0) during Phase 1, then ZOOMS OUT (1.0 -> 0.0) during Phase 2
         val currentScale = if (phase2Frac > 0f) {
-            1.0f + (targetScaleRatio - 1.0f) * easeP2
+            (1.0f - easeP2).coerceAtLeast(0f)
         } else {
-            initialScale
+            0.7f + (0.3f * easeP1)
         }
 
-        val currentOffsetX = if (phase2Frac > 0f) targetOffsetX * easeP2 else 0f
-        val currentOffsetY = if (phase2Frac > 0f) targetOffsetY * easeP2 else 0f
-
-        val logoAlpha = when {
-            phase1Frac < 0.15f -> (phase1Frac / 0.15f).coerceIn(0f, 1f)
-            phase2Frac > 0.92f -> (1f - ((phase2Frac - 0.92f) / 0.08f)).coerceIn(0f, 1f)
-            else -> 1f
+        // Alpha of the spinning flower
+        val flowerAlpha = if (phase2Frac > 0f) {
+            (1.0f - easeP2).coerceIn(0f, 1f)
+        } else {
+            (phase1Frac / 0.25f).coerceIn(0f, 1f)
         }
 
+        // AMOLED Black Splash Background
         if (scrimAlpha > 0.01f) {
             Box(
                 modifier = Modifier
@@ -496,21 +484,19 @@ fun IshaOpeningLaunchAnimation(
             )
         }
 
+        // The spinning & zooming-out Neural Lotus in the exact center
         Box(
             modifier = Modifier
-                .align(Alignment.Center)
                 .graphicsLayer {
-                    translationX = currentOffsetX
-                    translationY = currentOffsetY
                     scaleX = currentScale
                     scaleY = currentScale
                     rotationZ = currentRotation
-                    alpha = logoAlpha
+                    alpha = flowerAlpha
                 },
             contentAlignment = Alignment.Center
         ) {
             IshaNeuralLotus(
-                lotusSize = 120.dp
+                lotusSize = 90.dp
             )
         }
     }
