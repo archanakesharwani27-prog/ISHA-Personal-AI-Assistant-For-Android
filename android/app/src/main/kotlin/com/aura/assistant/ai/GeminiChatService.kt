@@ -88,6 +88,7 @@ class GeminiChatService(private val context: Context) {
 
     private var activeCall: Call? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val openRouterClient = OpenRouterClient(context)
 
     /**
      * Sends a chat prompt along with previous conversation history and optional image attachment to Gemini.
@@ -163,6 +164,39 @@ class GeminiChatService(private val context: Context) {
                 newPrompt
             }
 
+        // ⚡ Autonomous Brain Router:
+        // ⚡ Autonomous Multi-Brain Gateway:
+        // Fast LLM (Groq / OpenRouter) is used ONLY for pure conversational turns (chit-chat, Q&A) where 0 tools are needed.
+        // If the user's intent requests an action (apps, flashlight, whatsapp, media, calls),
+        // it MUST route to Gemini Flash with native tool declarations!
+        val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
+        val hasPendingToolTurn = history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
+        val toolsForTurn = IshaToolRouter.routeToolsForPrompt(
+            prompt = promptToSend,
+            hasImage = imageBytes != null,
+            hasPendingToolTurn = hasPendingToolTurn
+        )
+        val isPureConversation = (toolsForTurn == null)
+        val canUseFastLlm = hasFastLlmKey && imageBytes == null && !hasPendingToolTurn && isPureConversation
+
+        if (canUseFastLlm) {
+            try {
+                Log.i(TAG, "⚡ Routing to Fast LLM (Groq / OpenRouter) for sub-second instant response...")
+                val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
+                openRouterClient.streamFastChat(
+                    systemPrompt = sysPrompt,
+                    history = history,
+                    prompt = promptToSend,
+                    callback = callback
+                )
+                return
+            } catch (e: Exception) {
+                val isCanceled = e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)
+                if (isCanceled) throw e
+                Log.w(TAG, "Fast LLM attempt failed (${e.message}), autonomously falling back to Gemini Flash...")
+            }
+        }
+
         val apiKey = Secrets.getActiveGeminiKey(context)
         val requestBodyJson = buildRequestBody(history, promptToSend, imageBytes)
         val bodyStr = requestBodyJson.toString()
@@ -213,7 +247,7 @@ class GeminiChatService(private val context: Context) {
                     errBody.contains("update your code", ignoreCase = true)
                 )
                 if (response.code == 503 || response.code == 429) {
-                    // Fast fallback: immediately try next candidate model without artificial sleep delay
+                    // Fast fallback: immediately try next candidate model on primary key
                     Log.w(TAG, "HTTP ${response.code} from $model, falling back immediately to next candidate...")
                     continue
                 }
@@ -375,10 +409,20 @@ class GeminiChatService(private val context: Context) {
                             addProperty("name", toolName)
                             val resp = JsonObject().apply {
                                 val outputObj = if (toolResult.isJsonObject) toolResult.asJsonObject.deepCopy() else JsonObject()
-                                outputObj.addProperty(
-                                    "_task_guidance",
+                                val status = outputObj.get("status")?.asString ?: "success"
+                                val isFailure = status.equals("error", ignoreCase = true) ||
+                                                status.equals("failed", ignoreCase = true) ||
+                                                status.equals("unavailable", ignoreCase = true)
+                                val errMsg = outputObj.get("message")?.asString
+                                    ?: outputObj.get("error")?.asString
+                                    ?: "Execution failed"
+
+                                val guidance = if (isFailure) {
+                                    "CRITICAL TOOL FAILURE: Tool '$toolName' FAILED with error: \"$errMsg\". You MUST be 100% honest and transparent with Boss: Do NOT claim that this tool or any verification succeeded! If a previous action (like creating alarm) already succeeded via a prior tool, acknowledge that it was scheduled, but explicitly tell Boss that '$toolName' (verification) failed with reason: \"$errMsg\". If permission or capability is unavailable, state the exact limitation clearly (e.g. 'Mere paas Location permission nahi hai')."
+                                } else {
                                     "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise screenshot ke baad WhatsApp par bhejna, ya YouTube ke baad DND lagana, app/game kholna, battery check karna), to IMMEDIATELY unka tool call karo — text summary abhi mat do! Sare tasks ke tool call hone ke baad hi natural Hindi me short spoken confirmation do."
-                                )
+                                }
+                                outputObj.addProperty("_task_guidance", guidance)
                                 add("output", outputObj)
                             }
                             add("response", resp)
@@ -396,7 +440,7 @@ class GeminiChatService(private val context: Context) {
             // Include tool declarations so model has schema context
             // Prune to executed tools schema (<1KB) for instant confirmation turn unless multi-step chained intent
             val executedNames = executedTools.map { it.first }.toSet()
-            val hasChainedIntent = originalPrompt.contains(Regex("\\b(aur|then|uske baad|and|phir|also|bhejo|send|dono|teeno)\\b", RegexOption.IGNORE_CASE))
+            val hasChainedIntent = originalPrompt.contains(Regex("\\b(aur|then|uske baad|and|phir|also|bhejo|send|dono|teeno)\\b", RegexOption.IGNORE_CASE)) || originalPrompt.contains(",")
             val declarations = if (hasChainedIntent) {
                 IshaToolRegistry.getGeminiToolDeclarations()
             } else {
@@ -418,15 +462,11 @@ class GeminiChatService(private val context: Context) {
             }
             add("tool_config", toolConfig)
 
-            // Generation Config: Low temperature (0.25) & zero thinking delay for instant spoken confirmation
+            // Generation Config: Low temperature (0.25) for instant spoken confirmation
             val genConfig = JsonObject().apply {
                 addProperty("temperature", 0.25)
                 addProperty("topP", 0.95)
                 addProperty("maxOutputTokens", 4096)
-                val thinking = JsonObject().apply {
-                    addProperty("thinkingBudget", 0)
-                }
-                add("thinkingConfig", thinking)
             }
             add("generationConfig", genConfig)
         }
@@ -520,7 +560,7 @@ class GeminiChatService(private val context: Context) {
             val nextExecutedTools = executeFunctionCalls(nextPendingFunctionCalls, callback)
 
             executeToolResponsesStream(
-                model = model,
+                model = candidateModel,
                 history = history,
                 originalPrompt = originalPrompt,
                 executedTools = nextExecutedTools,
@@ -541,7 +581,13 @@ class GeminiChatService(private val context: Context) {
 
         // If all candidate models failed or returned empty, use clean fallback
         val fallback = executedTools.joinToString("\n") { (name, _, res) ->
-            res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
+            val status = res.get("status")?.asString ?: "success"
+            val msg = res.get("message")?.asString ?: res.get("error")?.asString ?: ""
+            if (status == "error" || status == "failed") {
+                "Boss, $name fail ho gaya: $msg"
+            } else {
+                res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
+            }
         }
         callback.onComplete(fallback)
     }
@@ -581,13 +627,20 @@ class GeminiChatService(private val context: Context) {
 
         Log.i(TAG, "buildRequestBody: prompt='$newPrompt', historySize=${history.size}, totalTurns=${contents.size()}")
 
-        // 3. Smart Tool Pruning: Only attach 104 tool declarations (70KB) when action intent or image is present.
-        // Pure conversational queries ("Hi", "Kaise ho", "Explain X") run lean (<2KB payload) for sub-second TTFT!
-        val needsTools = imageBytes != null || isDeviceActionIntent(newPrompt) || history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
-        if (needsTools) {
+        // 3. Systematic Domain-Based Intent Tool Pruning (IshaToolRouter):
+        // Pure conversation ("Hi", "Hello", "Kaise ho") & direct screen perception ➔ 0 tools (<1KB payload, <1s TTFT)!
+        // Specific domains (Media, Hardware, Social, Calls) ➔ Only that domain's 2-5 tools.
+        val hasPendingToolTurn = history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
+        val routedDeclarations = IshaToolRouter.routeToolsForPrompt(
+            prompt = newPrompt,
+            hasImage = (imageBytes != null && imageBytes.isNotEmpty()),
+            hasPendingToolTurn = hasPendingToolTurn
+        )
+
+        if (routedDeclarations != null && routedDeclarations.size() > 0) {
             val tools = JsonArray().apply {
                 val toolHolder = JsonObject()
-                toolHolder.add("function_declarations", IshaToolRegistry.getGeminiToolDeclarations())
+                toolHolder.add("function_declarations", routedDeclarations)
                 add(toolHolder)
             }
             root.add("tools", tools)
@@ -599,17 +652,16 @@ class GeminiChatService(private val context: Context) {
                 add("function_calling_config", fnCallingConfig)
             }
             root.add("tool_config", toolConfig)
+            Log.d(TAG, "Attached ${routedDeclarations.size()} pruned tool declarations for prompt")
+        } else {
+            Log.d(TAG, "⚡ Lean Turn: 0 tools attached for instant sub-second response")
         }
 
-        // 4. Generation Config: Fast dynamic temperature & zero thinking delay for sub-second response
+        // 4. Generation Config: Fast dynamic temperature
         val genConfig = JsonObject().apply {
             addProperty("temperature", getDynamicTemperature(newPrompt))
             addProperty("topP", 0.95)
             addProperty("maxOutputTokens", 4096)
-            val thinking = JsonObject().apply {
-                addProperty("thinkingBudget", 0)
-            }
-            add("thinkingConfig", thinking)
         }
         root.add("generationConfig", genConfig)
 

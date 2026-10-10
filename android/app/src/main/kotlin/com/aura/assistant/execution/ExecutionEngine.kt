@@ -269,6 +269,9 @@ object ExecutionEngine {
                 if (toolResult.error != null) {
                     output.addProperty("error", toolResult.error.message)
                 }
+                toolResult.data?.entrySet()?.forEach { (k, v) ->
+                    if (!output.has(k)) output.add(k, v)
+                }
             }
         }
         toolResult.evidence?.let {

@@ -134,6 +134,9 @@ class GeminiLiveClient(private val context: Context) {
     private var isFallbackAttempt = false
     private var activeVoiceName: String = com.aura.assistant.ui.components.IshaSettingsManager.getSavedVoice(context)
 
+    @Volatile
+    var recentChatContext: String = ""
+
     fun setActiveVoice(voice: String) {
         if (voice.isNotBlank()) {
             activeVoiceName = voice
@@ -359,6 +362,7 @@ class GeminiLiveClient(private val context: Context) {
         try {
             audioTrack?.pause()
             audioTrack?.flush()
+            audioTrack?.setVolume(1.0f)
             audioTrack?.play()
         } catch (_: Exception) {}
         clearAssistantStreamer()
@@ -542,14 +546,17 @@ class GeminiLiveClient(private val context: Context) {
                 }
                 add("generationConfig", genConfig)
 
-                // System Instruction with permanent memories
+                // System Instruction with permanent memories and cross-mode conversation context
                 val sysInstruction = JsonObject().apply {
                     val parts = JsonArray().apply {
                         val part = JsonObject().apply {
-                            addProperty(
-                                "text",
-                                AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = true, language = activeLanguage)
-                            )
+                            val basePrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = true, language = activeLanguage)
+                            val finalPrompt = if (recentChatContext.isNotBlank()) {
+                                "$basePrompt\n\n💬 RECENT CONVERSATION HISTORY (VOICE-TEXT CONTINUITY):\nThe user was just interacting with you in this session. Here are the most recent exchanges for seamless context continuity:\n$recentChatContext"
+                            } else {
+                                basePrompt
+                            }
+                            addProperty("text", finalPrompt)
                         }
                         add(part)
                     }
@@ -557,10 +564,10 @@ class GeminiLiveClient(private val context: Context) {
                 }
                 add("systemInstruction", sysInstruction)
 
-                // Tools in official Bidi camelCase format
+                // Tools in official Bidi camelCase format: Lean core voice tools for sub-second live duplex
                 val toolsArray = JsonArray().apply {
                     val toolHolder = JsonObject()
-                    toolHolder.add("functionDeclarations", IshaToolRegistry.getGeminiToolDeclarations())
+                    toolHolder.add("functionDeclarations", IshaToolRegistry.getPrunedLiveVoiceToolDeclarations())
                     add(toolHolder)
                 }
                 add("tools", toolsArray)
@@ -743,19 +750,17 @@ class GeminiLiveClient(private val context: Context) {
                         // Process VAD for human speech classification and UI visualizer
                         val vadResult = vadDetector.process(shortBuf, readShorts)
 
-                        // ── 1. Acoustic Echo Gate & Intentional User Barge-In ───────────
+                        // ── 1. Acoustic Echo Gate & Adaptive User Barge-In ───
                         val isActivelyPlayingAudio = _liveState.value == AuraLiveState.SPEAKING || System.currentTimeMillis() < (playbackEndTime + 250L)
                         if (isActivelyPlayingAudio) {
                             refreshActivityTimestamp()
                             hasSpokenInTurn = false
                             consecutiveSilenceFrames = 0
 
-                            // User speech barge-in detection (user speech over phone speaker)
-                            // CRITICAL FIX: On physical devices (e.g. LAVA LEX402), phone speaker audio reflects into the mic at RMS ~0.09-0.13.
-                            // To prevent the assistant from interrupting HERSELF, intentional user speech must be clearly louder than speaker echo:
-                            // Require RMS >= 0.22 with speech classification, or RMS >= 0.30 for at least 4 consecutive frames (~160ms).
-                            val isUserSpeechIntent = (vadResult.isSpeech && rms >= 0.22) || rms >= 0.30
-                            if (isUserSpeechIntent) {
+                            // Strict echo-guard: speaker reflection into mic is RMS ~0.09 - 0.13.
+                            // Interruption requires intentional, near-field speech: RMS >= 0.22 (or >= 0.30 if VAD misses)
+                            val isIntentionalBargeIn = (vadResult.isSpeech && rms >= 0.22) || rms >= 0.30
+                            if (isIntentionalBargeIn) {
                                 bargeInConsecutiveFrames++
                                 val frameCopy = ByteArray(readShorts * 2)
                                 for (j in 0 until readShorts) {

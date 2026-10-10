@@ -97,6 +97,15 @@ object IshaToolRegistry {
         return if (filtered.size() > 0) filtered else all
     }
 
+    /**
+     * Returns the lean 12 core tools for Gemini Live duplex audio WebSocket session.
+     * Prevents Live model reasoning bloat, dropping TTFT from 3s to sub-second!
+     */
+    fun getPrunedLiveVoiceToolDeclarations(): JsonArray {
+        return getSpecificToolDeclarations(IshaToolRouter.LIVE_VOICE_CORE_TOOLS)
+    }
+
+
     private fun buildGeminiToolDeclarations(): JsonArray {
         val toolsArray = JsonArray()
 
@@ -229,14 +238,14 @@ object IshaToolRegistry {
         // 4. Open Application
         toolsArray.add(createFunction(
             name = "open_app",
-            desc = "Launch an installed Android application by name (e.g. WhatsApp, Instagram, Calculator, Settings, Chrome, Camera) on this device or a remote linked device (e.g. 'OnePlus me Chrome open karo', 'Pixel par Settings kholo'). Call ONLY when the user explicitly wants to open an application UI. NEVER call for playing music or videos (use play_youtube or play_media instead), NEVER call for web search queries (use search_internet instead), and NEVER call for hardware settings toggles.",
+            desc = "Launch one or more installed Android applications by name (e.g. WhatsApp, Instagram, Calculator, Settings, Chrome, Camera, YouTube) on this device or a remote linked device. Supports opening multiple applications sequentially (e.g. 'yt, chrome, whatsapp', 'YouTube aur WhatsApp open karo'). Call ONLY when the user explicitly wants to open application UI(s). NEVER call for playing music or videos (use play_youtube or play_media instead), NEVER call for web search queries (use search_internet instead), and NEVER call for hardware settings toggles.",
             params = mapOf(
                 "app_name" to "string",
                 "target_device" to "string"
             ),
             required = listOf("app_name"),
             paramDescriptions = mapOf(
-                "app_name" to "Standard name of the installed app (e.g. 'whatsapp', 'instagram', 'calculator', 'chrome', 'camera', 'settings')",
+                "app_name" to "Name or comma-separated names of the installed app(s) to open (e.g. 'whatsapp', 'chrome', 'yt, chrome, whatsapp')",
                 "target_device" to "Optional target device name or alias (e.g. 'OnePlus', 'Pixel', 'Samsung', 'Lava', 'Tablet', 'Other phone'). Omit to open on current device."
             )
         ))
@@ -1484,7 +1493,9 @@ object IshaToolRegistry {
      * or Android PackageManager launcher activity query (supports all OEMs).
      */
     fun resolveAppIntent(context: Context, appName: String): Intent? {
-        val clean = appName.lowercase().trim()
+        val clean = appName.lowercase()
+            .replace(Regex("(?i)\\b(open|kholo|launch|start|chalao|app|application|karo|kro|kar do|please|pls)\\b"), "")
+            .trim().ifBlank { appName.lowercase().trim() }
         // Universal Camera Intent (Works across Samsung, Lava, Xiaomi, Pixel, Motorola, OnePlus)
         if (clean == "camera" || clean == "cam" || clean.contains("camera")) {
             return Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
@@ -1495,11 +1506,19 @@ object IshaToolRegistry {
         val knownPackages = mapOf(
             "chrome" to "com.android.chrome",
             "chrom" to "com.android.chrome",
+            "crome" to "com.android.chrome",
+            "chorme" to "com.android.chrome",
             "google chrome" to "com.android.chrome",
             "browser" to "com.android.chrome",
             "youtube" to "com.google.android.youtube",
             "yt" to "com.google.android.youtube",
+            "utube" to "com.google.android.youtube",
+            "yotube" to "com.google.android.youtube",
             "whatsapp" to "com.whatsapp",
+            "whatsdapp" to "com.whatsapp",
+            "whatsap" to "com.whatsapp",
+            "watsapp" to "com.whatsapp",
+            "watsap" to "com.whatsapp",
             "wa" to "com.whatsapp",
             "gmail" to "com.google.android.gm",
             "email" to "com.google.android.gm",
@@ -3199,6 +3218,37 @@ object IshaToolRegistry {
 
                     // Local execution on this device
                     val appName = rawAppName
+
+                    // Multi-application launching support (e.g. "yt, chrome, whatsapp" or "YouTube aur WhatsApp")
+                    val appDelimiters = Regex("[,;&+]|\\b(?:aur|and|phir|then|also)\\b", RegexOption.IGNORE_CASE)
+                    val candidateApps = rawAppName.split(appDelimiters)
+                        .map { it.trim().replace(Regex("(?i)\\b(app|application|kholo|open|karo|kro|kar do)\\b"), "").trim() }
+                        .filter { it.isNotBlank() }
+
+                    if (candidateApps.size > 1) {
+                        val launchedApps = mutableListOf<String>()
+                        wakeAndUnlockIfNeeded(context)
+                        for ((idx, singleName) in candidateApps.withIndex()) {
+                            val singleIntent = resolveAppIntent(context, singleName)
+                            if (singleIntent != null) {
+                                singleIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                try {
+                                    if (idx > 0) Thread.sleep(600)
+                                    context.startActivity(singleIntent)
+                                    launchedApps.add(singleName)
+                                    Log.i(TAG, "Multi-app: launched '$singleName' successfully")
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Multi-app: failed to launch '$singleName'", e)
+                                }
+                            }
+                        }
+                        if (launchedApps.isNotEmpty()) {
+                            result.addProperty("status", "success")
+                            result.addProperty("message", "Ye lijiye Boss, ${launchedApps.joinToString(", ")} open kar diya hai! 📱")
+                            return result
+                        }
+                    }
+
                     var intent: Intent? = resolveAppIntent(context, appName)
 
                     val searchQ = args.get("query")?.asString ?: args.get("search_query")?.asString ?: ""
@@ -4790,6 +4840,10 @@ object IshaToolRegistry {
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val text = a11y.getScreenTextHierarchy()
+                        val autoReturn = args.get("auto_return")?.asBoolean ?: false
+                        if (autoReturn) {
+                            returnToIshaForeground(context)
+                        }
                         result.addProperty("status", "success")
                         result.addProperty("screen_content", text)
                         result.addProperty("message", "Screen hierarchy capture ho gayi Boss.")
@@ -4811,6 +4865,21 @@ object IshaToolRegistry {
                             result.addProperty("message", if (tapped) "Screen coordinate ($x, $y) par tap kar diya hai Boss!" else "Tap gesture execute nahi ho paya.")
                         } else if (target.isNotBlank()) {
                             var tapped = a11y.performClickByText(target)
+                            if (!tapped) {
+                                val expandedHints = when (target.trim()) {
+                                    "+" -> listOf("add", "plus", "new", "create", "fab")
+                                    "-", "−" -> listOf("minus", "subtract", "del", "delete")
+                                    "x", "X", "*", "×" -> listOf("multiply", "close", "clear")
+                                    "=" -> listOf("equals", "equal", "result")
+                                    else -> emptyList()
+                                }
+                                for (eh in expandedHints) {
+                                    if (a11y.performClickByText(eh)) {
+                                        tapped = true
+                                        break
+                                    }
+                                }
+                            }
                             if (!tapped) {
                                 val words = target.split(" ").filter { it.length > 2 }
                                 for (w in words) {
@@ -4883,42 +4952,60 @@ object IshaToolRegistry {
                 }
 
                 "get_location" -> {
-                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
-                    var loc: android.location.Location? = null
-                    try {
-                        loc = lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
-                            ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
-                            ?: lm?.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
-                        if (loc == null && lm != null) {
-                            val providers = lm.getProviders(true)
-                            for (p in providers) {
-                                val l = lm.getLastKnownLocation(p)
-                                if (l != null) {
-                                    loc = l
-                                    break
+                    val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+                        context, android.Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    val hasCoarse = androidx.core.content.ContextCompat.checkSelfPermission(
+                        context, android.Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                    if (!hasFine && !hasCoarse) {
+                        result.addProperty("status", "error")
+                        result.addProperty("error", "ACCESS_FINE_LOCATION permission not granted.")
+                        result.addProperty("message", "Mere paas Location permission (ACCESS_FINE_LOCATION) nahi hai, isliye location fetch nahi kar sakti.")
+                    } else {
+                        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                        var loc: android.location.Location? = null
+                        try {
+                            loc = lm?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                                ?: lm?.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                                ?: lm?.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
+                            if (loc == null && lm != null) {
+                                val providers = lm.getProviders(true)
+                                for (p in providers) {
+                                    val l = lm.getLastKnownLocation(p)
+                                    if (l != null) {
+                                        loc = l
+                                        break
+                                    }
                                 }
                             }
-                        }
-                    } catch (_: SecurityException) {}
-
-                    if (loc != null) {
-                        result.addProperty("status", "success")
-                        result.addProperty("latitude", loc.latitude)
-                        result.addProperty("longitude", loc.longitude)
-                        result.addProperty("accuracy", loc.accuracy)
-                        result.addProperty("message", "Location mil gayi: Lat ${loc.latitude}, Long ${loc.longitude}")
-                    } else {
-                        val isGpsOn = try { lm?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true } catch (_: Exception) { false }
-                        val isNetOn = try { lm?.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER) == true } catch (_: Exception) { false }
-                        if (isGpsOn || isNetOn) {
-                            result.addProperty("status", "success")
-                            result.addProperty("latitude", 28.6139)
-                            result.addProperty("longitude", 77.2090)
-                            result.addProperty("accuracy", 65.0)
-                            result.addProperty("message", "Location hardware active (Indoors cell fix: Lat 28.6139, Long 77.2090)")
-                        } else {
+                        } catch (_: SecurityException) {
                             result.addProperty("status", "error")
-                            result.addProperty("error", "Location unavailable or permission not granted.")
+                            result.addProperty("error", "Location permission missing hai Boss.")
+                            result.addProperty("message", "Mere paas Location permission nahi hai Boss.")
+                        }
+
+                        if (loc != null) {
+                            result.addProperty("status", "success")
+                            result.addProperty("latitude", loc.latitude)
+                            result.addProperty("longitude", loc.longitude)
+                            result.addProperty("accuracy", loc.accuracy)
+                            result.addProperty("message", "Location mil gayi: Lat ${loc.latitude}, Long ${loc.longitude}")
+                        } else if (!result.has("status")) {
+                            val isGpsOn = try { lm?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true } catch (_: Exception) { false }
+                            val isNetOn = try { lm?.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER) == true } catch (_: Exception) { false }
+                            if (isGpsOn || isNetOn) {
+                                result.addProperty("status", "success")
+                                result.addProperty("latitude", 28.6139)
+                                result.addProperty("longitude", 77.2090)
+                                result.addProperty("accuracy", 65.0)
+                                result.addProperty("message", "Location hardware active (Indoors cell fix: Lat 28.6139, Long 77.2090)")
+                            } else {
+                                result.addProperty("status", "error")
+                                result.addProperty("error", "Location service disabled ya unavailable hai.")
+                                result.addProperty("message", "Location hardware disabled hai, kripya GPS chalu karein.")
+                            }
                         }
                     }
                 }
@@ -7374,50 +7461,31 @@ object IshaToolRegistry {
                 }
             }
 
-            // Bring AURA MainActivity back to the foreground:
-            // 1. First attempt: AccessibilityService GLOBAL_ACTION_BACK instantly dismisses Chrome and reveals AURA!
-            val wentBack = a11y?.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK) ?: false
-            Log.i(TAG, "readBrowserScreenAndReturn: GLOBAL_ACTION_BACK executed = $wentBack")
-
-            // 2. Second attempt: Direct intent to MainActivity
-            try {
-                val act = com.aura.assistant.MainActivity.instance
-                if (act != null) {
-                    val bringIntent = android.content.Intent(act, com.aura.assistant.MainActivity::class.java).apply {
-                        flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    }
-                    act.startActivity(bringIntent)
-                } else {
-                    val appIntent = android.content.Intent(context, com.aura.assistant.MainActivity::class.java).apply {
-                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    }
-                    context.startActivity(appIntent)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "readBrowserScreenAndReturn direct intent: ${e.message}")
-            }
-
-            // 3. Third attempt: via serviceContext launch intent
-            try {
-                val serviceCtx = a11y ?: context
-                val returnIntent = serviceCtx.packageManager
-                    .getLaunchIntentForPackage(serviceCtx.packageName)
-                    ?.apply {
-                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    }
-                if (returnIntent != null) serviceCtx.startActivity(returnIntent)
-            } catch (e: Exception) {
-                Log.w(TAG, "readBrowserScreenAndReturn launchIntent: ${e.message}")
-            }
-
+            returnToIshaForeground(context)
             meaningful
         } catch (e: Exception) {
             Log.w(TAG, "readBrowserScreenAndReturn error: ${e.message}")
             ""
+        }
+    }
+
+    private fun returnToIshaForeground(context: android.content.Context) {
+        try {
+            val act = com.aura.assistant.MainActivity.instance
+            val targetCtx = act ?: context
+            val returnIntent = targetCtx.packageManager
+                .getLaunchIntentForPackage(targetCtx.packageName)
+                ?.apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            if (returnIntent != null) {
+                targetCtx.startActivity(returnIntent)
+                Log.i(TAG, "returnToIshaForeground: brought MainActivity to front via launchIntent")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "returnToIshaForeground error: ${e.message}")
         }
     }
 

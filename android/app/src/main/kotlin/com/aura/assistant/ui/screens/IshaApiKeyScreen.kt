@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import com.aura.assistant.config.Secrets
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -507,6 +508,108 @@ fun IshaApiKeyScreen(
                         tint = ChatGptTextMuted,
                         modifier = Modifier.size(18.dp)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── OpenRouter Fast Brain (Optional / Pre-Configured) ──────────────
+            var currentOpenRouterKey by remember { mutableStateOf(ApiKeyManager.getOpenRouterKey(context)) }
+            var inputOpenRouterKey by remember { mutableStateOf(currentOpenRouterKey) }
+            val hasOpenRouter = currentOpenRouterKey.isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
+
+            Surface(
+                color = ChatGptCard,
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF6366F1).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = null,
+                                tint = Color(0xFF818CF8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "OpenRouter Fast Brain",
+                                style = AuraTypography.titleMedium.copy(
+                                    color = ChatGptTextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            )
+                            Text(
+                                text = if (hasOpenRouter) "⚡ Active (280ms Llama 3.1)" else "Optional (Sub-second speed)",
+                                style = AuraTypography.bodySmall.copy(
+                                    color = if (hasOpenRouter) ChatGptAccentGreen else ChatGptTextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = inputOpenRouterKey,
+                        onValueChange = { inputOpenRouterKey = it },
+                        placeholder = { Text("sk-or-v1-...", color = ChatGptTextMuted, fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF818CF8),
+                            unfocusedBorderColor = ChatGptBorder,
+                            focusedTextColor = ChatGptTextPrimary,
+                            unfocusedTextColor = ChatGptTextPrimary
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        if (hasOpenRouter) {
+                            TextButton(onClick = {
+                                ApiKeyManager.clearOpenRouterKey(context)
+                                currentOpenRouterKey = ""
+                                inputOpenRouterKey = ""
+                                Toast.makeText(context, "OpenRouter key cleared", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Text("Clear", color = ChatGptTextMuted, fontSize = 12.sp)
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                if (inputOpenRouterKey.isNotBlank()) {
+                                    ApiKeyManager.saveOpenRouterKey(context, inputOpenRouterKey.trim())
+                                    currentOpenRouterKey = inputOpenRouterKey.trim()
+                                    Toast.makeText(context, "OpenRouter key saved! ⚡", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Save Fast Key", fontSize = 12.sp, color = Color.White)
+                        }
+                    }
                 }
             }
 

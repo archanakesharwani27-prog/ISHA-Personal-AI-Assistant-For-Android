@@ -611,12 +611,20 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             lowerPrompt.contains("page padho") ||
             lowerPrompt.contains("padh kar") ||
             lowerPrompt.contains("padh kr") ||
+            lowerPrompt.contains("padh do") ||
+            lowerPrompt.contains("padh lo") ||
+            lowerPrompt.contains("padho") ||
             lowerPrompt.contains("kya likha") ||
+            lowerPrompt.contains("kya likha hai") ||
             lowerPrompt.contains("summarize") ||
             lowerPrompt.contains("read this") ||
+            lowerPrompt.contains("read screen") ||
+            lowerPrompt.contains("what's on screen") ||
+            lowerPrompt.contains("what is on my screen") ||
             lowerPrompt.contains("batao isme") ||
             lowerPrompt.contains("kiski post") ||
-            lowerPrompt.contains("kisne bheja")
+            lowerPrompt.contains("kisne bheja") ||
+            lowerPrompt.contains("ye dekho")
         )
         var autoScreenCaptureBytes: ByteArray? = null
         if (isScreenRelated) {
@@ -840,6 +848,20 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     fun startVoiceMode() {
         _isVoiceModeActive.value = true
+
+        // 🔗 Unbroken Context Bridge: Carry recent text conversation turns into Voice Mode
+        val recentMsgs = _chatMessages.value.filter { it.text.isNotBlank() && !it.isStreaming }.takeLast(6)
+        if (recentMsgs.isNotEmpty()) {
+            val historySnippet = recentMsgs.joinToString("\n") { msg ->
+                val role = if (msg.role == MessageRole.USER) "Boss" else "Isha"
+                "$role: ${msg.text.take(160)}"
+            }
+            liveClient.recentChatContext = historySnippet
+            Log.i(TAG, "🔗 Bridged ${recentMsgs.size} recent chat turns into Voice Mode context")
+        } else {
+            liveClient.recentChatContext = ""
+        }
+
         val app = getApplication<Application>()
         try {
             val pauseIntent = Intent(app, WakeWordService::class.java).apply {

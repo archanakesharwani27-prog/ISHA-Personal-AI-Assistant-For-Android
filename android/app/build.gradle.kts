@@ -15,6 +15,8 @@ val localProperties = Properties().apply {
     }
 }
 val geminiApiKey: String = localProperties.getProperty("GEMINI_API_KEY") ?: ""
+val groqApiKey: String = localProperties.getProperty("GROQ_API_KEY") ?: ""
+val openrouterApiKey: String = localProperties.getProperty("OPENROUTER_API_KEY") ?: ""
 
 android {
     namespace = "com.aura.assistant"
@@ -28,6 +30,8 @@ android {
         versionName = "2.1.0"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
+        buildConfigField("String", "GROQ_API_KEY", "\"$groqApiKey\"")
+        buildConfigField("String", "OPENROUTER_API_KEY", "\"$openrouterApiKey\"")
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

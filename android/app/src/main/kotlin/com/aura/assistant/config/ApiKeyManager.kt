@@ -20,6 +20,7 @@ object ApiKeyManager {
     private const val TAG = "ApiKeyManager"
     private const val PREFS_NAME = "aura_api_config"
     private const val KEY_USER_API_KEY = "user_gemini_api_key"
+    private const val KEY_OPENROUTER_API_KEY = "user_openrouter_api_key"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -60,6 +61,59 @@ object ApiKeyManager {
     fun hasCustomKey(context: Context): Boolean {
         return getApiKey(context).isNotBlank()
     }
+
+    /**
+     * Retrieves the stored OpenRouter API key if present and non-blank.
+     */
+    fun getOpenRouterKey(context: Context): String {
+        return getPrefs(context).getString(KEY_OPENROUTER_API_KEY, "")?.trim() ?: ""
+    }
+
+    /**
+     * Persistently saves a new OpenRouter API key.
+     */
+    fun saveOpenRouterKey(context: Context, key: String) {
+        val clean = key.trim()
+        getPrefs(context).edit().putString(KEY_OPENROUTER_API_KEY, clean).apply()
+        Log.i(TAG, "Saved custom OpenRouter API key (length=${clean.length})")
+    }
+
+    /**
+     * Clears the user-configured OpenRouter API key from storage.
+     */
+    fun clearOpenRouterKey(context: Context) {
+        getPrefs(context).edit().remove(KEY_OPENROUTER_API_KEY).apply()
+        Log.i(TAG, "Cleared user OpenRouter API key")
+    }
+
+    /**
+     * Returns true if a custom OpenRouter key is saved.
+     */
+    fun hasOpenRouterKey(context: Context): Boolean {
+        return getOpenRouterKey(context).isNotBlank()
+    }
+
+    private const val KEY_GROQ_API_KEY = "user_groq_api_key"
+
+    fun getGroqKey(context: Context): String {
+        return getPrefs(context).getString(KEY_GROQ_API_KEY, "")?.trim() ?: ""
+    }
+
+    fun saveGroqKey(context: Context, key: String) {
+        val clean = key.trim()
+        getPrefs(context).edit().putString(KEY_GROQ_API_KEY, clean).apply()
+        Log.i(TAG, "Saved custom Groq API key (length=${clean.length})")
+    }
+
+    fun clearGroqKey(context: Context) {
+        getPrefs(context).edit().remove(KEY_GROQ_API_KEY).apply()
+        Log.i(TAG, "Cleared user Groq API key")
+    }
+
+    fun hasGroqKey(context: Context): Boolean {
+        return getGroqKey(context).isNotBlank()
+    }
+
 
     /**
      * Returns a safely masked version of the key for UI presentation.

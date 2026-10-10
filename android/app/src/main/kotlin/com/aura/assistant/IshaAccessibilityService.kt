@@ -1621,6 +1621,19 @@ open class IshaAccessibilityService : AccessibilityService() {
                 }
             }
         } catch (_: Exception) {}
+
+        // Self-healing popup dismissal: If a modal popup/dialog is obstructing the view, dismiss it and retry once
+        try {
+            val (dismissed, _) = dismissInterruptingDialogsOrAds(fallbackToBack = true)
+            if (dismissed) {
+                Thread.sleep(250)
+                val retryRoot = rootInActiveWindow
+                if (retryRoot != null && clickFirstMatch(retryRoot, listOf(text.lowercase()))) {
+                    return true
+                }
+            }
+        } catch (_: Exception) {}
+
         return false
     }
 
@@ -2713,21 +2726,47 @@ open class IshaAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isNodeOrParentClickable(node: AccessibilityNodeInfo?): Boolean {
+        var curr = node
+        var depth = 0
+        while (curr != null && depth < 5) {
+            if (curr.isClickable) return true
+            curr = curr.parent
+            depth++
+        }
+        return false
+    }
+
+    private fun findAllNodes(node: AccessibilityNodeInfo?, hints: List<String>, outList: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
+        if (node == null || depth > 30) return
+        val label = (node.contentDescription?.toString() ?: node.text?.toString() ?: "").lowercase().trim()
+        val resId = (node.viewIdResourceName?.toString() ?: "").lowercase()
+        val isMatch = hints.any { hint ->
+            val h = hint.lowercase().trim()
+            if (h.isEmpty()) false
+            else (label.isNotEmpty() && (label.contains(h) || (h.length > 3 && h.contains(label) && label.length > 2))) ||
+                 (resId.isNotEmpty() && resId.contains(h))
+        }
+        if (isMatch) {
+            outList.add(node)
+        }
+        for (i in 0 until node.childCount) {
+            findAllNodes(node.getChild(i), hints, outList, depth + 1)
+        }
+    }
+
     private fun clickFirstMatch(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
-        val match = findNode(root, hints) ?: return false
-        return clickNodeOrTap(match)
+        val matches = mutableListOf<AccessibilityNodeInfo>()
+        findAllNodes(root, hints, matches)
+        if (matches.isEmpty()) return false
+        val bestMatch = matches.firstOrNull { isNodeOrParentClickable(it) } ?: matches.first()
+        return clickNodeOrTap(bestMatch)
     }
 
     private fun findNode(node: AccessibilityNodeInfo?, hints: List<String>): AccessibilityNodeInfo? {
-        if (node == null) return null
-        val label = (node.contentDescription?.toString() ?: node.text?.toString() ?: "").lowercase()
-        val resId = (node.viewIdResourceName?.toString() ?: "").lowercase()
-        if ((label.isNotEmpty() && hints.any { label.contains(it) }) || (resId.isNotEmpty() && hints.any { resId.contains(it) })) return node
-        for (i in 0 until node.childCount) {
-            val found = findNode(node.getChild(i), hints)
-            if (found != null) return found
-        }
-        return null
+        val matches = mutableListOf<AccessibilityNodeInfo>()
+        findAllNodes(node, hints, matches)
+        return matches.firstOrNull { isNodeOrParentClickable(it) } ?: matches.firstOrNull()
     }
 
     // ── Universal Panda HandsFree Mobile Agent Primitives ────────────────────
