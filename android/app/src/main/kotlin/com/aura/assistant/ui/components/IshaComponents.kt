@@ -188,7 +188,7 @@ fun IshaTopBar(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     IshaNeuralLotus(
-                        lotusSize = 22.dp,
+                        lotusSize = 26.dp,
                         modifier = Modifier.graphicsLayer {
                             rotationZ = animatedRotation
                         }
@@ -1489,26 +1489,34 @@ fun IshaNeuralLotus(
             val cx = this.size.width / 2f
             val cy = this.size.height / 2f
             val maxR = minOf(cx, cy)
+            val isCompact = lotusSize < 40.dp
 
-            // Ambient background glow
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        ChatGptAccentGreen.copy(alpha = 0.28f * auraAlpha),
-                        ChatGptAccentCyan.copy(alpha = 0.12f * auraAlpha),
-                        Color.Transparent
+            // Ambient background glow (only on large displays; disabled in compact icon mode to prevent blur)
+            if (!isCompact) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            ChatGptAccentGreen.copy(alpha = 0.28f * auraAlpha),
+                            ChatGptAccentCyan.copy(alpha = 0.12f * auraAlpha),
+                            Color.Transparent
+                        ),
+                        center = Offset(cx, cy),
+                        radius = maxR * 0.95f
                     ),
                     center = Offset(cx, cy),
                     radius = maxR * 0.95f
-                ),
-                center = Offset(cx, cy),
-                radius = maxR * 0.95f
-            )
+                )
+            }
+
+            // Dynamic stroke widths scaled to icon size
+            val primaryStrokePx = if (isCompact) (maxR * 0.11f).coerceIn(1.4f, 2.6f) else 2.2f.dp.toPx()
+            val subStrokePx = if (isCompact) (maxR * 0.08f).coerceIn(1.0f, 2.0f) else 1.5f.dp.toPx()
+            val spineStrokePx = if (isCompact) (maxR * 0.07f).coerceIn(1.0f, 1.8f) else 1.2f.dp.toPx()
 
             // Helper to draw a single petal
             fun drawPetal(angleDeg: Float, scale: Float, alpha: Float, isPrimary: Boolean) {
                 rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
-                    val len = maxR * 0.72f * scale
+                    val len = maxR * (if (isCompact) 0.78f else 0.72f) * scale
                     val w = maxR * 0.38f * scale
 
                     val petalPath = Path().apply {
@@ -1526,41 +1534,56 @@ fun IshaNeuralLotus(
                         close()
                     }
 
-                    // Petal Gradient Fill
+                    // Petal Gradient Fill — high contrast & vivid in compact mode
                     drawPath(
                         path = petalPath,
                         brush = Brush.verticalGradient(
                             colors = if (isPrimary) {
-                                listOf(
-                                    ChatGptAccentCyan.copy(alpha = 0.18f * alpha),
-                                    ChatGptAccentGreen.copy(alpha = 0.45f * alpha),
-                                    ChatGptAccentCyan.copy(alpha = 0.85f * alpha)
-                                )
+                                if (isCompact) {
+                                    listOf(
+                                        Color(0xFF00E5FF).copy(alpha = 0.60f),
+                                        Color(0xFF10B981).copy(alpha = 0.85f),
+                                        Color(0xFF00E5FF).copy(alpha = 0.95f)
+                                    )
+                                } else {
+                                    listOf(
+                                        ChatGptAccentCyan.copy(alpha = 0.18f * alpha),
+                                        ChatGptAccentGreen.copy(alpha = 0.45f * alpha),
+                                        ChatGptAccentCyan.copy(alpha = 0.85f * alpha)
+                                    )
+                                }
                             } else {
-                                listOf(
-                                    ChatGptAccentGreen.copy(alpha = 0.12f * alpha),
-                                    ChatGptAccentCyan.copy(alpha = 0.32f * alpha)
-                                )
+                                if (isCompact) {
+                                    listOf(
+                                        Color(0xFF10B981).copy(alpha = 0.45f),
+                                        Color(0xFF00E5FF).copy(alpha = 0.70f)
+                                    )
+                                } else {
+                                    listOf(
+                                        ChatGptAccentGreen.copy(alpha = 0.12f * alpha),
+                                        ChatGptAccentCyan.copy(alpha = 0.32f * alpha)
+                                    )
+                                }
                             },
                             startY = cy,
                             endY = cy - len
                         )
                     )
 
-                    // Luminous Petal Outline
+                    // Luminous Petal Outline — crisp & razor sharp
                     drawPath(
                         path = petalPath,
-                        color = if (isPrimary) ChatGptAccentCyan.copy(alpha = 0.80f * alpha) else ChatGptAccentGreen.copy(alpha = 0.55f * alpha),
-                        style = Stroke(width = if (isPrimary) 2.2f.dp.toPx() else 1.5f.dp.toPx())
+                        color = if (isPrimary) Color(0xFF00E5FF) else Color(0xFF10B981).copy(alpha = 0.9f),
+                        style = Stroke(width = if (isPrimary) primaryStrokePx else subStrokePx)
                     )
 
                     // Center luminous spine
                     if (isPrimary) {
                         drawLine(
-                            color = Color.White.copy(alpha = 0.65f * alpha),
-                            start = Offset(cx, cy - 8f),
-                            end = Offset(cx, cy - len * 0.82f),
-                            strokeWidth = 1.2f.dp.toPx()
+                            color = Color.White.copy(alpha = if (isCompact) 0.95f else 0.65f * alpha),
+                            start = Offset(cx, cy - (if (isCompact) 1f else 8f)),
+                            end = Offset(cx, cy - len * 0.85f),
+                            strokeWidth = spineStrokePx
                         )
                     }
                 }
@@ -1578,14 +1601,19 @@ fun IshaNeuralLotus(
                 drawPetal(angleDeg = angle, scale = breatheScale * 0.72f, alpha = 0.45f, isPrimary = false)
             }
 
-            // Central Radiant Core Spark
-            val coreR = 14f.dp.toPx() * corePulse
+            // Central Radiant Core Spark — proportional radius so it never blows out small sizes!
+            val coreR = if (isCompact) {
+                (maxR * 0.22f) * corePulse
+            } else {
+                14f.dp.toPx() * corePulse
+            }
+
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
                         Color.White,
-                        ChatGptAccentCyan.copy(alpha = 0.95f),
-                        ChatGptAccentGreen.copy(alpha = 0.55f),
+                        Color(0xFF00E5FF).copy(alpha = 0.95f),
+                        Color(0xFF10B981).copy(alpha = 0.55f),
                         Color.Transparent
                     ),
                     center = Offset(cx, cy),
@@ -1593,6 +1621,13 @@ fun IshaNeuralLotus(
                 ),
                 center = Offset(cx, cy),
                 radius = coreR
+            )
+
+            // Sharp pinpoint white diamond center for crisp icon definition
+            drawCircle(
+                color = Color.White,
+                radius = (maxR * (if (isCompact) 0.10f else 0.05f)).coerceAtLeast(1.5f),
+                center = Offset(cx, cy)
             )
         }
     }

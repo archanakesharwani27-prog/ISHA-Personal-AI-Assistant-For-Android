@@ -471,7 +471,7 @@ fun IshaOpeningLaunchAnimation(
         val currentRotation = (easeP1 * 720f) + (easeP2 * 180f)
 
         val initialScale = 0.35f + (0.65f * easeP1)
-        val targetScaleRatio = with(density) { 22.dp.toPx() / 120.dp.toPx() }
+        val targetScaleRatio = with(density) { 26.dp.toPx() / 120.dp.toPx() }
         val currentScale = if (phase2Frac > 0f) {
             1.0f + (targetScaleRatio - 1.0f) * easeP2
         } else {
