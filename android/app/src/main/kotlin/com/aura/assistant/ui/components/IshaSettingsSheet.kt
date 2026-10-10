@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import com.aura.assistant.config.ApiKeyManager
@@ -85,66 +87,57 @@ fun IshaSettingsSheet(
     val languages = listOf("Auto-detect", "English", "Hindi", "Hinglish")
     val textSizes = listOf("Small", "Default", "Large")
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = ChatGptSidebar,
-        contentColor = ChatGptTextPrimary,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(ChatGptBorder)
+    BackHandler(onBack = onDismiss)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = ChatGptBackground,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "Settings",
+                            style = AuraTypography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = ChatGptTextPrimary
+                            )
+                        )
+                        Text(
+                            text = "ISHA 2.0 Engine & Preferences",
+                            style = AuraTypography.bodySmall.copy(
+                                color = ChatGptTextMuted,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = ChatGptTextPrimary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = ChatGptBackground,
+                    titleContentColor = ChatGptTextPrimary,
+                    navigationIconContentColor = ChatGptTextPrimary
                 )
-            }
-        },
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ) {
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .fillMaxSize()
+                .padding(innerPadding)
                 .verticalScroll(scrollState)
                 .padding(horizontal = 18.dp)
                 .padding(bottom = 36.dp)
         ) {
-            // ── Header ──────────────────────────────────────────────────────
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(ChatGptAccentGreen, ChatGptAccentCyan))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "ISHA Settings",
-                        style = AuraTypography.headlineMedium.copy(fontSize = 18.sp)
-                    )
-                    Text(
-                        text = "Personalize your AI assistant",
-                        style = AuraTypography.bodyMedium.copy(color = ChatGptTextMuted, fontSize = 12.sp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             // ── User Account Card ───────────────────────────────────────────
             Surface(

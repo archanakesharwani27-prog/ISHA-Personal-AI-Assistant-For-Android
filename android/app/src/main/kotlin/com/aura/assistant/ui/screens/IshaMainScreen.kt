@@ -4,7 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -14,6 +16,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import android.graphics.Bitmap
@@ -288,8 +292,12 @@ fun IshaMainScreen(
                 )
             }
 
-            // ── Settings Sheet ────────────────────────────────────────────────
-            if (isSettingsVisible) {
+            // ── Settings Screen ───────────────────────────────────────────────
+            AnimatedVisibility(
+                visible = isSettingsVisible,
+                enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
+                exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it })
+            ) {
                 IshaSettingsSheet(
                     isWakeWordEnabled = isWakeWordEnabled,
                     isShakeEnabled = isShakeEnabled,

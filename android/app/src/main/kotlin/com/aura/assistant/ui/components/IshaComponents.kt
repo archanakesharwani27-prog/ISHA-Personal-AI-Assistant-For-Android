@@ -16,6 +16,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -61,6 +71,26 @@ fun IshaTopBar(
     onNewChat: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "TopBarOnlinePulse")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dotAlpha"
+    )
+    val dotScale by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dotScale"
+    )
+
     TopAppBar(
         modifier = modifier,
         colors = TopAppBarDefaults.topAppBarColors(
@@ -70,12 +100,24 @@ fun IshaTopBar(
             actionIconContentColor = ChatGptTextPrimary
         ),
         navigationIcon = {
-            IconButton(onClick = onOpenDrawer) {
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Open Sidebar",
-                    tint = ChatGptTextPrimary
-                )
+            Surface(
+                color = ChatGptCard,
+                shape = CircleShape,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onOpenDrawer)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Open Sidebar",
+                        tint = ChatGptTextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         },
         title = {
@@ -100,10 +142,15 @@ fun IshaTopBar(
                                 color = ChatGptTextPrimary
                             )
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(7.dp))
                         Box(
                             modifier = Modifier
-                                .size(6.dp)
+                                .size(7.dp)
+                                .graphicsLayer {
+                                    scaleX = dotScale
+                                    scaleY = dotScale
+                                    alpha = dotAlpha
+                                }
                                 .clip(CircleShape)
                                 .background(ChatGptAccentGreen)
                         )
@@ -112,12 +159,24 @@ fun IshaTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onNewChat) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = "New Chat",
-                    tint = ChatGptTextPrimary
-                )
+            Surface(
+                color = ChatGptCard,
+                shape = CircleShape,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+                modifier = Modifier
+                    .padding(end = 12.dp)
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onNewChat)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "New Chat",
+                        tint = ChatGptTextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     )
@@ -1024,6 +1083,9 @@ fun ChatMessageItem(
         else -> 1.0f
     }
 
+    val coroutineScope = rememberCoroutineScope()
+    var isCopied by remember { mutableStateOf(false) }
+
     if (isTool) {
         ToolExecutionStepPill(message = message, textScale = textScale, modifier = modifier)
         return
@@ -1059,14 +1121,27 @@ fun ChatMessageItem(
                 }
             }
             Surface(
-                color = ChatGptUserBubble,
+                color = Color.Transparent,
                 shape = RoundedCornerShape(
                     topStart = 20.dp,
                     topEnd = 20.dp,
                     bottomStart = 20.dp,
                     bottomEnd = 4.dp
                 ),
-                modifier = Modifier.widthIn(max = 295.dp)
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E323D)),
+                modifier = Modifier
+                    .widthIn(max = 295.dp)
+                    .background(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0xFF252730), Color(0xFF1B1C22))
+                        ),
+                        shape = RoundedCornerShape(
+                            topStart = 20.dp,
+                            topEnd = 20.dp,
+                            bottomStart = 20.dp,
+                            bottomEnd = 4.dp
+                        )
+                    )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     if (!message.imageUri.isNullOrBlank()) {
@@ -1121,21 +1196,52 @@ fun ChatMessageItem(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Copy button
+                    // Copy button with animated checkmark confirmation
                     IconButton(
                         onClick = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             clipboard.setPrimaryClip(ClipData.newPlainText("ISHA Message", message.text))
                             Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                            isCopied = true
+                            coroutineScope.launch {
+                                delay(2000L)
+                                isCopied = false
+                            }
                         },
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(if (isCopied) 56.dp else 24.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy",
-                            tint = ChatGptTextMuted,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        AnimatedContent(targetState = isCopied, label = "CopyAnim") { copied ->
+                            if (copied) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(ChatGptAccentGreen.copy(alpha = 0.15f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Copied",
+                                        tint = ChatGptAccentGreen,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Copied",
+                                        color = ChatGptAccentGreen,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.ContentCopy,
+                                    contentDescription = "Copy",
+                                    tint = ChatGptTextMuted,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
 
                     // Read Aloud (TTS)
@@ -1309,19 +1415,185 @@ private fun CodeBlockCard(code: String, onCopy: () -> Unit) {
     }
 }
 
-// ── 4. ISHA Empty State (Welcome Greeting + 4 Prompt Cards) ──────────────────
+// ── 4. ISHA Neural Lotus AI Animation ─────────────────────────────────────────
+@Composable
+fun IshaNeuralLotus(
+    modifier: Modifier = Modifier,
+    lotusSize: Dp = 150.dp
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "NeuralLotusInfinite")
+
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(14000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "lotusRotation"
+    )
+
+    val breatheScale by infiniteTransition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "lotusBreathe"
+    )
+
+    val corePulse by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.22f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "corePulse"
+    )
+
+    val auraAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "auraAlpha"
+    )
+
+    Box(
+        modifier = modifier.size(lotusSize),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cx = this.size.width / 2f
+            val cy = this.size.height / 2f
+            val maxR = minOf(cx, cy)
+
+            // Ambient background glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        ChatGptAccentGreen.copy(alpha = 0.28f * auraAlpha),
+                        ChatGptAccentCyan.copy(alpha = 0.12f * auraAlpha),
+                        Color.Transparent
+                    ),
+                    center = Offset(cx, cy),
+                    radius = maxR * 0.95f
+                ),
+                center = Offset(cx, cy),
+                radius = maxR * 0.95f
+            )
+
+            // Helper to draw a single petal
+            fun drawPetal(angleDeg: Float, scale: Float, alpha: Float, isPrimary: Boolean) {
+                rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
+                    val len = maxR * 0.72f * scale
+                    val w = maxR * 0.38f * scale
+
+                    val petalPath = Path().apply {
+                        moveTo(cx, cy)
+                        cubicTo(
+                            cx - w, cy - len * 0.45f,
+                            cx - w * 0.7f, cy - len * 0.9f,
+                            cx, cy - len
+                        )
+                        cubicTo(
+                            cx + w * 0.7f, cy - len * 0.9f,
+                            cx + w, cy - len * 0.45f,
+                            cx, cy
+                        )
+                        close()
+                    }
+
+                    // Petal Gradient Fill
+                    drawPath(
+                        path = petalPath,
+                        brush = Brush.verticalGradient(
+                            colors = if (isPrimary) {
+                                listOf(
+                                    ChatGptAccentCyan.copy(alpha = 0.18f * alpha),
+                                    ChatGptAccentGreen.copy(alpha = 0.45f * alpha),
+                                    ChatGptAccentCyan.copy(alpha = 0.85f * alpha)
+                                )
+                            } else {
+                                listOf(
+                                    ChatGptAccentGreen.copy(alpha = 0.12f * alpha),
+                                    ChatGptAccentCyan.copy(alpha = 0.32f * alpha)
+                                )
+                            },
+                            startY = cy,
+                            endY = cy - len
+                        )
+                    )
+
+                    // Luminous Petal Outline
+                    drawPath(
+                        path = petalPath,
+                        color = if (isPrimary) ChatGptAccentCyan.copy(alpha = 0.80f * alpha) else ChatGptAccentGreen.copy(alpha = 0.55f * alpha),
+                        style = Stroke(width = if (isPrimary) 2.2f.dp.toPx() else 1.5f.dp.toPx())
+                    )
+
+                    // Center luminous spine
+                    if (isPrimary) {
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.65f * alpha),
+                            start = Offset(cx, cy - 8f),
+                            end = Offset(cx, cy - len * 0.82f),
+                            strokeWidth = 1.2f.dp.toPx()
+                        )
+                    }
+                }
+            }
+
+            // Draw 3 Primary Petals (120° apart, clockwise rotating)
+            for (i in 0..2) {
+                val angle = (i * 120f) + rotation
+                drawPetal(angleDeg = angle, scale = breatheScale, alpha = 1.0f, isPrimary = true)
+            }
+
+            // Draw 3 Ethereal Sub-Petals (60° offset, counter-rotating at half speed)
+            for (i in 0..2) {
+                val angle = (i * 120f) + 60f - (rotation * 0.5f)
+                drawPetal(angleDeg = angle, scale = breatheScale * 0.72f, alpha = 0.45f, isPrimary = false)
+            }
+
+            // Central Radiant Core Spark
+            val coreR = 14f.dp.toPx() * corePulse
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White,
+                        ChatGptAccentCyan.copy(alpha = 0.95f),
+                        ChatGptAccentGreen.copy(alpha = 0.55f),
+                        Color.Transparent
+                    ),
+                    center = Offset(cx, cy),
+                    radius = coreR
+                ),
+                center = Offset(cx, cy),
+                radius = coreR
+            )
+        }
+    }
+}
+
+// ── 5. Ultra-Clean Minimal Empty State (ChatGPT / Gemini Style) ───────────────
 @Composable
 fun IshaEmptyState(
-    onPromptClick: (String) -> Unit,
+    onPromptClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val promptCards = remember {
-        listOf(
-            "🔦 Flashlight" to "Turn on the flashlight",
-            "📱 WhatsApp"   to "Open WhatsApp",
-            "⏰ Alarm"      to "Set an alarm for 7:00 AM tomorrow",
-            "⚡ Battery"    to "What is my current battery level?"
-        )
+    val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
+    val greeting = remember(currentHour) {
+        when (currentHour) {
+            in 5..11 -> "Good Morning, Boss ☀️"
+            in 12..16 -> "Good Afternoon, Boss ⚡"
+            in 17..21 -> "Good Evening, Boss 🌙"
+            else -> "Good Night, Boss 🌌"
+        }
     }
 
     Column(
@@ -1331,106 +1603,41 @@ fun IshaEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-
-
-        Text(
-            text = "What can I help with today?",
-            style = AuraTypography.headlineMedium.copy(
-                color = ChatGptTextPrimary,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+        IshaNeuralLotus(
+            lotusSize = 170.dp,
+            modifier = Modifier.padding(bottom = 24.dp)
         )
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Text(
+            text = greeting,
+            style = AuraTypography.headlineMedium.copy(
+                color = ChatGptTextPrimary,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.3.sp
+            ),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
 
-        // 2x2 Grid of Prompt Cards
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PromptCard(
-                    title = promptCards[0].first,
-                    prompt = promptCards[0].second,
-                    onClick = { onPromptClick(promptCards[0].second) },
-                    modifier = Modifier.weight(1f)
-                )
-                PromptCard(
-                    title = promptCards[1].first,
-                    prompt = promptCards[1].second,
-                    onClick = { onPromptClick(promptCards[1].second) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+        Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PromptCard(
-                    title = promptCards[2].first,
-                    prompt = promptCards[2].second,
-                    onClick = { onPromptClick(promptCards[2].second) },
-                    modifier = Modifier.weight(1f)
-                )
-                PromptCard(
-                    title = promptCards[3].first,
-                    prompt = promptCards[3].second,
-                    onClick = { onPromptClick(promptCards[3].second) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        Text(
+            text = "ISHA 2.0 Engine Active",
+            style = AuraTypography.bodyMedium.copy(
+                color = ChatGptTextMuted,
+                fontSize = 13.sp,
+                letterSpacing = 0.5.sp
+            ),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }
 
 @Composable
 fun ChatGPTEmptyState(
-    onPromptClick: (String) -> Unit,
+    onPromptClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) = IshaEmptyState(onPromptClick, modifier)
-
-@Composable
-private fun PromptCard(
-    title: String,
-    prompt: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        color = ChatGptCard,
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
-        modifier = modifier
-            .height(84.dp)
-            .clickable(onClick = onClick)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = title,
-                style = AuraTypography.titleMedium.copy(
-                    color = ChatGptTextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = prompt,
-                style = AuraTypography.bodyMedium.copy(
-                    color = ChatGptTextMuted,
-                    fontSize = 11.sp
-                ),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
 
 // ── 5. ChatGPT Capsule Bottom Input Bar ───────────────────────────────────────
 // ── Thumbnail Image Loader ──────────────────────────────────────────────────
@@ -1556,11 +1763,18 @@ fun IshaBottomBar(
             }
         }
 
+        val hasContent = text.isNotBlank() || attachedMedia != null
+        val activeBorder = if (hasContent) {
+            androidx.compose.foundation.BorderStroke(1.dp, ChatGptAccentGreen.copy(alpha = 0.55f))
+        } else {
+            androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder)
+        }
+
         // Input pill bar
         Surface(
             color = ChatGptInputBubble,
             shape = RoundedCornerShape(26.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
+            border = activeBorder,
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -1646,7 +1860,7 @@ fun IshaBottomBar(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(ChatGptTextPrimary)
+                            .background(ChatGptAccentGreen)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ArrowUpward,
@@ -1661,13 +1875,18 @@ fun IshaBottomBar(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(ChatGptBorder)
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(Color(0xFF282B33), Color(0xFF141519))
+                                )
+                            )
+                            .border(1.dp, ChatGptBorder, CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Headphones,
                             contentDescription = "Voice Mode",
-                            tint = ChatGptTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            tint = ChatGptAccentCyan,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
