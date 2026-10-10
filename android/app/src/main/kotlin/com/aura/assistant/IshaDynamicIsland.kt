@@ -22,6 +22,9 @@ import android.util.Log
 import android.view.*
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.AlphaAnimation
+import android.view.animation.Animation
+import android.view.animation.LinearInterpolator
+import android.view.animation.RotateAnimation
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -68,6 +71,7 @@ object IshaDynamicIsland {
     // State indicators
     private var stateText: TextView? = null
     private var lotusIcon: ImageView? = null
+    private var lotusSpinAnimator: ValueAnimator? = null
 
     // Background colors for states — Always AMOLED dark glass, with glowing accents
     private val DARK_BG_COLOR = Color.parseColor("#F508090C") // Pitch Black Glass
@@ -113,6 +117,7 @@ object IshaDynamicIsland {
                     handler.removeCallbacks(dismissRunnable)
                     stateText?.text = "Listening..."
                     updateBackgroundColor("Listening")
+                    startLotusSpin(1500L)
                     waveView?.setListening(true)
                     waveView?.updateAmplitude(amplitude)
                 }
@@ -120,12 +125,14 @@ object IshaDynamicIsland {
                     handler.removeCallbacks(dismissRunnable)
                     stateText?.text = "Thinking..."
                     updateBackgroundColor("Thinking")
+                    startLotusSpin(1000L)
                     waveView?.setThinking(true)
                 }
                 com.aura.assistant.ai.AuraLiveState.SPEAKING -> {
                     handler.removeCallbacks(dismissRunnable)
                     stateText?.text = "Speaking..."
                     updateBackgroundColor("Speaking")
+                    startLotusSpin(2200L)
                     waveView?.setSpeaking(true)
                     waveView?.updateAmplitude(amplitude)
                 }
@@ -133,12 +140,14 @@ object IshaDynamicIsland {
                 com.aura.assistant.ai.AuraLiveState.ERROR -> {
                     stateText?.text = "ISHA 2.0"
                     updateBackgroundColor("Idle")
+                    startLotusSpin(3500L)
                     waveView?.setListening(false)
                     resetDismissTimer()
                 }
                 else -> {
                     stateText?.text = "ISHA 2.0"
                     updateBackgroundColor("Idle")
+                    startLotusSpin(3500L)
                     waveView?.setListening(false)
                 }
             }
@@ -272,6 +281,9 @@ object IshaDynamicIsland {
     private fun _hide() {
         handler.removeCallbacks(dismissRunnable)
         stopSpeechListening()
+        lotusSpinAnimator?.cancel()
+        lotusSpinAnimator = null
+        lotusIcon?.clearAnimation()
         val ov = overlayView ?: return
         val wm = windowManager ?: return
 
@@ -350,11 +362,12 @@ object IshaDynamicIsland {
             hide()
         }
 
-        // Miniature Neural Lotus brand icon
+        // Miniature Neural Lotus brand icon with continuous rotation spin
         lotusIcon = ImageView(ctx).apply {
             setImageResource(R.mipmap.ic_launcher_round)
             layoutParams = LinearLayout.LayoutParams(18.dp(ctx), 18.dp(ctx))
         }
+        startLotusSpin(3000L)
 
         // State indicator text (ultra-clean typography)
         stateText = TextView(ctx).apply {
@@ -449,6 +462,23 @@ object IshaDynamicIsland {
         background?.invalidateSelf()
     }
 
+    private fun startLotusSpin(durationMs: Long = 3000L) {
+        val icon = lotusIcon ?: return
+        handler.post {
+            lotusSpinAnimator?.cancel()
+            lotusSpinAnimator = ValueAnimator.ofFloat(0f, 360f).apply {
+                duration = durationMs
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = LinearInterpolator()
+                addUpdateListener { anim ->
+                    val angle = anim.animatedValue as? Float ?: return@addUpdateListener
+                    lotusIcon?.rotation = angle
+                }
+                start()
+            }
+        }
+    }
+
     private fun updateStateFromReason(reason: String) {
         val stateText = when (reason) {
             "screen_share" -> "ISHA Viewing 👁️"
@@ -471,6 +501,10 @@ object IshaDynamicIsland {
     }
 
     private fun resetState() {
+        lotusSpinAnimator?.cancel()
+        lotusSpinAnimator = null
+        lotusIcon?.clearAnimation()
+        lotusIcon?.rotation = 0f
         isListeningSpeech = false
         isSpeaking = false
         isThinking = false

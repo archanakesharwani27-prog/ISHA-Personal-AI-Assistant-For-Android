@@ -14,6 +14,8 @@ import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Canvas
@@ -69,7 +71,8 @@ import java.util.*
 fun IshaTopBar(
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onActionPositioned: ((Offset) -> Unit)? = null
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "TopBarOnlinePulse")
     val dotAlpha by infiniteTransition.animateFloat(
@@ -159,6 +162,13 @@ fun IshaTopBar(
             }
         },
         actions = {
+            var iconRotation by remember { mutableStateOf(0f) }
+            val animatedRotation by animateFloatAsState(
+                targetValue = iconRotation,
+                animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+                label = "newChatLotusSpin"
+            )
+
             Surface(
                 color = ChatGptCard,
                 shape = CircleShape,
@@ -167,14 +177,21 @@ fun IshaTopBar(
                     .padding(end = 12.dp)
                     .size(38.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = onNewChat)
+                    .onGloballyPositioned { coordinates ->
+                        val bounds = coordinates.boundsInRoot()
+                        onActionPositioned?.invoke(bounds.center)
+                    }
+                    .clickable {
+                        iconRotation += 360f
+                        onNewChat()
+                    }
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "New Chat",
-                        tint = ChatGptTextPrimary,
-                        modifier = Modifier.size(18.dp)
+                    IshaNeuralLotus(
+                        lotusSize = 22.dp,
+                        modifier = Modifier.graphicsLayer {
+                            rotationZ = animatedRotation
+                        }
                     )
                 }
             }
@@ -186,8 +203,9 @@ fun IshaTopBar(
 fun ChatGPTTopBar(
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
-    modifier: Modifier = Modifier
-) = IshaTopBar(onOpenDrawer, onNewChat, modifier)
+    modifier: Modifier = Modifier,
+    onActionPositioned: ((Offset) -> Unit)? = null
+) = IshaTopBar(onOpenDrawer, onNewChat, modifier, onActionPositioned)
 
 // ── 2. ISHA Navigation Drawer ─────────────────────────────────────────────────
 @Composable
@@ -1603,16 +1621,11 @@ fun IshaEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        IshaNeuralLotus(
-            lotusSize = 170.dp,
-            modifier = Modifier.padding(bottom = 24.dp)
-        )
-
         Text(
             text = greeting,
             style = AuraTypography.headlineMedium.copy(
                 color = ChatGptTextPrimary,
-                fontSize = 22.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.3.sp
             ),
