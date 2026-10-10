@@ -190,7 +190,7 @@ fun IshaTopBar(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Image(
-                        painter = painterResource(id = R.mipmap.ic_launcher_round),
+                        painter = painterResource(id = R.drawable.ic_isha_logo_master),
                         contentDescription = "New Chat",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier

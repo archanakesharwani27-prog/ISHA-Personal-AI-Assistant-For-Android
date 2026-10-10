@@ -552,7 +552,7 @@ fun IshaOpeningLaunchAnimation(
                 }
 
                 Image(
-                    painter = painterResource(id = R.mipmap.ic_launcher_round),
+                    painter = painterResource(id = R.drawable.ic_isha_logo_master),
                     contentDescription = "ISHA",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
