@@ -22,9 +22,10 @@ import android.util.Log
 import android.view.*
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.AlphaAnimation
-import android.view.animation.Animation
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.aura.assistant.R
 import com.aura.assistant.ai.GeminiChatService
 import com.aura.assistant.data.ChatMessage
 
@@ -66,14 +67,14 @@ object IshaDynamicIsland {
 
     // State indicators
     private var stateText: TextView? = null
-    private var sparkleIcon: TextView? = null
+    private var lotusIcon: ImageView? = null
 
     // Background colors for states — Always AMOLED dark glass, with glowing accents
-    private val DARK_BG_COLOR = Color.parseColor("#F50B0B0E") // Pitch Black Glass
-    private val STROKE_IDLE = Color.parseColor("#33FFFFFF")
-    private val STROKE_LISTENING = Color.parseColor("#8038BDF8") // Subtle Sky Blue Glow
-    private val STROKE_THINKING = Color.parseColor("#80A855F7")  // Subtle Violet Glow
-    private val STROKE_SPEAKING = Color.parseColor("#8010B981")  // Subtle Emerald Glow
+    private val DARK_BG_COLOR = Color.parseColor("#F508090C") // Pitch Black Glass
+    private val STROKE_IDLE = Color.parseColor("#3300E5FF")
+    private val STROKE_LISTENING = Color.parseColor("#9900E5FF") // Electric Cyan Glow
+    private val STROKE_THINKING = Color.parseColor("#99A855F7")  // Neural Violet Glow
+    private val STROKE_SPEAKING = Color.parseColor("#9910B981")  // Emerald Glow
 
     private var islandTts: android.speech.tts.TextToSpeech? = null
     private var isIslandTtsReady = false
@@ -110,36 +111,33 @@ object IshaDynamicIsland {
             when (state) {
                 com.aura.assistant.ai.AuraLiveState.LISTENING -> {
                     handler.removeCallbacks(dismissRunnable)
-                    stateText?.text = "Listening... 🎙️"
+                    stateText?.text = "Listening..."
                     updateBackgroundColor("Listening")
-                    sparkleIcon?.setTextColor(Color.parseColor("#38BDF8"))
                     waveView?.setListening(true)
                     waveView?.updateAmplitude(amplitude)
                 }
                 com.aura.assistant.ai.AuraLiveState.THINKING -> {
                     handler.removeCallbacks(dismissRunnable)
-                    stateText?.text = "Thinking... 🧠"
+                    stateText?.text = "Thinking..."
                     updateBackgroundColor("Thinking")
-                    sparkleIcon?.setTextColor(Color.parseColor("#A855F7"))
-                    waveView?.setListening(false)
+                    waveView?.setThinking(true)
                 }
                 com.aura.assistant.ai.AuraLiveState.SPEAKING -> {
                     handler.removeCallbacks(dismissRunnable)
-                    stateText?.text = "Speaking... 💬"
+                    stateText?.text = "Speaking..."
                     updateBackgroundColor("Speaking")
-                    sparkleIcon?.setTextColor(Color.parseColor("#10B981"))
-                    waveView?.setListening(true)
+                    waveView?.setSpeaking(true)
                     waveView?.updateAmplitude(amplitude)
                 }
                 com.aura.assistant.ai.AuraLiveState.IDLE,
                 com.aura.assistant.ai.AuraLiveState.ERROR -> {
-                    stateText?.text = "ISHA ✦"
+                    stateText?.text = "ISHA 2.0"
                     updateBackgroundColor("Idle")
                     waveView?.setListening(false)
                     resetDismissTimer()
                 }
                 else -> {
-                    stateText?.text = "ISHA Live ✦"
+                    stateText?.text = "ISHA 2.0"
                     updateBackgroundColor("Idle")
                     waveView?.setListening(false)
                 }
@@ -181,8 +179,8 @@ object IshaDynamicIsland {
 
         val displayMetrics = ctx.resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
-        val pillWidth = if (reason == "screen_share") (screenWidth * 0.70).toInt() else (screenWidth * 0.45).toInt()
-        val pillHeight = 48.dp(ctx) // Compact height
+        val pillWidth = if (reason == "screen_share") (screenWidth * 0.62).toInt() else (screenWidth * 0.48).toInt()
+        val pillHeight = 28.dp(ctx) // Ultra-slim 28dp height
 
         val params = WindowManager.LayoutParams(
             pillWidth,
@@ -196,7 +194,7 @@ object IshaDynamicIsland {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = (screenWidth - pillWidth) / 2
-            y = 52.dp(ctx) // Positioned comfortably below camera cutout
+            y = 12.dp(ctx) // Sleek position hugging top punch-hole
         }
 
         // Enable dragging so user can move pill anywhere on screen
@@ -306,7 +304,7 @@ object IshaDynamicIsland {
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(16.dp(ctx), 8.dp(ctx), 16.dp(ctx), 8.dp(ctx))
+            setPadding(10.dp(ctx), 1.dp(ctx), 10.dp(ctx), 1.dp(ctx))
 
             // Dynamic background with rounded corners
             setBackground(createDynamicBackground(ctx))
@@ -352,34 +350,26 @@ object IshaDynamicIsland {
             hide()
         }
 
-        // State indicator text (small)
+        // Miniature Neural Lotus brand icon
+        lotusIcon = ImageView(ctx).apply {
+            setImageResource(R.mipmap.ic_launcher_round)
+            layoutParams = LinearLayout.LayoutParams(18.dp(ctx), 18.dp(ctx))
+        }
+
+        // State indicator text (ultra-clean typography)
         stateText = TextView(ctx).apply {
-            text = "ISHA"
-            textSize = 12f
+            text = "ISHA 2.0"
+            textSize = 10.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#E2E8F0"))
         }
 
-        // Sparkle icon for visual interest
-        sparkleIcon = TextView(ctx).apply {
-            text = "✦"
-            textSize = 14f
-            setTextColor(Color.parseColor("#38BDF8"))
-            // Gentle pulse animation
-            val pulse = AlphaAnimation(0.6f, 1.0f).apply {
-                duration = 1200
-                repeatMode = Animation.REVERSE
-                repeatCount = Animation.INFINITE
-            }
-            startAnimation(pulse)
-        }
-
-        // Waveform visualizer
+        // Slim Waveform visualizer
         waveView = WaveformView(ctx).apply {
-            // Layout params set later
+            layoutParams = LinearLayout.LayoutParams(26.dp(ctx), 14.dp(ctx))
         }
 
-        // Add views to root - horizontal layout: [sparkle] [state] [waveform]
+        // Add views to root - horizontal layout: [lotus] [state] [waveform]
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -395,28 +385,28 @@ object IshaDynamicIsland {
             layoutParams = p
         }
 
-        sparkleIcon!!.addMargin(0.dp(ctx))
-        stateText!!.addMargin(8.dp(ctx))
-        waveView!!.addMargin(8.dp(ctx))
+        lotusIcon!!.addMargin(0.dp(ctx))
+        stateText!!.addMargin(6.dp(ctx))
+        waveView!!.addMargin(6.dp(ctx))
 
-        content.addView(sparkleIcon!!)
+        content.addView(lotusIcon!!)
         content.addView(stateText!!)
         content.addView(waveView!!)
 
         if (reason == "screen_share") {
             val stopBtn = TextView(ctx).apply {
                 text = "Stop"
-                textSize = 11f
+                textSize = 10f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.parseColor("#EF4444"))
                 val bg = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    cornerRadius = 12.dp(ctx).toFloat()
+                    cornerRadius = 10.dp(ctx).toFloat()
                     setColor(Color.parseColor("#33EF4444"))
                     setStroke(1.dp(ctx), Color.parseColor("#80EF4444"))
                 }
                 background = bg
-                setPadding(8.dp(ctx), 4.dp(ctx), 8.dp(ctx), 4.dp(ctx))
+                setPadding(6.dp(ctx), 2.dp(ctx), 6.dp(ctx), 2.dp(ctx))
                 setOnClickListener {
                     try {
                         val stopIntent = Intent("com.aura.screenshare.STOP")
@@ -425,7 +415,7 @@ object IshaDynamicIsland {
                     hide()
                 }
             }
-            stopBtn.addMargin(6.dp(ctx))
+            stopBtn.addMargin(4.dp(ctx))
             content.addView(stopBtn)
         }
 
@@ -437,7 +427,7 @@ object IshaDynamicIsland {
     private fun createDynamicBackground(ctx: Context): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 24.dp(ctx).toFloat()
+            cornerRadius = 14.dp(ctx).toFloat()
             setColor(DARK_BG_COLOR)
             setStroke(1.dp(ctx), STROKE_IDLE)
         }
@@ -848,8 +838,8 @@ object IshaDynamicIsland {
             isAntiAlias = true
             style = Paint.Style.FILL
         }
-        private val barCount = 20
-        private val barHeights = FloatArray(barCount) { 0.1f }
+        private val barCount = 5
+        private val barHeights = FloatArray(barCount) { 0.2f }
         private var isListening = false
         private var isThinking = false
         private var isSpeaking = false
@@ -862,9 +852,9 @@ object IshaDynamicIsland {
             addUpdateListener { animator ->
                 val v = animator.animatedValue as Float
                 // Gentle breathing for all bars
-                val base = 0.1f + v * 0.1f
+                val base = 0.15f + v * 0.15f
                 for (i in barHeights.indices) {
-                    barHeights[i] = base + (rng.nextFloat() - 0.5f) * 0.05f
+                    barHeights[i] = base + (rng.nextFloat() - 0.5f) * 0.08f
                 }
                 invalidate()
             }
@@ -905,7 +895,7 @@ object IshaDynamicIsland {
             val clamped = amplitude.coerceIn(0f, 1f)
             for (i in barHeights.indices) {
                 val jitter = (rng.nextFloat() - 0.5f) * 0.12f
-                barHeights[i] = (clamped * 0.85f + 0.15f + jitter).coerceIn(0.1f, 1.0f)
+                barHeights[i] = (clamped * 0.85f + 0.15f + jitter).coerceIn(0.15f, 1.0f)
             }
             invalidate()
         }
@@ -915,7 +905,7 @@ object IshaDynamicIsland {
             isThinking = false
             isSpeaking = false
             for (i in barHeights.indices) {
-                barHeights[i] = 0.1f
+                barHeights[i] = 0.2f
             }
             idleAnimator.end()
             invalidate()
@@ -925,27 +915,27 @@ object IshaDynamicIsland {
             super.onDraw(canvas)
             val width = measuredWidth.toFloat()
             val height = measuredHeight.toFloat()
-            val barWidth = width / barCount * 0.6f
+            val barWidth = width / (barCount * 1.6f)
             val spacing = (width - barWidth * barCount) / (barCount + 1)
             val startX = spacing
 
             for (i in barHeights.indices) {
                 val heightRatio = barHeights[i]
-                val barHeight = height * heightRatio * 0.8f
-                val y = height - barHeight
+                val barHeight = (height * heightRatio * 0.85f).coerceAtLeast(3f)
+                val y = (height - barHeight) / 2f
                 val x = startX + i * (barWidth + spacing)
 
                 // Color based on state
                 val color = when {
-                    isListening -> Color.parseColor("#FF0EA5E9") // Sky blue
-                    isThinking -> Color.parseColor("#FF7C3AED") // Violet
-                    isSpeaking -> Color.parseColor("#FF0EA5E9") // Sky blue
-                    else -> Color.parseColor("#FF94A3B8") // Gray
+                    isListening -> Color.parseColor("#00E5FF") // Electric Cyan
+                    isThinking -> Color.parseColor("#A855F7")  // Neural Violet
+                    isSpeaking -> Color.parseColor("#10B981")  // Emerald Green
+                    else -> Color.parseColor("#38BDF8")        // Sky Blue
                 }
                 paint.color = color
 
                 val rect = RectF(x, y, x + barWidth, y + barHeight)
-                canvas.drawRoundRect(rect, 4f, 4f, paint)
+                canvas.drawRoundRect(rect, 2f, 2f, paint)
             }
         }
 
