@@ -198,6 +198,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        // Instantly dismiss system splash screen on Android 12+ (API 31+) so only custom turbine animation shows
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            splashScreen.setOnExitAnimationListener { splashScreenView ->
+                splashScreenView.remove()
+            }
+        }
+
         // Wake screen on assistant invocation
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
