@@ -170,7 +170,10 @@ class GeminiChatService(private val context: Context) {
         // If the user's intent requests an action (apps, flashlight, whatsapp, media, calls),
         // it MUST route to Gemini Flash with native tool declarations!
         val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
-        val hasPendingToolTurn = history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
+        // ⚡ O(1) check — tool turns are always at the tail of history
+        val hasPendingToolTurn = history.lastOrNull()?.let {
+            it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank()
+        } ?: false
         val toolsForTurn = IshaToolRouter.routeToolsForPrompt(
             prompt = promptToSend,
             hasImage = imageBytes != null,
@@ -630,7 +633,10 @@ class GeminiChatService(private val context: Context) {
         // 3. Systematic Domain-Based Intent Tool Pruning (IshaToolRouter):
         // Pure conversation ("Hi", "Hello", "Kaise ho") & direct screen perception ➔ 0 tools (<1KB payload, <1s TTFT)!
         // Specific domains (Media, Hardware, Social, Calls) ➔ Only that domain's 2-5 tools.
-        val hasPendingToolTurn = history.any { it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank() }
+        // ⚡ O(1) check — tool turns are always at the tail of history
+        val hasPendingToolTurn = history.lastOrNull()?.let {
+            it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank()
+        } ?: false
         val routedDeclarations = IshaToolRouter.routeToolsForPrompt(
             prompt = newPrompt,
             hasImage = (imageBytes != null && imageBytes.isNotEmpty()),
@@ -705,7 +711,8 @@ class GeminiChatService(private val context: Context) {
     private fun createSystemInstruction(): JsonObject {
         val now = System.currentTimeMillis()
         val cached = cachedSystemInstruction
-        if (cached != null && (now - lastSystemInstructionTime) < 10_000L) {
+        // ⚡ 45s cache: buildSystemPrompt() triggers 4+ DB/SharedPrefs reads — cache aggressively
+        if (cached != null && (now - lastSystemInstructionTime) < 45_000L) {
             return cached
         }
         val newInstruction = JsonObject().apply {
@@ -850,8 +857,10 @@ class GeminiChatService(private val context: Context) {
         val cleanHistory = history.filter {
             it.text.isNotBlank() && !it.isStreaming
         }
+        // ⚡ first(1) + last(22): First turn is anchor context; recent 22 turns give isha max short-term memory
+        // (first 3 was often app-startup boilerplate, wasting 2 precious context slots)
         val historyToSend = if (cleanHistory.size > 23) {
-            cleanHistory.take(3) + cleanHistory.takeLast(20)
+            cleanHistory.take(1) + cleanHistory.takeLast(22)
         } else {
             cleanHistory
         }
@@ -861,11 +870,12 @@ class GeminiChatService(private val context: Context) {
             val role = if (msg.role == MessageRole.USER) "user" else "model"
             val messageText = when {
                 msg.role == MessageRole.TOOL -> {
-                    val trimmed = if (msg.text.length > 400) msg.text.take(400) + "... [truncated]" else msg.text
+                    // ⚡ 800 chars: search results & screen text need more space to retain context accurately
+                    val trimmed = if (msg.text.length > 800) msg.text.take(800) + "... [truncated]" else msg.text
                     "[Tool Output (${msg.toolName ?: "action"})]: $trimmed"
                 }
                 !msg.toolResult.isNullOrBlank() -> {
-                    val trimmedResult = if (msg.toolResult.length > 400) msg.toolResult.take(400) + "... [truncated]" else msg.toolResult
+                    val trimmedResult = if (msg.toolResult.length > 800) msg.toolResult.take(800) + "... [truncated]" else msg.toolResult
                     "${msg.text}\n[Executed Action Output]: $trimmedResult"
                 }
                 else -> msg.text
