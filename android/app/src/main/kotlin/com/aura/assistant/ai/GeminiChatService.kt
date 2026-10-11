@@ -257,6 +257,19 @@ class GeminiChatService(private val context: Context) {
                 if (response.code == 404 || response.code > 500 || isUnsupportedModel) {
                     continue
                 } else {
+                    if (Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
+                        try {
+                            Log.w(TAG, "Gemini $model failed ($lastErrorMsg), falling back to OpenRouter...")
+                            val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
+                            openRouterClient.streamFastChat(
+                                systemPrompt = sysPrompt,
+                                history = history,
+                                prompt = promptToSend,
+                                callback = callback
+                            )
+                            return
+                        } catch (_: Exception) {}
+                    }
                     callback.onError(lastErrorMsg)
                     return
                 }
@@ -338,7 +351,20 @@ class GeminiChatService(private val context: Context) {
         return // Successfully completed request with this model
     }
 
-    // If all candidate models failed
+    // If all candidate models failed, fallback to OpenRouter before reporting error
+    if (Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
+        try {
+            Log.w(TAG, "All candidate Gemini models failed ($lastErrorMsg), falling back to OpenRouter...")
+            val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
+            openRouterClient.streamFastChat(
+                systemPrompt = sysPrompt,
+                history = history,
+                prompt = promptToSend,
+                callback = callback
+            )
+            return
+        } catch (_: Exception) {}
+    }
     callback.onError(lastErrorMsg)
 }
 

@@ -206,12 +206,7 @@ object IshaToolRouter {
             return null // 0 tools -> Instant single-turn multimodal vision!
         }
 
-        // 3. Multi-Step Chained Intent: (e.g. "YouTube chalao aur DND on karo")
-        if (CHAINING_PATTERN.matcher(clean).find()) {
-            return IshaToolRegistry.getGeminiToolDeclarations()
-        }
-
-        // 4. Domain Intent Matching
+        // 3. Domain Intent Matching
         val selectedNames = mutableSetOf<String>()
 
         if (MEDIA_PATTERN.matcher(clean).find()) {
@@ -242,8 +237,17 @@ object IshaToolRouter {
             selectedNames.addAll(CODE_AND_FILE_TOOLS)
         }
 
-        // If query spans multiple domains or contains comma-separated multi-actions,
-        // provide full tool declarations so Gemini can execute all requested actions in parallel or sequence
+        // 4. Pure Conversation / Greetings / Logic / QA:
+        // No action intent matched -> Return NULL (0 Tools)!
+        // This drops the payload from 165KB to <2KB and response time from 3s to <1s!
+        // Prevents conversational Hindi sentences with 'aur' (and) from bloating with 80+ tools.
+        if (selectedNames.isEmpty()) {
+            return null
+        }
+
+        // 5. Multi-Step Chained Intent or Multi-Domain Intent:
+        // If an action intent was matched AND prompt has chaining keywords ("aur", "phir", "then")
+        // or spans multiple domains, provide full tool set for Gemini chaining.
         val domainMatches = listOf(
             MEDIA_PATTERN.matcher(clean).find(),
             HARDWARE_PATTERN.matcher(clean).find(),
@@ -256,15 +260,8 @@ object IshaToolRouter {
             CODE_AND_FILE_PATTERN.matcher(clean).find()
         ).count { it }
 
-        if (domainMatches > 1 || (clean.contains(",") && selectedNames.size > 2)) {
+        if (CHAINING_PATTERN.matcher(clean).find() || domainMatches > 1 || (clean.contains(",") && selectedNames.size > 2)) {
             return IshaToolRegistry.getGeminiToolDeclarations()
-        }
-
-        // 5. Pure Conversation / Greetings / Logic / QA:
-        // No action intent matched -> Return NULL (0 Tools)!
-        // This drops the payload from 165KB to <2KB and response time from 3s to <1s!
-        if (selectedNames.isEmpty()) {
-            return null
         }
 
         // 6. Return only the pruned declarations for the detected domain
