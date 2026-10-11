@@ -57,7 +57,7 @@ data class InterruptedContext(
  * Rolling buffer of recent conversation turns for in-session context.
  * Keeps up to [maxTurns] turns; oldest are dropped automatically.
  */
-class ConversationTurnBuffer(private val maxTurns: Int = 6) {
+class ConversationTurnBuffer(private val maxTurns: Int = 30) {
     private val turns = ArrayDeque<LiveVoiceTurn>()
 
     fun add(turn: LiveVoiceTurn) {
@@ -135,7 +135,16 @@ class GeminiLiveClient(private val context: Context) {
     private var activeVoiceName: String = com.aura.assistant.ui.components.IshaSettingsManager.getSavedVoice(context)
 
     @Volatile
+    private var initialChatContext: String = ""
+
+    @Volatile
     var recentChatContext: String = ""
+        set(value) {
+            field = value
+            if (initialChatContext.isBlank() && value.isNotBlank()) {
+                initialChatContext = value
+            }
+        }
 
     fun setActiveVoice(voice: String) {
         if (voice.isNotBlank()) {
@@ -194,8 +203,48 @@ class GeminiLiveClient(private val context: Context) {
     @Volatile
     private var isBargeInActive = false
 
-    // Rolling buffer of completed turns for in-session context continuity
-    private val turnBuffer = ConversationTurnBuffer(maxTurns = 6)
+    // Rolling buffer of completed turns for in-session context continuity (up to 30 turns ~ 10-15 minutes)
+    private val turnBuffer = ConversationTurnBuffer(maxTurns = 30)
+
+    // Rolling record of tools executed in this voice session
+    private val recentVoiceActions = ArrayDeque<String>()
+
+    fun recordVoiceToolAction(toolName: String, argsSummary: String) {
+        val entry = "Ran tool '$toolName' ($argsSummary)"
+        if (recentVoiceActions.size >= 10) recentVoiceActions.removeFirst()
+        recentVoiceActions.addLast(entry)
+        updateRollingVoiceContext()
+    }
+
+    fun updateRollingVoiceContext() {
+        val turns = turnBuffer.recentTurns()
+        if (turns.isEmpty() && recentVoiceActions.isEmpty()) return
+
+        val sb = StringBuilder()
+        if (initialChatContext.isNotBlank()) {
+            sb.appendLine(initialChatContext)
+            sb.appendLine()
+        }
+
+        if (recentVoiceActions.isNotEmpty()) {
+            sb.appendLine("⚡ RECENT ACTIONS EXECUTED IN THIS VOICE SESSION:")
+            for (action in recentVoiceActions) {
+                sb.appendLine("• $action")
+            }
+            sb.appendLine()
+        }
+
+        if (turns.isNotEmpty()) {
+            sb.appendLine("💬 ROLLING VOICE SESSION TRANSCRIPT (${turns.size} TURNS):")
+            for (turn in turns) {
+                sb.appendLine("Boss: ${turn.userText}")
+                sb.appendLine("Isha: ${turn.assistantText}")
+            }
+        }
+
+        recentChatContext = sb.toString().trim()
+        Log.d(TAG, "Rolling voice context updated (${turns.size} turns, ${recentVoiceActions.size} actions, length=${recentChatContext.length})")
+    }
 
     private val vadDetector = AuraVadDetector()
     private var micJob: Job? = null
@@ -1253,7 +1302,8 @@ class GeminiLiveClient(private val context: Context) {
                         turnBuffer.add(completedTurn)
                         // Successful turn completion clears any pending interrupted context
                         interruptedContext = null
-                        Log.d(TAG, "Turn complete — context buffer size=${turnBuffer.recentTurns().size}, interrupted context cleared")
+                        updateRollingVoiceContext()
+                        Log.d(TAG, "Turn complete — context buffer size=${turnBuffer.recentTurns().size}, context updated")
                     }
                     currentUserTurnAccumulator.clear()
                     currentAssistantTurnAccumulator.clear()
@@ -1324,6 +1374,9 @@ class GeminiLiveClient(private val context: Context) {
                         }
                         add("toolResponse", toolResponse)
                     }
+                    for ((id, name, args) in calls) {
+                        recordVoiceToolAction(name, args.toString().take(60))
+                    }
                     webSocket?.send(toolResponseObj.toString())
                     Log.i(TAG, "Sent toolResponse to Gemini Live (${responses.size} tools executed in parallel)")
                 }
@@ -1373,6 +1426,8 @@ class GeminiLiveClient(private val context: Context) {
             interruptedContext = null
             isBargeInActive = false
             turnBuffer.clear()
+            recentVoiceActions.clear()
+            initialChatContext = ""
             currentUserTurnAccumulator.clear()
             currentAssistantTurnAccumulator.clear()
             IshaGatewayConfig.invalidateEphemeralToken()

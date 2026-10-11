@@ -93,6 +93,13 @@ object IshaToolRouter {
         "browser_control"
     )
 
+    val CODE_AND_FILE_TOOLS = setOf(
+        "write_local_file",
+        "open_local_file",
+        "execute_code",
+        "synthesize_action"
+    )
+
     // ── 2. Live Voice Core Tools (Lean Setup for Gemini Live WebSocket) ──────────
     val LIVE_VOICE_CORE_TOOLS = setOf(
         "open_app",
@@ -115,7 +122,9 @@ object IshaToolRouter {
         "get_current_time",
         "get_battery_status",
         "search_internet",
-        "read_screen_text"
+        "read_screen_text",
+        "write_local_file",
+        "open_local_file"
     )
 
     // ── 3. Regex Patterns for Instant Intent Classification (<1ms) ───────────────
@@ -162,6 +171,11 @@ object IshaToolRouter {
 
     private val SCREEN_INTERACTIVE_PATTERN = Pattern.compile(
         "\\b(tap on|click kar|scroll down|scroll up|screenshot lo|button dabao)\\b",
+        Pattern.CASE_INSENSITIVE
+    )
+
+    private val CODE_AND_FILE_PATTERN = Pattern.compile(
+        "\\b(html|file|save|write.*file|code|script|banao.*file|chrome.*open|calculator.*html|run.*code|execute|synthesize|self heal|macro|widget|calculator banao|game banao)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -224,6 +238,9 @@ object IshaToolRouter {
         if (SCREEN_INTERACTIVE_PATTERN.matcher(clean).find()) {
             selectedNames.addAll(SCREEN_INTERACTIVE_TOOLS)
         }
+        if (CODE_AND_FILE_PATTERN.matcher(clean).find()) {
+            selectedNames.addAll(CODE_AND_FILE_TOOLS)
+        }
 
         // If query spans multiple domains or contains comma-separated multi-actions,
         // provide full tool declarations so Gemini can execute all requested actions in parallel or sequence
@@ -235,7 +252,8 @@ object IshaToolRouter {
             DIAGNOSTICS_PATTERN.matcher(clean).find(),
             APPS_NAV_PATTERN.matcher(clean).find(),
             WEB_PATTERN.matcher(clean).find(),
-            SCREEN_INTERACTIVE_PATTERN.matcher(clean).find()
+            SCREEN_INTERACTIVE_PATTERN.matcher(clean).find(),
+            CODE_AND_FILE_PATTERN.matcher(clean).find()
         ).count { it }
 
         if (domainMatches > 1 || (clean.contains(",") && selectedNames.size > 2)) {

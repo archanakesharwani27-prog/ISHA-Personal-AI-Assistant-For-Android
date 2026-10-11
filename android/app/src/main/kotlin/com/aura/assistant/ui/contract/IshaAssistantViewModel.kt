@@ -247,6 +247,21 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
                 repository.saveMessages(currentSessionId, updated)
                 _sessions.value = repository.getAllSessions()
 
+                // Extract implicit facts from voice conversation (e.g., preferences, rules, names)
+                if (userTextClean.isNotBlank() && userTextClean != "Spoken query" && userTextClean != "Voice input") {
+                    AuraMemoryManager.extractAndSaveImplicitFacts(getApplication<Application>(), userTextClean)
+                }
+
+                // Synchronize rolling chat context back to liveClient so reconnects retain 100% context
+                val recentTurns = updated.filter { it.text.isNotBlank() && !it.isStreaming }.takeLast(25)
+                if (recentTurns.isNotEmpty()) {
+                    val historySnippet = recentTurns.joinToString("\n") { msg ->
+                        val role = if (msg.role == MessageRole.USER) "Boss" else "Isha"
+                        "$role: ${msg.text.take(180)}"
+                    }
+                    liveClient.recentChatContext = historySnippet
+                }
+
                 // Auto-title if session title is generic
                 val session = _sessions.value.find { it.id == currentSessionId }
                 if (session != null && (session.title == "New Chat" || session.title == "Voice Conversation") && userTextClean.isNotBlank() && userTextClean != "Spoken query") {
@@ -850,7 +865,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         _isVoiceModeActive.value = true
 
         // 🔗 Unbroken Context Bridge: Carry recent text conversation turns into Voice Mode
-        val recentMsgs = _chatMessages.value.filter { it.text.isNotBlank() && !it.isStreaming }.takeLast(6)
+        val recentMsgs = _chatMessages.value.filter { it.text.isNotBlank() && !it.isStreaming }.takeLast(25)
         if (recentMsgs.isNotEmpty()) {
             val historySnippet = recentMsgs.joinToString("\n") { msg ->
                 val role = if (msg.role == MessageRole.USER) "Boss" else "Isha"

@@ -14,6 +14,9 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebView
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.ContactsContract
@@ -1442,6 +1445,82 @@ object IshaToolRegistry {
                 "target_folder" to "Destination directory name, e.g., 'Pictures/Ansh images' or 'Pictures/Yesterday_Archive'",
                 "face_name" to "Person's name for face recognition, e.g., 'Ansh'",
                 "target_device" to "Target phone alias or 'this' for current device, e.g. 'phone_b', 'OnePlus', 'Lava'"
+            )
+        ))
+
+        // 89. Write Local File (HTML, JS, CSS, Python, Code, Notes, Documents)
+        toolsArray.add(createFunction(
+            name = "write_local_file",
+            desc = "Write, create, or save a file (HTML, JavaScript, Python, CSS, JSON, text, Markdown) to local device storage (Downloads or Documents) and optionally open it in Chrome or a default viewer immediately. ALWAYS call when user asks to create an HTML file, web page, calculator, game, code snippet, script, notes file, or document, e.g. 'HTML me calculator banao aur Chrome me open karo', 'snake game bana ke run karo', 'file save karo'.",
+            params = mapOf(
+                "file_name" to "string",
+                "content" to "string",
+                "directory" to "string",
+                "open_after_write" to "boolean",
+                "target_app" to "string"
+            ),
+            required = listOf("file_name", "content"),
+            paramDescriptions = mapOf(
+                "file_name" to "File name with extension, e.g. 'calculator.html', 'game.html', 'todo.html', 'script.py', 'notes.txt'",
+                "content" to "The complete code or text content to write into the file",
+                "directory" to "Optional folder name: 'download' (default), 'documents', or 'files'",
+                "open_after_write" to "Whether to open the file immediately after saving (default true for HTML / apps)",
+                "target_app" to "Optional application to open the file with: 'chrome', 'browser', or leave empty for default viewer"
+            )
+        ))
+
+        // 90. Open Local File in Target App (Chrome, Browser, PDF viewer, etc.)
+        toolsArray.add(createFunction(
+            name = "open_local_file",
+            desc = "Open an existing local file or newly saved file in Google Chrome, web browser, or system default viewer using FileProvider. ALWAYS call when user asks to open or view a local HTML file, document, or code file, e.g. 'calculator.html ko Chrome me open karo', 'file open karo'.",
+            params = mapOf(
+                "file_path_or_name" to "string",
+                "target_app" to "string",
+                "mime_type" to "string"
+            ),
+            required = listOf("file_path_or_name"),
+            paramDescriptions = mapOf(
+                "file_path_or_name" to "Full file path or file name in Downloads/Documents (e.g. 'calculator.html', '/storage/emulated/0/Download/calculator.html')",
+                "target_app" to "App to open the file in: 'chrome', 'browser', or empty for system chooser",
+                "mime_type" to "MIME type, e.g. 'text/html', 'text/plain', 'application/pdf', or empty to auto-detect"
+            )
+        ))
+
+        // 91. Dynamic On-Device Code Execution (JavaScript / Math / Logic)
+        toolsArray.add(createFunction(
+            name = "execute_code",
+            desc = "Dynamically execute JavaScript or mathematical/logical code on the device in a secure sandbox and return the computed output. ALWAYS call when user asks to run a script, perform dynamic calculations, parse data, or simulate algorithms, or when Isha self-heals a missing capability using code.",
+            params = mapOf(
+                "code" to "string",
+                "language" to "string"
+            ),
+            required = listOf("code"),
+            paramDescriptions = mapOf(
+                "code" to "The JavaScript code snippet to execute. Can use console.log(...) or return a value directly.",
+                "language" to "Language to execute: 'javascript' (default) or 'math'"
+            )
+        ))
+
+        // 92. Self-Healing & Autonomous Tool Synthesis
+        toolsArray.add(createFunction(
+            name = "synthesize_action",
+            desc = "Self-heal and autonomously synthesize custom tools, interactive HTML widgets, or macro workflows when no static native tool exists for the requested task. Creates the necessary code/UI, executes or opens it, and permanently saves the workflow rule into Isha's memory so she evolves her own capabilities.",
+            params = mapOf(
+                "action_name" to "string",
+                "description" to "string",
+                "action_type" to "string",
+                "code_or_html" to "string",
+                "open_in_browser" to "boolean",
+                "save_as_permanent_rule" to "boolean"
+            ),
+            required = listOf("action_name", "action_type", "code_or_html"),
+            paramDescriptions = mapOf(
+                "action_name" to "Descriptive name of the synthesized skill, e.g. 'calculator_widget', 'currency_converter', 'qr_generator'",
+                "description" to "Human-readable description of what this synthesized tool does",
+                "action_type" to "'create_ui_and_open' (generate interactive HTML widget and open in Chrome), 'run_code' (execute JS and return result), or 'save_macro_rule'",
+                "code_or_html" to "The complete code or HTML implementation",
+                "open_in_browser" to "Whether to open the UI in Chrome (default true for widgets/apps)",
+                "save_as_permanent_rule" to "Whether to permanently save this skill into Isha's learned rules vault (default true)"
             )
         ))
 
@@ -5542,6 +5621,26 @@ object IshaToolRegistry {
                     executeOrganizeGalleryTool(context, args, result)
                 }
 
+                // 89. Write Local File (HTML, JS, Code, Notes)
+                "write_local_file" -> {
+                    executeWriteLocalFile(context, args, result)
+                }
+
+                // 90. Open Local File in Target App
+                "open_local_file" -> {
+                    executeOpenLocalFile(context, args, result)
+                }
+
+                // 91. Dynamic On-Device Code Execution
+                "execute_code" -> {
+                    executeDynamicCode(context, args, result)
+                }
+
+                // 92. Self-Healing & Autonomous Tool Synthesis
+                "synthesize_action" -> {
+                    executeSynthesizeAction(context, args, result)
+                }
+
                 // Tier 4 Autonomous Knowledge & Screen Execution Fallback
                 else -> {
                     Log.i(TAG, "Dynamic action '$name' invoked — resolving via autonomous UI & millisecond knowledge")
@@ -5700,6 +5799,14 @@ object IshaToolRegistry {
             lower in listOf("dnd", "do_not_disturb", "toggle_dnd", "set_dnd") -> "set_dnd"
             lower in listOf("dark_mode", "night_mode", "toggle_night_mode", "toggle_dark_mode") -> "toggle_dark_mode"
 
+            // Local File Operations & Web Preview
+            lower in listOf("create_file", "save_file", "write_file", "write_local_file", "save_local_file", "make_file") -> "write_local_file"
+            lower in listOf("open_file", "open_local_file", "view_file", "launch_file", "show_file") -> "open_local_file"
+
+            // Dynamic Code & Self-Healing Synthesis
+            lower in listOf("execute_code", "run_code", "execute_script", "run_javascript", "eval_js", "run_js") -> "execute_code"
+            lower in listOf("synthesize_action", "self_heal", "self_healing", "synthesize_tool", "create_tool") -> "synthesize_action"
+
             else -> rawName
         }
     }
@@ -5711,6 +5818,24 @@ object IshaToolRegistry {
         val normName = normalizeToolName(rawName)
         val args = rawArgs.deepCopy()
         val lowerRaw = rawName.lowercase().trim()
+
+        // 0. File & Code Argument Normalization:
+        if (normName == "write_local_file") {
+            if (!args.has("file_name") || args.get("file_name").asString.isBlank()) {
+                val fn = extractString(args, "fileName", "name", "filename", "path")
+                if (fn.isNotBlank()) args.addProperty("file_name", fn)
+            }
+            if (!args.has("content") || args.get("content").asString.isBlank()) {
+                val c = extractString(args, "code", "html", "text", "body", "data")
+                if (c.isNotBlank()) args.addProperty("content", c)
+            }
+        }
+        if (normName == "open_local_file") {
+            if (!args.has("file_path_or_name") || args.get("file_path_or_name").asString.isBlank()) {
+                val p = extractString(args, "filePath", "path", "file_name", "fileName", "name")
+                if (p.isNotBlank()) args.addProperty("file_path_or_name", p)
+            }
+        }
 
         // 1. Hardware State Inference from tool name:
         if (lowerRaw.contains("off") || lowerRaw.contains("disable") || lowerRaw.contains("deactivate") || lowerRaw.contains("stop") || lowerRaw.contains("band")) {
@@ -7713,6 +7838,281 @@ object IshaToolRegistry {
             Log.e(TAG, "Error executing cross_app_workflow", e)
             result.addProperty("status", "error")
             result.addProperty("error", e.message ?: "Cross-app workflow failed")
+        }
+    }
+
+    // ── 89-92. Universal Local File & Autonomous Code Execution Primitives ─────
+
+    private fun executeWriteLocalFile(context: Context, args: JsonObject, result: JsonObject) {
+        try {
+            val fileName = args.get("file_name")?.asString?.trim() ?: "generated_file.html"
+            val content = args.get("content")?.asString ?: ""
+            val openAfterWrite = if (args.has("open_after_write")) args.get("open_after_write").asBoolean else true
+            val targetApp = args.get("target_app")?.asString?.trim() ?: "chrome"
+
+            // Determine destination directory (Prefer standard public Downloads folder)
+            val targetDir: File = try {
+                val pubDownload = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (pubDownload.exists() || pubDownload.mkdirs()) {
+                    pubDownload
+                } else {
+                    context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+                }
+            } catch (_: Exception) {
+                context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+            }
+
+            val targetFile = File(targetDir, fileName)
+            targetFile.writeText(content, Charsets.UTF_8)
+            Log.i(TAG, "Saved local file: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
+
+            result.addProperty("status", "success")
+            result.addProperty("file_path", targetFile.absolutePath)
+            result.addProperty("file_name", targetFile.name)
+            result.addProperty("file_size_bytes", targetFile.length())
+            result.addProperty("message", "File '${targetFile.name}' created successfully at ${targetFile.absolutePath}")
+
+            if (openAfterWrite) {
+                val opened = launchLocalFile(context, targetFile, targetApp)
+                result.addProperty("opened", opened)
+                if (opened) {
+                    result.addProperty("open_message", "File opened in ${if (targetApp.isNotBlank()) targetApp else "viewer"}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error writing local file", e)
+            result.addProperty("status", "error")
+            result.addProperty("error", e.message ?: "Failed to write file")
+        }
+    }
+
+    private fun executeOpenLocalFile(context: Context, args: JsonObject, result: JsonObject) {
+        try {
+            val pathOrName = args.get("file_path_or_name")?.asString?.trim() ?: ""
+            val targetApp = args.get("target_app")?.asString?.trim() ?: "chrome"
+
+            if (pathOrName.isBlank()) {
+                result.addProperty("status", "error")
+                result.addProperty("error", "file_path_or_name is required")
+                return
+            }
+
+            var targetFile = File(pathOrName)
+            if (!targetFile.exists()) {
+                // Try Downloads folder
+                val dlFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), pathOrName)
+                if (dlFile.exists()) {
+                    targetFile = dlFile
+                } else {
+                    // Try Documents folder
+                    val docFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), pathOrName)
+                    if (docFile.exists()) {
+                        targetFile = docFile
+                    }
+                }
+            }
+
+            if (!targetFile.exists()) {
+                result.addProperty("status", "error")
+                result.addProperty("error", "File not found: $pathOrName")
+                return
+            }
+
+            val opened = launchLocalFile(context, targetFile, targetApp)
+            result.addProperty("status", if (opened) "success" else "error")
+            result.addProperty("opened", opened)
+            result.addProperty("file_path", targetFile.absolutePath)
+            result.addProperty("message", if (opened) "Opened ${targetFile.name} in $targetApp" else "Failed to open file")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening local file", e)
+            result.addProperty("status", "error")
+            result.addProperty("error", e.message ?: "Failed to open file")
+        }
+    }
+
+    private fun launchLocalFile(context: Context, file: File, targetApp: String = ""): Boolean {
+        return try {
+            val extension = file.extension.lowercase()
+            val mimeType = when (extension) {
+                "html", "htm" -> "text/html"
+                "txt" -> "text/plain"
+                "json" -> "application/json"
+                "js" -> "application/javascript"
+                "css" -> "text/css"
+                "pdf" -> "application/pdf"
+                "png" -> "image/png"
+                "jpg", "jpeg" -> "image/jpeg"
+                else -> "*/*"
+            }
+
+            val fileUri: Uri = try {
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            } catch (e: Exception) {
+                Log.w(TAG, "FileProvider URI failed, falling back: ${e.message}")
+                Uri.fromFile(file)
+            }
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(fileUri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (targetApp.contains("chrome", ignoreCase = true)) {
+                    setPackage("com.android.chrome")
+                } else if (targetApp.isNotBlank() && targetApp.contains(".")) {
+                    setPackage(targetApp)
+                }
+            }
+
+            val resolve = intent.resolveActivity(context.packageManager)
+            if (resolve != null) {
+                context.startActivity(intent)
+                true
+            } else {
+                intent.setPackage(null)
+                val chooser = Intent.createChooser(intent, "Open with").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch local file: ${file.absolutePath}", e)
+            false
+        }
+    }
+
+    private fun executeDynamicCode(context: Context, args: JsonObject, result: JsonObject) {
+        val code = args.get("code")?.asString ?: ""
+        if (code.isBlank()) {
+            result.addProperty("status", "error")
+            result.addProperty("error", "Code snippet is empty")
+            return
+        }
+
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var jsOutput: String? = null
+        var jsError: String? = null
+
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val webView = WebView(context)
+                webView.settings.javaScriptEnabled = true
+
+                val wrappedCode = """
+                    (function() {
+                        var logs = [];
+                        var originalLog = console.log;
+                        console.log = function() {
+                            var args = Array.prototype.slice.call(arguments);
+                            logs.push(args.join(' '));
+                            if (originalLog) originalLog.apply(console, arguments);
+                        };
+                        try {
+                            var __ret = (function() { $code })();
+                            return JSON.stringify({
+                                success: true,
+                                result: __ret !== undefined ? __ret : null,
+                                logs: logs
+                            });
+                        } catch (e) {
+                            return JSON.stringify({
+                                success: false,
+                                error: e.toString(),
+                                logs: logs
+                            });
+                        }
+                    })();
+                """.trimIndent()
+
+                webView.evaluateJavascript(wrappedCode) { evalResult ->
+                    jsOutput = evalResult
+                    latch.countDown()
+                    try { webView.destroy() } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                jsError = e.message
+                latch.countDown()
+            }
+        }
+
+        val completed = latch.await(4, TimeUnit.SECONDS)
+        if (!completed) {
+            result.addProperty("status", "timeout")
+            result.addProperty("error", "Dynamic code execution timed out (4s limit)")
+            return
+        }
+
+        if (jsError != null) {
+            result.addProperty("status", "error")
+            result.addProperty("error", jsError)
+            return
+        }
+
+        try {
+            var raw = jsOutput ?: "{}"
+            if (raw.startsWith("\"") && raw.endsWith("\"")) {
+                raw = JsonParser.parseString(raw).asString
+            }
+            val parsed = JsonParser.parseString(raw).asJsonObject
+            val success = parsed.get("success")?.asBoolean ?: false
+            if (success) {
+                result.addProperty("status", "success")
+                result.add("result", parsed.get("result"))
+                result.add("logs", parsed.get("logs"))
+            } else {
+                result.addProperty("status", "error")
+                result.addProperty("error", parsed.get("error")?.asString ?: "Execution error")
+                result.add("logs", parsed.get("logs"))
+            }
+        } catch (_: Exception) {
+            result.addProperty("status", "success")
+            result.addProperty("output", jsOutput)
+        }
+    }
+
+    private fun executeSynthesizeAction(context: Context, args: JsonObject, result: JsonObject) {
+        val actionName = args.get("action_name")?.asString?.trim() ?: "custom_action"
+        val description = args.get("description")?.asString?.trim() ?: ""
+        val actionType = args.get("action_type")?.asString?.lowercase()?.trim() ?: "create_ui_and_open"
+        val codeOrHtml = args.get("code_or_html")?.asString ?: ""
+        val openInBrowser = if (args.has("open_in_browser")) args.get("open_in_browser").asBoolean else true
+        val saveRule = if (args.has("save_as_permanent_rule")) args.get("save_as_permanent_rule").asBoolean else true
+
+        when (actionType) {
+            "create_ui_and_open", "web_app", "html" -> {
+                val fileName = if (actionName.endsWith(".html")) actionName else "$actionName.html"
+                val fileArgs = JsonObject().apply {
+                    addProperty("file_name", fileName)
+                    addProperty("content", codeOrHtml)
+                    addProperty("open_after_write", openInBrowser)
+                    addProperty("target_app", "chrome")
+                }
+                executeWriteLocalFile(context, fileArgs, result)
+            }
+            "run_code", "javascript" -> {
+                val codeArgs = JsonObject().apply {
+                    addProperty("code", codeOrHtml)
+                    addProperty("language", "javascript")
+                }
+                executeDynamicCode(context, codeArgs, result)
+            }
+            else -> {
+                result.addProperty("status", "success")
+                result.addProperty("message", "Synthesized dynamic action '$actionName'")
+            }
+        }
+
+        if (saveRule && description.isNotBlank()) {
+            try {
+                AuraMemoryManager.teachRule(
+                    context = context,
+                    trigger = actionName,
+                    action = description,
+                    primaryTool = "synthesize_action",
+                    toolParameters = args.toString()
+                )
+                result.addProperty("learned_rule", "Permanently taught skill '$actionName' to Isha's memory.")
+            } catch (_: Exception) {}
         }
     }
 }
