@@ -405,6 +405,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         val currentSessionId = _activeSessionId.value
         if (currentSessionId.isNotBlank()) {
             _chatMessages.value = emptyList()
+            com.aura.assistant.ai.IshaVoiceContextBridge.clear()
             viewModelScope.launch(Dispatchers.IO) {
                 repository.saveMessages(currentSessionId, emptyList())
             }
@@ -412,6 +413,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun clearAllChats() {
+        com.aura.assistant.ai.IshaVoiceContextBridge.clear()
         viewModelScope.launch(Dispatchers.IO) {
             val oldSessions = repository.getAllSessions()
             for (s in oldSessions) {

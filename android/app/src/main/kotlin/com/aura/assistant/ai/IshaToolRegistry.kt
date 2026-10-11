@@ -82,22 +82,27 @@ object IshaToolRegistry {
         }
     }
 
+    private val specificDeclarationsCache = java.util.concurrent.ConcurrentHashMap<Set<String>, JsonArray>()
+
     /**
      * Returns a pruned JSON array containing only the specified tool declarations.
      * Used for sub-second confirmation turns, reducing payload from 70KB to <1KB!
+     * Cached per-domain for instant O(1) retrieval with zero JSON allocation overhead.
      */
     fun getSpecificToolDeclarations(toolNames: Collection<String>): JsonArray {
         val all = getGeminiToolDeclarations()
         val nameSet = toolNames.map { normalizeToolName(it) }.toSet()
-        val filtered = JsonArray()
-        for (i in 0 until all.size()) {
-            val obj = all.get(i).asJsonObject
-            val n = obj.get("name")?.asString ?: continue
-            if (n in nameSet) {
-                filtered.add(obj)
+        return specificDeclarationsCache.computeIfAbsent(nameSet) {
+            val filtered = JsonArray()
+            for (i in 0 until all.size()) {
+                val obj = all.get(i).asJsonObject
+                val n = obj.get("name")?.asString ?: continue
+                if (n in nameSet) {
+                    filtered.add(obj)
+                }
             }
+            if (filtered.size() > 0) filtered else all
         }
-        return if (filtered.size() > 0) filtered else all
     }
 
     /**

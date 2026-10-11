@@ -331,7 +331,9 @@ class GeminiChatService(private val context: Context) {
                 rawModelParts = rawModelParts
             )
         } else {
-            callback.onComplete(fullAccumulator.toString())
+            val completedText = fullAccumulator.toString()
+            IshaVoiceContextBridge.recordTextTurn(promptToSend, completedText)
+            callback.onComplete(completedText)
         }
         return // Successfully completed request with this model
     }
@@ -577,6 +579,7 @@ class GeminiChatService(private val context: Context) {
 
             val fullSpokenText = postToolAccumulator.toString().trim()
             if (fullSpokenText.isNotBlank()) {
+                IshaVoiceContextBridge.recordTextTurn(originalPrompt, fullSpokenText)
                 callback.onComplete(fullSpokenText)
                 return
             }
@@ -592,6 +595,7 @@ class GeminiChatService(private val context: Context) {
                 res.get("message")?.asString ?: "$name complete ho gaya Boss! ✅"
             }
         }
+        IshaVoiceContextBridge.recordTextTurn(originalPrompt, fallback)
         callback.onComplete(fallback)
     }
 
@@ -857,12 +861,31 @@ class GeminiChatService(private val context: Context) {
         val cleanHistory = history.filter {
             it.text.isNotBlank() && !it.isStreaming
         }
-        // ⚡ first(1) + last(22): First turn is anchor context; recent 22 turns give isha max short-term memory
-        // (first 3 was often app-startup boilerplate, wasting 2 precious context slots)
-        val historyToSend = if (cleanHistory.size > 23) {
-            cleanHistory.take(1) + cleanHistory.takeLast(22)
+        // ⚡ Cross-Modal Bridge Safety Net:
+        // If history is empty (e.g. from Dynamic Island, Widget, or Quick Action),
+        // populate from IshaVoiceContextBridge so context is NEVER lost across surfaces!
+        val effectiveHistory = if (cleanHistory.isEmpty()) {
+            val bridgeTurns = IshaVoiceContextBridge.getRecentTurns(10)
+            if (bridgeTurns.isNotEmpty()) {
+                bridgeTurns.flatMap { turn ->
+                    listOf(
+                        ChatMessage(sessionId = "bridge", role = MessageRole.USER, text = turn.userText),
+                        ChatMessage(sessionId = "bridge", role = MessageRole.ASSISTANT, text = turn.assistantText)
+                    )
+                }
+            } else {
+                cleanHistory
+            }
         } else {
             cleanHistory
+        }
+
+        // ⚡ first(1) + last(22): First turn is anchor context; recent 22 turns give isha max short-term memory
+        // (first 3 was often app-startup boilerplate, wasting 2 precious context slots)
+        val historyToSend = if (effectiveHistory.size > 23) {
+            effectiveHistory.take(1) + effectiveHistory.takeLast(22)
+        } else {
+            effectiveHistory
         }
 
         var lastRole: String? = null
@@ -886,7 +909,7 @@ class GeminiChatService(private val context: Context) {
                 if (contents.size() > 0) {
                     val lastTurn = contents.get(contents.size() - 1).asJsonObject
                     val parts = lastTurn.getAsJsonArray("parts")
-                    val trimmed = if (messageText.length > 400) messageText.take(400) + "... [truncated]" else messageText
+                    val trimmed = if (messageText.length > 800) messageText.take(800) + "... [truncated]" else messageText
                     val part = JsonObject().apply { addProperty("text", trimmed) }
                     parts.add(part)
                 }

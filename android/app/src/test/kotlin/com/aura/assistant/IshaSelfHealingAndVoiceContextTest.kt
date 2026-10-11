@@ -4,6 +4,7 @@ import com.aura.assistant.ai.ConversationTurnBuffer
 import com.aura.assistant.ai.IshaToolRegistry
 import com.aura.assistant.ai.IshaToolRouter
 import com.aura.assistant.ai.LiveVoiceTurn
+import com.aura.assistant.ai.IshaVoiceContextBridge
 import com.google.gson.JsonObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -161,5 +162,43 @@ class IshaSelfHealingAndVoiceContextTest {
         assertEquals("Command 35 from Boss", overflowTurns[29].userText)
 
         println("✅ ConversationTurnBuffer retains 30 full turns for long uninterrupted voice sessions!")
+    }
+
+    @Test
+    fun testVoiceContextBridgeCrossModalRetention() {
+        IshaVoiceContextBridge.clear()
+        assertEquals(0, IshaVoiceContextBridge.getTurnCount())
+
+        // 1. Record voice turn
+        IshaVoiceContextBridge.recordVoiceTurn("Boss: flashlight on karo", "Haan Boss, flashlight on kar di hai!")
+        assertEquals(1, IshaVoiceContextBridge.getTurnCount())
+
+        // 2. Record text chat turn
+        IshaVoiceContextBridge.recordTextTurn("kal ka weather kaisa hoga?", "Kal thoda badal chaaye rahenge Boss.")
+        assertEquals(2, IshaVoiceContextBridge.getTurnCount())
+
+        // 3. Verify formatted context incorporates both modalities
+        val contextSnippet = IshaVoiceContextBridge.getFormattedCrossModalContext(10)
+        assertTrue(contextSnippet.contains("flashlight on karo"))
+        assertTrue(contextSnippet.contains("weather kaisa hoga"))
+        assertTrue(contextSnippet.contains("VOICE ↔ TEXT SHARED MEMORY"))
+
+        // 4. Test clear
+        IshaVoiceContextBridge.clear()
+        assertEquals(0, IshaVoiceContextBridge.getTurnCount())
+        assertEquals("", IshaVoiceContextBridge.getFormattedCrossModalContext(10))
+        println("✅ IshaVoiceContextBridge retains and bridges cross-modal voice & text context seamlessly!")
+    }
+
+    @Test
+    fun testToolDeclarationSubsetCaching() {
+        val hardware1 = IshaToolRegistry.getSpecificToolDeclarations(IshaToolRouter.HARDWARE_TOOLS)
+        val hardware2 = IshaToolRegistry.getSpecificToolDeclarations(IshaToolRouter.HARDWARE_TOOLS)
+
+        // Caching must return identical reference in O(1) time
+        assertSame("Subsequent calls with same tool subset must return cached JsonArray reference", hardware1, hardware2)
+        assertTrue("Hardware subset must contain toggle_flashlight",
+            (0 until hardware1.size()).any { hardware1[it].asJsonObject.get("name").asString == "toggle_flashlight" })
+        println("✅ IshaToolRegistry specific tool declarations are cached in O(1) with zero allocations!")
     }
 }

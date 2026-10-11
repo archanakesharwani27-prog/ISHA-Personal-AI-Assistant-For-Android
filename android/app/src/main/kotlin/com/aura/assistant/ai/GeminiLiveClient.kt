@@ -600,8 +600,13 @@ class GeminiLiveClient(private val context: Context) {
                     val parts = JsonArray().apply {
                         val part = JsonObject().apply {
                             val basePrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = true, language = activeLanguage)
-                            val finalPrompt = if (recentChatContext.isNotBlank()) {
-                                "$basePrompt\n\n💬 RECENT CONVERSATION HISTORY (VOICE-TEXT CONTINUITY):\nThe user was just interacting with you in this session. Here are the most recent exchanges for seamless context continuity:\n$recentChatContext"
+                            val crossModalContext = if (recentChatContext.isNotBlank()) {
+                                recentChatContext
+                            } else {
+                                IshaVoiceContextBridge.getFormattedCrossModalContext(15)
+                            }
+                            val finalPrompt = if (crossModalContext.isNotBlank()) {
+                                "$basePrompt\n\n💬 RECENT CONVERSATION HISTORY (VOICE-TEXT CONTINUITY):\nThe user was just interacting with you in this session. Here are the most recent exchanges for seamless context continuity:\n$crossModalContext"
                             } else {
                                 basePrompt
                             }
@@ -835,12 +840,12 @@ class GeminiLiveClient(private val context: Context) {
                                             userSaid = partialUser,
                                             assistantWasSaying = partialAssistant
                                         )
-                                        _turnCompletedFlow.tryEmit(
-                                            LiveVoiceTurn(
-                                                userText = partialUser,
-                                                assistantText = "$partialAssistant…"
-                                            )
+                                        val partialTurn = LiveVoiceTurn(
+                                            userText = partialUser,
+                                            assistantText = "$partialAssistant…"
                                         )
+                                        _turnCompletedFlow.tryEmit(partialTurn)
+                                        IshaVoiceContextBridge.recordVoiceTurn(partialTurn.userText, partialTurn.assistantText)
                                     }
                                     currentUserTurnAccumulator.clear()
                                     currentAssistantTurnAccumulator.clear()
@@ -1207,12 +1212,12 @@ class GeminiLiveClient(private val context: Context) {
 
                         // Emit partial turn for chat history UI ONLY if meaningful text exists (avoids single-word fragments)
                         if (partialUser.isNotBlank() && partialAssistant.length >= 25) {
-                            _turnCompletedFlow.tryEmit(
-                                LiveVoiceTurn(
-                                    userText = partialUser,
-                                    assistantText = "$partialAssistant…"
-                                )
+                            val partialTurn = LiveVoiceTurn(
+                                userText = partialUser,
+                                assistantText = "$partialAssistant…"
                             )
+                            _turnCompletedFlow.tryEmit(partialTurn)
+                            IshaVoiceContextBridge.recordVoiceTurn(partialTurn.userText, partialTurn.assistantText)
                         }
                     }
                     // Reset accumulators for the NEXT turn (context is in interruptedContext)
@@ -1298,6 +1303,7 @@ class GeminiLiveClient(private val context: Context) {
                             assistantText = assistantTurn
                         )
                         _turnCompletedFlow.tryEmit(completedTurn)
+                        IshaVoiceContextBridge.recordVoiceTurn(completedTurn.userText, completedTurn.assistantText)
                         // Add to rolling context buffer for future turns
                         turnBuffer.add(completedTurn)
                         // Successful turn completion clears any pending interrupted context
