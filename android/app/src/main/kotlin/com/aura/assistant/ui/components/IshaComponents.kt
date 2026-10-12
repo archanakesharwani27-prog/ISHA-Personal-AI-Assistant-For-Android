@@ -3,6 +3,7 @@ package com.aura.assistant.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -11,6 +12,7 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -35,6 +37,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1213,6 +1216,21 @@ fun ChatMessageItem(
                 }
             }
 
+            // Perplexity-style Live Source Citations Row
+            val sources = remember(message.text) { extractMarkdownCitations(message.text) }
+            if (sources.isNotEmpty() && !message.isStreaming) {
+                SourcesCitationsRow(sources = sources) { url ->
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
             // Action Buttons Row (Copy, Read Aloud, Regenerate)
             if (!message.isStreaming && message.text.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1389,9 +1407,119 @@ fun RenderMarkdownText(text: String, textScale: Float = 1.0f) {
     }
 }
 
+data class CitationSource(
+    val title: String,
+    val url: String,
+    val domain: String
+)
+
+private fun extractMarkdownCitations(text: String): List<CitationSource> {
+    if (text.isBlank()) return emptyList()
+    val results = mutableListOf<CitationSource>()
+    val seenUrls = mutableSetOf<String>()
+
+    // 1. Matches markdown links: [Title](url)
+    val mdRegex = Regex("""\[([^\]]+)\]\((https?://[^\s\)]+)\)""")
+    for (match in mdRegex.findAll(text)) {
+        val title = match.groupValues[1].trim()
+        val url = match.groupValues[2].trim()
+        if (url.isNotBlank() && seenUrls.add(url)) {
+            val domain = try {
+                val host = java.net.URI(url).host ?: "Web"
+                host.removePrefix("www.").removePrefix("m.")
+            } catch (_: Exception) { "Web" }
+            results.add(CitationSource(title = title, url = url, domain = domain))
+        }
+    }
+
+    // 2. Matches standalone raw URLs if no markdown links found
+    if (results.isEmpty()) {
+        val rawUrlRegex = Regex("""https?://[^\s\),]+""")
+        for (match in rawUrlRegex.findAll(text)) {
+            val url = match.value.trim()
+            if (seenUrls.add(url)) {
+                val domain = try {
+                    val host = java.net.URI(url).host ?: "Web"
+                    host.removePrefix("www.").removePrefix("m.")
+                } catch (_: Exception) { "Web" }
+                results.add(CitationSource(title = domain, url = url, domain = domain))
+            }
+        }
+    }
+    return results
+}
+
+@Composable
+fun SourcesCitationsRow(
+    sources: List<CitationSource>,
+    onOpenUrl: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(bottom = 6.dp)
+        ) {
+            Text(
+                text = "⚡ SOURCES (${sources.size})",
+                style = AuraTypography.labelSmall.copy(
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp,
+                    color = ChatGptTextMuted
+                )
+            )
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(sources) { source ->
+                Surface(
+                    color = Color(0xFF1E2028),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                    modifier = Modifier.clickable { onOpenUrl(source.url) }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "🌐",
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = source.domain.ifBlank { source.title }.take(22),
+                            style = AuraTypography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ChatGptTextPrimary
+                            )
+                        )
+                        Text(
+                            text = "↗",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ChatGptAccentGreen
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun cleanInlineMarkdown(input: String): String {
+    // Strip markdown links [Title](url) -> Title for clean inline reading
+    val withoutLinks = input.replace(Regex("""\[([^\]]+)\]\((https?://[^\s\)]+)\)"""), "$1")
     // Strip **bold** and `code` markers for clean reading
-    return input.replace("**", "").replace("`", "")
+    return withoutLinks.replace("**", "").replace("`", "")
 }
 
 @Composable

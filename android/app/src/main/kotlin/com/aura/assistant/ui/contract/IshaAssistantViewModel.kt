@@ -152,6 +152,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
 
     // ── Reactive Settings State ───────────────────────────────────────────────
     val settingsState = com.aura.assistant.ui.components.IshaSettingsManager.settingsState
+    val personaConfig = com.aura.assistant.data.IshaPersonaPreferences.personaConfigFlow
     val textSize = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedTextSize(application))
     val selectedVoice = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedVoice(application))
     val selectedLanguage = MutableStateFlow(com.aura.assistant.ui.components.IshaSettingsManager.getSavedLanguage(application))
@@ -161,6 +162,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         prefs.edit().putBoolean("message_speak_enabled", false).apply()
         com.aura.assistant.auth.IshaAuthManager.init(application)
         com.aura.assistant.ui.components.IshaSettingsManager.init(application)
+        com.aura.assistant.data.IshaPersonaPreferences.init(application)
         com.aura.assistant.ui.components.IshaSettingsManager.setMessageSpeak(application, false)
         com.aura.assistant.ai.IshaContactMemoryManager.init(application)
         com.aura.assistant.sync.IshaDeviceRegistry.init(application)
@@ -439,13 +441,20 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     fun attachFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val cr = getApplication<Application>().contentResolver
+                val context = getApplication<Application>()
+                val cr = context.contentResolver
                 val mimeType = cr.getType(uri) ?: "image/jpeg"
                 val name = getFileNameFromUri(cr, uri) ?: "attachment.jpg"
                 val bytes = cr.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes != null && bytes.isNotEmpty()) {
+                    // Persist to local cache so image is permanently readable across follow-up turns without permission revocation
+                    val ext = if (mimeType.contains("png")) "png" else if (mimeType.contains("webp")) "webp" else "jpg"
+                    val cacheFile = File(context.cacheDir, "gallery_attachment_${System.currentTimeMillis()}.$ext")
+                    cacheFile.writeBytes(bytes)
+                    val persistentUri = Uri.fromFile(cacheFile)
+
                     _selectedAttachment.value = AttachedMedia(
-                        uri = uri,
+                        uri = persistentUri,
                         bytes = bytes,
                         name = name,
                         mimeType = mimeType,
@@ -1101,6 +1110,35 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     fun setSoundEnabled(enabled: Boolean) {
         com.aura.assistant.ui.components.IshaSettingsManager.setSoundEnabled(getApplication(), enabled)
         isSoundEnabled.value = enabled
+    }
+
+    // ── Persona & Profile Form Setters ─────────────────────────────────────────
+    fun setPersonaConfig(config: com.aura.assistant.data.IshaPersonaConfig) {
+        com.aura.assistant.data.IshaPersonaPreferences.savePersonaConfig(getApplication(), config)
+    }
+
+    fun setAgeGroup(ageGroup: com.aura.assistant.data.UserAgeGroup) {
+        com.aura.assistant.data.IshaPersonaPreferences.setAgeGroup(getApplication(), ageGroup)
+    }
+
+    fun setSalutation(title: com.aura.assistant.data.SalutationTitle, customTitle: String = "") {
+        com.aura.assistant.data.IshaPersonaPreferences.setSalutation(getApplication(), title, customTitle)
+    }
+
+    fun setArchetype(archetype: com.aura.assistant.data.PersonaArchetype) {
+        com.aura.assistant.data.IshaPersonaPreferences.setArchetype(getApplication(), archetype)
+    }
+
+    fun setThemePalette(paletteId: String) {
+        com.aura.assistant.data.IshaPersonaPreferences.setThemePalette(getApplication(), paletteId)
+    }
+
+    fun setCustomAboutMe(aboutMe: String) {
+        com.aura.assistant.data.IshaPersonaPreferences.setCustomAboutMe(getApplication(), aboutMe)
+    }
+
+    fun setCustomResponseStyle(style: String) {
+        com.aura.assistant.data.IshaPersonaPreferences.setCustomResponseStyle(getApplication(), style)
     }
 
     /**

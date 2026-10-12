@@ -77,7 +77,8 @@ object IshaToolRouter {
         "check_internet_speed",
         "search_files",
         "delete_file",
-        "empty_recycle_bin"
+        "empty_recycle_bin",
+        "check_app_update"
     )
 
     val APPS_NAV_TOOLS = setOf(
@@ -155,7 +156,7 @@ object IshaToolRouter {
     )
 
     private val DIAGNOSTICS_PATTERN = Pattern.compile(
-        "\\b(battery|percentage|charge|charging|storage|space|ram|clean|recycle|files|internet speed)\\b",
+        "\\b(battery|percentage|charge|charging|storage|space|ram|clean|recycle|files|internet speed|update|version|naya update)\\b",
         Pattern.CASE_INSENSITIVE
     )
 

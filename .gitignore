@@ -72,3 +72,6 @@ scratch_*.py
 /hey_isha*.onnx
 node_modules/
 .wrangler/
+.kotlin/
+*.jpg
+*.jpeg

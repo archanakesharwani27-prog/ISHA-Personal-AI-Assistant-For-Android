@@ -53,9 +53,11 @@ object IshaGatewayConfig {
      * Enabled by default to provide Zero-Key functionality out of the box.
      */
     fun isGatewayEnabled(context: Context): Boolean {
-        val hasCustomKey = ApiKeyManager.hasCustomKey(context)
-        val defaultVal = !hasCustomKey
-        return getPrefs(context).getBoolean(KEY_GATEWAY_ENABLED, defaultVal)
+        val hasDirectKey = Secrets.getActiveGeminiKey(context).isNotBlank()
+        if (hasDirectKey) {
+            return getPrefs(context).getBoolean(KEY_GATEWAY_ENABLED, false)
+        }
+        return getPrefs(context).getBoolean(KEY_GATEWAY_ENABLED, true)
     }
 
     fun setGatewayEnabled(context: Context, enabled: Boolean) {
@@ -80,15 +82,16 @@ object IshaGatewayConfig {
 
     /**
      * Resolves the streaming chat URL for a given model.
-     * If Gateway is active, returns Cloudflare edge proxy URL.
+     * If Gateway is active and not the broken default worker, returns Cloudflare edge proxy URL.
      * Otherwise, returns direct Google Generative Language endpoint with key.
      */
     fun getChatStreamUrl(context: Context, model: String, apiKey: String): Pair<String, Map<String, String>> {
         val headers = mutableMapOf<String, String>()
-        val shouldUseGateway = isGatewayEnabled(context) || apiKey.isBlank()
+        val base = getGatewayBaseUrl(context)
+        val isDefaultBrokenWorker = base.contains("isha-gateway.anshkesharwani0807.workers.dev")
+        val useGateway = isGatewayEnabled(context) && !isDefaultBrokenWorker
 
-        return if (shouldUseGateway) {
-            val base = getGatewayBaseUrl(context)
+        return if (useGateway || apiKey.isBlank()) {
             headers["X-Isha-App-Token"] = getAppSecret(context)
             Pair("$base/v1beta/models/$model:streamGenerateContent?alt=sse", headers)
         } else {

@@ -87,6 +87,7 @@ fun IshaMainScreen(
     val isSoundEnabled by viewModel.isSoundEnabled.collectAsState()
     val isApiKeyScreenVisible by viewModel.isApiKeyScreenVisible.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
+    val personaConfig by viewModel.personaConfig.collectAsState()
     var isDiagnosticsVisible by remember { mutableStateOf(false) }
     var isOpeningActive by remember { mutableStateOf(true) }
     var actionIconCenter by remember { mutableStateOf<Offset?>(null) }
@@ -334,6 +335,13 @@ fun IshaMainScreen(
                     selectedLanguage = selectedLanguage,
                     textSize = textSize,
                     isSoundEnabled = isSoundEnabled,
+                    personaConfig = personaConfig,
+                    onAgeGroupChange = { viewModel.setAgeGroup(it) },
+                    onSalutationChange = { title, custom -> viewModel.setSalutation(title, custom) },
+                    onArchetypeChange = { viewModel.setArchetype(it) },
+                    onThemePaletteChange = { viewModel.setThemePalette(it) },
+                    onCustomAboutMeChange = { viewModel.setCustomAboutMe(it) },
+                    onCustomResponseStyleChange = { viewModel.setCustomResponseStyle(it) },
                     onWakeWordToggle = { viewModel.setWakeWordEnabled(it) },
                     onShakeToggle = { viewModel.setShakeEnabled(it) },
                     onMessageSpeakToggle = { viewModel.setMessageSpeakEnabled(it) },

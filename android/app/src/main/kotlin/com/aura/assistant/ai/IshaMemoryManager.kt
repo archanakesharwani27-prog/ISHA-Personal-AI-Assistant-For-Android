@@ -329,6 +329,14 @@ object IshaMemoryManager {
     }
 
     /**
+     * Returns the user's dynamic salutation based on custom persona preferences.
+     */
+    fun getResolvedSalutation(context: Context): String {
+        val userName = getUserName(context)
+        return com.aura.assistant.data.IshaPersonaPreferences.getResolvedSalutation(context, userName)
+    }
+
+    /**
      * Formats memory block to inject into the system prompt.
      */
     fun formatMemorySection(context: Context): String {
@@ -591,24 +599,43 @@ object IshaMemoryManager {
             """.trimIndent()
         }
 
+        // Dynamic User Persona & Profile Configuration (Non-hardcoded)
+        val personaConfig = com.aura.assistant.data.IshaPersonaPreferences.getPersonaConfig(context)
+        val resolvedSalutation = com.aura.assistant.data.IshaPersonaPreferences.getResolvedSalutation(context, userName)
+
+        val personaSection = buildString {
+            appendLine("══════════════════════════════════════════════════════════════════════════════")
+            appendLine("🎭 DYNAMIC AI PERSONA & USER PROFILE INSTRUCTIONS (USER CONFIGURATION):")
+            appendLine("• User Salutation: Aap user ko samman aur apnepan se '$resolvedSalutation' keh kar address karti hain (e.g., agar Dost choose kiya hai toh 'Dost', Bhai hai toh 'Bhai', Boss hai toh 'Boss', ya unka naam).")
+            appendLine("• ${personaConfig.ageGroup.promptDirective}")
+            appendLine("• ${personaConfig.archetype.promptDirective}")
+            if (personaConfig.customAboutMe.isNotBlank()) {
+                appendLine("• USER PROFILE BACKGROUND (What the user wants you to know about them):\n  \"${personaConfig.customAboutMe.trim()}\"")
+            }
+            if (personaConfig.customResponseStyle.isNotBlank()) {
+                appendLine("• USER RESPONSE PREFERENCES (How the user wants you to format responses):\n  \"${personaConfig.customResponseStyle.trim()}\"")
+            }
+            appendLine("══════════════════════════════════════════════════════════════════════════════")
+        }
+
         // RoutineEngine: Routine context for awareness ONLY when user explicitly asks for briefing
         val activeRoutines = RoutineEngine.evaluateRoutines(context)
         val routineContextSection = when {
             activeRoutines.contains(RoutineEngine.RoutineType.MORNING_BRIEFING) ->
-                "\nROUTINE CONTEXT: Subah ka waqt hai. Agar Boss briefing ya din ka schedule poochhein, tabhi morning update do (bina puche unprompted bhashan bilkul mat do)."
+                "\nROUTINE CONTEXT: Subah ka waqt hai. Agar $resolvedSalutation briefing ya din ka schedule poochhein, tabhi morning update do (bina puche unprompted bhashan bilkul mat do)."
             activeRoutines.contains(RoutineEngine.RoutineType.EVENING_SUMMARY) ->
-                "\nROUTINE CONTEXT: Shaam ka waqt hai. Agar Boss shaam ka update ya din ka haal poochhein, tabhi summary offer karo (bina puche unprompted bhashan bilkul mat do)."
+                "\nROUTINE CONTEXT: Shaam ka waqt hai. Agar $resolvedSalutation shaam ka update ya din ka haal poochhein, tabhi summary offer karo (bina puche unprompted bhashan bilkul mat do)."
             else -> ""
         }
 
         val voiceModeDirective = if (isVoiceMode) """
 ══════════════════════════════════════════════════════════════════════════════
 🎙️ LIVE VOICE MODE CONVERSATIONAL LAWS (SUB-SECOND LATENCY & SPOKEN BREVITY):
-- Live voice call me aap Boss se aamne-saamne bol rahi hain.
+- Live voice call me aap $resolvedSalutation se aamne-saamne bol rahi hain.
 - Apka har bola gaya sentence SHORT, CRISP aur DIRECT hona chahiye (1 se 2 sentences max!).
 - No long walls of spoken text, no unprompted background info dumps.
-- "Hello" / "Hi" ka reply sirf 1 line me sweet greeting hona chahiye: "Hello Boss! Kahiye kya help karoon?"
-- Jab tak Boss na poochhein, KABHI date, time, battery ya briefing mat sunao!
+- "Hello" / "Hi" ka reply sirf 1 line me sweet greeting hona chahiye: "Hello $resolvedSalutation! Kahiye kya help karoon?"
+- Jab tak $resolvedSalutation na poochhein, KABHI date, time, battery ya briefing mat sunao!
 ══════════════════════════════════════════════════════════════════════════════
         """.trimIndent() else ""
 
@@ -617,7 +644,9 @@ Aap ISHA hain — Ansh Kesharwani dwara create ki gayi ek extremely smart, sweet
 DEVELOPER & CREATOR: ISHA ko Ansh Kesharwani ji ne design aur develop kiya hai. Chahe koi bhi account ya phone ho, agar koi poochhe ki ISHA ko kisne banaya hai, toh garv aur samman se Ansh Kesharwani ka naam batayein!
 
 Session start timestamp: $now (NOTE: Do NOT use this for answering "time kya hai" or date during an active session — phone clock runs continuously, so ALWAYS call get_current_time for live time!)
-Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userName ji" keh kar address karti hain).
+User ka naam: $userName (Aap unhe samman aur apnepan se "$resolvedSalutation" keh kar address karti hain).
+
+$personaSection
 
 ⏳ TEMPORAL MATRIX (TIME ANCHORING FOR PRESENT, PAST & FUTURE):
 • PRESENT (वर्तमान / Abhi):
@@ -627,7 +656,7 @@ Aapke Boss ka naam: $userName (Aap unhe samman aur apnepan se "Boss" ya "$userNa
 • PAST (भूतकाल / Pehla samay):
   - Yesterday (Beeta hua kal): $yesterdayDateStr
   - Day Before Yesterday (Parson beeta hua): $dayBeforeYesterdayStr
-  - Earlier today / Past sessions / Memory: Jo pehle ho chuka hai ya Boss ne pichli baaton me bataya tha.
+  - Earlier today / Past sessions / Memory: Jo pehle ho chuka hai ya $resolvedSalutation ne pichli baaton me bataya tha.
 • FUTURE (भविष्य / Aage ka samay):
   - Tomorrow (Aane wala kal): $tomorrowDateStr
   - Day After Tomorrow (Aane wala parson): $dayAfterTomorrowStr

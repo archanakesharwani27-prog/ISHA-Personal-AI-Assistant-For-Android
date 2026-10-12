@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 
 interface ChatStreamCallback {
     fun onToken(chunk: String)
+    fun onThinkingToken(chunk: String) {}
     fun onToolStart(toolName: String, args: String) {}
     fun onToolExecution(toolName: String, args: String, result: String)
     fun onComplete(fullText: String)
@@ -89,6 +90,32 @@ class GeminiChatService(private val context: Context) {
     private var activeCall: Call? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val openRouterClient = OpenRouterClient(context)
+    @Volatile private var cachedLastImageBytes: ByteArray? = null
+
+    private fun detectMimeType(bytes: ByteArray): String {
+        if (bytes.size >= 8) {
+            if (bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+                bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()
+            ) {
+                return "image/png"
+            }
+            if (bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte()) {
+                return "image/gif"
+            }
+            if (bytes.size >= 12 &&
+                bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+                bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+                bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+                bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
+            ) {
+                return "image/webp"
+            }
+            if (bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) {
+                return "image/jpeg"
+            }
+        }
+        return "image/jpeg"
+    }
 
     /**
      * Sends a chat prompt along with previous conversation history and optional image attachment to Gemini.
@@ -164,11 +191,54 @@ class GeminiChatService(private val context: Context) {
                 newPrompt
             }
 
+        // ⚡ Multimodal Continuity Engine:
+        // Cache active image bytes, and restore for follow-up questions referencing images
+        var effectiveImageBytes = imageBytes
+        if (effectiveImageBytes != null && effectiveImageBytes.isNotEmpty()) {
+            cachedLastImageBytes = effectiveImageBytes
+        } else {
+            val lower = newPrompt.lowercase().trim()
+            val refersToImage = lower.contains("image") || lower.contains("photo") ||
+                    lower.contains("tasveer") || lower.contains("pic") ||
+                    lower.contains("picture") || lower.contains("isme") ||
+                    lower.contains("bheja") || lower.contains("bheji") ||
+                    lower.contains("dekho") || lower.contains("ye kya hai") ||
+                    lower.contains("batao isme") || lower.contains("janwar") ||
+                    lower.contains("ye kaun") || lower.contains("kya lag raha") ||
+                    lower.contains("dog") || lower.contains("kutta") || lower.contains("billi") ||
+                    lower.contains("cat") || lower.contains("breed")
+            val lastImageUri = history.lastOrNull { !it.imageUri.isNullOrBlank() }?.imageUri
+            val isFollowUpTurn = !lastImageUri.isNullOrBlank() || cachedLastImageBytes != null
+            val shouldRestore = refersToImage || (isFollowUpTurn && (lower.length < 40 || lower.startsWith("ye") || lower.startsWith("kya") || lower.startsWith("kaun")))
+            if (shouldRestore) {
+                val cached = cachedLastImageBytes
+                if (cached != null && cached.isNotEmpty()) {
+                    effectiveImageBytes = cached
+                    Log.i(TAG, "📸 Restored cached image bytes (${cached.size} bytes) for visual follow-up prompt")
+                } else if (!lastImageUri.isNullOrBlank()) {
+                    try {
+                        val parsed = android.net.Uri.parse(lastImageUri)
+                        val bytes = if (parsed.scheme == "file") {
+                            val f = java.io.File(parsed.path ?: "")
+                            if (f.exists() && f.length() > 0) f.readBytes() else null
+                        } else {
+                            context.contentResolver.openInputStream(parsed)?.use { it.readBytes() }
+                        }
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            effectiveImageBytes = bytes
+                            cachedLastImageBytes = bytes
+                            Log.i(TAG, "📸 Restored image from history URI: $lastImageUri (${bytes.size} bytes)")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not reload image from URI: $lastImageUri", e)
+                    }
+                }
+            }
+        }
+
         // ⚡ Autonomous Brain Router:
-        // ⚡ Autonomous Multi-Brain Gateway:
-        // Fast LLM (Groq / OpenRouter) is used ONLY for pure conversational turns (chit-chat, Q&A) where 0 tools are needed.
-        // If the user's intent requests an action (apps, flashlight, whatsapp, media, calls),
-        // it MUST route to Gemini Flash with native tool declarations!
+        // Fast LLM (Groq / OpenRouter) is used ONLY for pure text turns where 0 tools & NO images are needed.
+        // If image is present or an action is requested, it MUST route to Gemini Flash!
         val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
         // ⚡ O(1) check — tool turns are always at the tail of history
         val hasPendingToolTurn = history.lastOrNull()?.let {
@@ -176,11 +246,11 @@ class GeminiChatService(private val context: Context) {
         } ?: false
         val toolsForTurn = IshaToolRouter.routeToolsForPrompt(
             prompt = promptToSend,
-            hasImage = imageBytes != null,
+            hasImage = effectiveImageBytes != null,
             hasPendingToolTurn = hasPendingToolTurn
         )
         val isPureConversation = (toolsForTurn == null)
-        val canUseFastLlm = hasFastLlmKey && imageBytes == null && !hasPendingToolTurn && isPureConversation
+        val canUseFastLlm = hasFastLlmKey && effectiveImageBytes == null && !hasPendingToolTurn && isPureConversation
 
         if (canUseFastLlm) {
             try {
@@ -201,7 +271,7 @@ class GeminiChatService(private val context: Context) {
         }
 
         val apiKey = Secrets.getActiveGeminiKey(context)
-        val requestBodyJson = buildRequestBody(history, promptToSend, imageBytes)
+        val requestBodyJson = buildRequestBody(history, promptToSend, effectiveImageBytes)
         val bodyStr = requestBodyJson.toString()
 
         var lastErrorMsg = "Gemini API Error"
@@ -220,7 +290,7 @@ class GeminiChatService(private val context: Context) {
             val call = client.newCall(request)
             activeCall = call
 
-            val response = try {
+            var response = try {
                 withContext(Dispatchers.IO) { call.execute() }
             } catch (e: Exception) {
                 if (e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)) {
@@ -229,50 +299,40 @@ class GeminiChatService(private val context: Context) {
                 }
                 Log.w(TAG, "Model $model connection failed: ${e.message}, trying fallback...")
                 lastErrorMsg = e.localizedMessage ?: "Connection error"
-                continue
+                null
             }
 
-            if (!response.isSuccessful) {
-                val errBody = response.body?.string() ?: "(no body)"
-                Log.w(TAG, "Model $model failed with HTTP ${response.code}: $errBody")
-                lastErrorMsg = when (response.code) {
+            // Dual-tier fallback: If gateway returned 401/403/502/connection error and direct key exists, retry direct Google endpoint!
+            if ((response == null || (!response.isSuccessful && (response.code == 401 || response.code == 403 || response.code == 502))) &&
+                apiKey.isNotBlank() && !url.contains("generativelanguage.googleapis.com")
+            ) {
+                try { response?.close() } catch (_: Exception) {}
+                Log.w(TAG, "Gateway proxy failed for $model (${response?.code ?: "conn"}), retrying direct Google endpoint...")
+                val directUrl = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+                val directReq = Request.Builder().url(directUrl).post(body).build()
+                val directCall = client.newCall(directReq)
+                activeCall = directCall
+                response = try {
+                    withContext(Dispatchers.IO) { directCall.execute() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Direct Google fallback for $model failed: ${e.message}")
+                    null
+                }
+            }
+
+            if (response == null || !response.isSuccessful) {
+                val errCode = response?.code ?: -1
+                val errBody = try { response?.body?.string() ?: "" } catch (_: Exception) { "" }
+                Log.w(TAG, "Model $model failed with HTTP $errCode: $errBody")
+                lastErrorMsg = when (errCode) {
                     400 -> "Bad request — check request format"
                     401, 403 -> "API key invalid or quota exceeded"
                     404 -> "Model not found ($model)"
                     429 -> "Rate limit reached — thoda wait karein Boss"
                     503 -> "Server thoda busy hai Boss — ek second mein try karti hoon!"
-                    else -> "Gemini API Error (${response.code})"
+                    else -> "Gemini API Error ($errCode)"
                 }
-                // If 404, 429, 5xx or model deprecated/unsupported in 400, try next fallback model
-                val isUnsupportedModel = response.code == 400 && (
-                    errBody.contains("not available", ignoreCase = true) ||
-                    errBody.contains("not supported", ignoreCase = true) ||
-                    errBody.contains("update your code", ignoreCase = true)
-                )
-                if (response.code == 503 || response.code == 429) {
-                    // Fast fallback: immediately try next candidate model on primary key
-                    Log.w(TAG, "HTTP ${response.code} from $model, falling back immediately to next candidate...")
-                    continue
-                }
-                if (response.code == 404 || response.code > 500 || isUnsupportedModel) {
-                    continue
-                } else {
-                    if (Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
-                        try {
-                            Log.w(TAG, "Gemini $model failed ($lastErrorMsg), falling back to OpenRouter...")
-                            val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
-                            openRouterClient.streamFastChat(
-                                systemPrompt = sysPrompt,
-                                history = history,
-                                prompt = promptToSend,
-                                callback = callback
-                            )
-                            return
-                        } catch (_: Exception) {}
-                    }
-                    callback.onError(lastErrorMsg)
-                    return
-                }
+                continue
             }
 
             val responseStream = response.body?.byteStream()
@@ -306,11 +366,16 @@ class GeminiChatService(private val context: Context) {
                                 for (p in 0 until parts.size()) {
                                     val part = parts.get(p).asJsonObject
 
-                                    // Check for streaming text token
+                                    // Check for streaming text or thought token
                                     if (part.has("text")) {
                                         val token = part.get("text").asString
-                                        fullAccumulator.append(token)
-                                        callback.onToken(token)
+                                        val isThought = part.has("thought") && part.get("thought").asBoolean
+                                        if (isThought) {
+                                            callback.onThinkingToken(token)
+                                        } else {
+                                            fullAccumulator.append(token)
+                                            callback.onToken(token)
+                                        }
                                     }
 
                                     // Check for tool function call (Preserve exact part with thoughtSignature)
@@ -351,8 +416,9 @@ class GeminiChatService(private val context: Context) {
         return // Successfully completed request with this model
     }
 
-    // If all candidate models failed, fallback to OpenRouter before reporting error
-    if (Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
+    // If all candidate models failed, fallback to OpenRouter ONLY IF no image was attached
+    // (OpenRouter is text-only; falling back with an image causes it to claim no image was sent)
+    if (effectiveImageBytes == null && Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
         try {
             Log.w(TAG, "All candidate Gemini models failed ($lastErrorMsg), falling back to OpenRouter...")
             val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
@@ -518,7 +584,7 @@ class GeminiChatService(private val context: Context) {
             val call = client.newCall(request)
             activeCall = call
 
-            val response = try {
+            var response = try {
                 withContext(Dispatchers.IO) { call.execute() }
             } catch (e: Exception) {
                 if (e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)) {
@@ -526,17 +592,36 @@ class GeminiChatService(private val context: Context) {
                     return
                 }
                 Log.w(TAG, "Tool response model $candidateModel connection failed: ${e.message}, trying fallback...")
-                continue
+                null
             }
 
-            if (!response.isSuccessful) {
-                val errBody = response.body?.string() ?: ""
-                Log.w(TAG, "Tool response model $candidateModel failed with HTTP ${response.code}: $errBody")
-                if (response.code == 503 || response.code == 429) {
-                    Log.w(TAG, "Tool response model $candidateModel HTTP ${response.code}, falling back immediately...")
+            // Dual-tier fallback: If gateway returned 401/403/502/connection error and direct key exists, retry direct Google endpoint!
+            if ((response == null || (!response.isSuccessful && (response.code == 401 || response.code == 403 || response.code == 502))) &&
+                apiKey.isNotBlank() && !url.contains("generativelanguage.googleapis.com")
+            ) {
+                try { response?.close() } catch (_: Exception) {}
+                Log.w(TAG, "Gateway proxy failed for tool response $candidateModel (${response?.code ?: "conn"}), retrying direct Google endpoint...")
+                val directUrl = "https://generativelanguage.googleapis.com/v1beta/models/$candidateModel:streamGenerateContent?alt=sse&key=$apiKey"
+                val directReq = Request.Builder().url(directUrl).post(body).build()
+                val directCall = client.newCall(directReq)
+                activeCall = directCall
+                response = try {
+                    withContext(Dispatchers.IO) { directCall.execute() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Direct Google fallback for tool response $candidateModel failed: ${e.message}")
+                    null
+                }
+            }
+
+            if (response == null || !response.isSuccessful) {
+                val errCode = response?.code ?: -1
+                val errBody = try { response?.body?.string() ?: "" } catch (_: Exception) { "" }
+                Log.w(TAG, "Tool response model $candidateModel failed with HTTP $errCode: $errBody")
+                if (errCode == 503 || errCode == 429) {
+                    Log.w(TAG, "Tool response model $candidateModel HTTP $errCode, falling back immediately...")
                     continue
                 }
-                if (response.code == 404 || response.code >= 400) {
+                if (errCode == 404 || errCode >= 400) {
                     continue
                 }
                 break
@@ -567,8 +652,13 @@ class GeminiChatService(private val context: Context) {
                                     val part = parts.get(p).asJsonObject
                                     if (part.has("text")) {
                                         val token = part.get("text").asString
-                                        postToolAccumulator.append(token)
-                                        callback.onToken(token)
+                                        val isThought = part.has("thought") && part.get("thought").asBoolean
+                                        if (isThought) {
+                                            callback.onThinkingToken(token)
+                                        } else {
+                                            postToolAccumulator.append(token)
+                                            callback.onToken(token)
+                                        }
                                     }
                                     if (part.has("functionCall")) {
                                         nextPendingFunctionCalls.add(part.getAsJsonObject("functionCall"))
@@ -641,8 +731,9 @@ class GeminiChatService(private val context: Context) {
             addProperty("role", "user")
             val parts = JsonArray().apply {
                 if (imageBytes != null && imageBytes.isNotEmpty()) {
+                    val mime = detectMimeType(imageBytes)
                     val inlineData = JsonObject().apply {
-                        addProperty("mime_type", "image/jpeg")
+                        addProperty("mime_type", mime)
                         addProperty("data", android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP))
                     }
                     val imagePart = JsonObject().apply {
@@ -693,15 +784,33 @@ class GeminiChatService(private val context: Context) {
             Log.d(TAG, "⚡ Lean Turn: 0 tools attached for instant sub-second response")
         }
 
-        // 4. Generation Config: Fast dynamic temperature
+        // 4. Generation Config: Fast dynamic temperature + Intelligent Thinking Budget
         val genConfig = JsonObject().apply {
             addProperty("temperature", getDynamicTemperature(newPrompt))
             addProperty("topP", 0.95)
             addProperty("maxOutputTokens", 4096)
+            if (isComplexReasoningIntent(newPrompt)) {
+                val thinkingConfig = JsonObject().apply {
+                    addProperty("thinkingBudget", 2048)
+                }
+                add("thinkingConfig", thinkingConfig)
+                Log.d(TAG, "🧠 Attached 2048 token Thinking Budget for complex reasoning turn")
+            }
         }
         root.add("generationConfig", genConfig)
 
         return root
+    }
+
+    private fun isComplexReasoningIntent(prompt: String): Boolean {
+        val lower = prompt.lowercase().trim()
+        val reasoningKeywords = listOf(
+            "step by step", "deeply", "analyse", "analyze", "comparison", "compare",
+            "logic", "reason", "puzzle", "math", "proof", "solve", "debug",
+            "refactor", "code", "architecture", "philosophy", "pros and cons",
+            "dhyan se socho", "soch kar batao", "explain in detail", "vistar se"
+        )
+        return reasoningKeywords.any { lower.contains(it) }
     }
 
     private fun isDeviceActionIntent(prompt: String): Boolean {
@@ -885,7 +994,7 @@ class GeminiChatService(private val context: Context) {
         val contents = JsonArray()
         // Include recent USER, ASSISTANT, and TOOL messages (smart retention: first 3 context turns + last 20)
         val cleanHistory = history.filter {
-            it.text.isNotBlank() && !it.isStreaming
+            (it.text.isNotBlank() || !it.imageUri.isNullOrBlank()) && !it.isStreaming
         }
         // ⚡ Cross-Modal Bridge Safety Net:
         // If history is empty (e.g. from Dynamic Island, Widget, or Quick Action),
@@ -944,6 +1053,30 @@ class GeminiChatService(private val context: Context) {
             val turn = JsonObject().apply {
                 addProperty("role", role)
                 val parts = JsonArray().apply {
+                    if (role == "user" && !msg.imageUri.isNullOrBlank()) {
+                        try {
+                            val uri = android.net.Uri.parse(msg.imageUri)
+                            val imgBytes = if (uri.scheme == "file") {
+                                val f = java.io.File(uri.path ?: "")
+                                if (f.exists() && f.length() > 0) f.readBytes() else null
+                            } else {
+                                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            }
+                            if (imgBytes != null && imgBytes.isNotEmpty()) {
+                                val mime = detectMimeType(imgBytes)
+                                val inlineData = JsonObject().apply {
+                                    addProperty("mime_type", mime)
+                                    addProperty("data", android.util.Base64.encodeToString(imgBytes, android.util.Base64.NO_WRAP))
+                                }
+                                val imagePart = JsonObject().apply {
+                                    add("inline_data", inlineData)
+                                }
+                                add(imagePart)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not load history image: ${msg.imageUri}", e)
+                        }
+                    }
                     val part = JsonObject().apply { addProperty("text", messageText) }
                     add(part)
                 }

@@ -1529,6 +1529,17 @@ object IshaToolRegistry {
             )
         ))
 
+        // 93. Check & Install In-App OTA Update
+        toolsArray.add(createFunction(
+            name = "check_app_update",
+            desc = "Check for new in-app app updates from GitHub Releases, check current version vs latest version, view release notes, or trigger OTA APK update download and installation. ALWAYS call when user asks 'check for update', 'app update aaya kya', 'kya koi naya update hai', 'update isha', 'app ko update kardo'.",
+            params = mapOf("auto_download" to "boolean"),
+            required = emptyList(),
+            paramDescriptions = mapOf(
+                "auto_download" to "true to automatically download the APK and open the package installer immediately, false to check and report version info first"
+            )
+        ))
+
         return toolsArray
     }
 
@@ -4145,11 +4156,17 @@ object IshaToolRegistry {
                     result.addProperty("query", query)
                     result.add("search_results", searchResults)
 
-                    val summaryList = mutableListOf<String>()
-                    for (i in 0 until searchResults.size()) {
+                    val formattedList = mutableListOf<String>()
+                    for (i in 0 until minOf(5, searchResults.size())) {
                         val sObj = searchResults.get(i).asJsonObject
+                        val title = sObj.get("title")?.asString ?: "Web Result"
                         val sum = sObj.get("summary")?.asString ?: ""
-                        if (sum.isNotBlank()) summaryList.add(sum)
+                        val url = sObj.get("url")?.asString ?: ""
+                        val src = sObj.get("source")?.asString ?: "Web"
+                        if (sum.isNotBlank()) {
+                            val linkPart = if (url.isNotBlank()) " | Source: [$src]($url)" else ""
+                            formattedList.add("• [$src] **$title**$linkPart\n  $sum")
+                        }
                     }
 
                     if (openBrowser) {
@@ -4159,8 +4176,9 @@ object IshaToolRegistry {
                         try { context.startActivity(browserIntent) } catch (_: Exception) {}
                     }
 
-                    val searchMsg = if (summaryList.isNotEmpty()) {
-                        "Search results for '$query':\n• " + summaryList.take(4).joinToString("\n• ") +
+                    val searchMsg = if (formattedList.isNotEmpty()) {
+                        "Verified Web Search Results for '$query':\n\n" + formattedList.joinToString("\n\n") +
+                        "\n\n[TASK GUIDANCE]: Answer Boss's question accurately using these verified live search results. Quote specific numbers/dates and provide citations as markdown links [Source Name](URL) so Boss can tap to view the original source." +
                         (if (openBrowser) "\n\n(Google search results Chrome browser me bhi open kar diye hain Boss)" else "")
                     } else {
                         "Internet search complete for '$query', lekin specific results nahi mile."
@@ -4222,6 +4240,11 @@ object IshaToolRegistry {
                         result.addProperty("status", "error")
                         result.addProperty("error", "Media access error: ${e.message}")
                     }
+                }
+
+                // 36d. Check & Install In-App OTA Update
+                "check_app_update" -> {
+                    executeCheckAppUpdateTool(context, args, result)
                 }
 
                 // 37. Open Camera / Take Photo
@@ -7041,8 +7064,34 @@ object IshaToolRegistry {
         return result
     }
 
+    private fun extractDomainFromUrl(rawUrl: String): String {
+        return try {
+            val uri = java.net.URI(rawUrl)
+            val host = uri.host ?: return "Web"
+            host.removePrefix("www.").removePrefix("m.")
+        } catch (_: Exception) {
+            "Web"
+        }
+    }
+
+    private fun decodeDestinationUrl(href: String): String {
+        return try {
+            if (href.contains("uddg=")) {
+                val uddgParam = href.substringAfter("uddg=").substringBefore("&")
+                java.net.URLDecoder.decode(uddgParam, "UTF-8")
+            } else if (href.startsWith("//")) {
+                "https:$href"
+            } else {
+                href
+            }
+        } catch (_: Exception) {
+            href
+        }
+    }
+
     /**
      * Searches web in real-time using live web search snippets + DuckDuckGo Instant Answers + Wikipedia.
+     * Extracts verified titles, clean destination URLs, and source domain badges (Perplexity-grade).
      */
     fun performDirectWebSearch(query: String): JsonObject {
         val result = JsonObject()
@@ -7050,7 +7099,7 @@ object IshaToolRegistry {
         try {
             val encoded = URLEncoder.encode(query, "UTF-8")
 
-            // 1. Primary: DuckDuckGo Lite Search (Lightweight, reliable mobile search with real-time snippets)
+            // 1. Primary: DuckDuckGo Lite Search (Real-time links + titles + snippets)
             try {
                 val liteUrl = "https://lite.duckduckgo.com/lite/"
                 val formBody = okhttp3.FormBody.Builder()
@@ -7066,10 +7115,33 @@ object IshaToolRegistry {
                 val liteResp = httpClient.newCall(liteReq).execute()
                 if (liteResp.isSuccessful) {
                     val html = liteResp.body?.string() ?: ""
-                    val snippetRegex = Regex("""<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>""", RegexOption.DOT_MATCHES_ALL)
-                    val matches = snippetRegex.findAll(html)
-                    for (m in matches.take(5)) {
-                        val rawSnippet = m.groupValues[1]
+                    val linkPattern = Regex("""<a\b([^>]*\bclass=['"]result-link['"][^>]*)>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                    val snippetPattern = Regex("""<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>""", RegexOption.DOT_MATCHES_ALL)
+                    val links = linkPattern.findAll(html).toList()
+                    val snippetMatches = snippetPattern.findAll(html).toList()
+                    val count = minOf(links.size, snippetMatches.size, 6)
+
+                    for (i in 0 until count) {
+                        val rawAttrs = links[i].groupValues[1]
+                        val rawTitle = links[i].groupValues[2]
+                        val rawSnippet = snippetMatches[i].groupValues[1]
+
+                        val hrefMatch = Regex("""href=['"]([^'"]+)['"]""").find(rawAttrs)
+                        val rawUrl = hrefMatch?.groupValues?.get(1) ?: ""
+                        val cleanUrl = decodeDestinationUrl(rawUrl)
+                        val domain = extractDomainFromUrl(cleanUrl)
+
+                        val cleanTitle = rawTitle
+                            .replace(Regex("<[^>]*>"), "")
+                            .replace("&quot;", "\"")
+                            .replace("&#x27;", "'")
+                            .replace("&#039;", "'")
+                            .replace("&amp;", "&")
+                            .replace("&lt;", "<")
+                            .replace("&gt;", ">")
+                            .replace("&nbsp;", " ")
+                            .trim()
+
                         val cleanSnippet = rawSnippet
                             .replace(Regex("<[^>]*>"), "")
                             .replace("&quot;", "\"")
@@ -7080,11 +7152,13 @@ object IshaToolRegistry {
                             .replace("&gt;", ">")
                             .replace("&nbsp;", " ")
                             .trim()
-                        if (cleanSnippet.length >= 25 && !cleanSnippet.contains("DuckDuckGo")) {
+
+                        if (cleanSnippet.length >= 20 && !cleanSnippet.contains("DuckDuckGo")) {
                             snippets.add(JsonObject().apply {
-                                addProperty("title", "Web Result")
+                                addProperty("title", cleanTitle.ifBlank { "Web Result" })
                                 addProperty("summary", cleanSnippet)
-                                addProperty("source", "Web Search")
+                                addProperty("url", cleanUrl)
+                                addProperty("source", domain)
                             })
                         }
                     }
@@ -7106,25 +7180,29 @@ object IshaToolRegistry {
                     val htmlResp = httpClient.newCall(htmlReq).execute()
                     if (htmlResp.isSuccessful) {
                         val html = htmlResp.body?.string() ?: ""
-                        val snippetRegex = Regex("""<a[^>]*class=["']result__snippet["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
-                        val matches = snippetRegex.findAll(html)
-                        for (m in matches.take(5)) {
-                            val rawSnippet = m.groupValues[1]
-                            val cleanSnippet = rawSnippet
-                                .replace(Regex("<[^>]*>"), "")
-                                .replace("&quot;", "\"")
-                                .replace("&#x27;", "'")
-                                .replace("&#039;", "'")
-                                .replace("&amp;", "&")
-                                .replace("&lt;", "<")
-                                .replace("&gt;", ">")
-                                .replace("&nbsp;", " ")
-                                .trim()
-                            if (cleanSnippet.length >= 25 && !cleanSnippet.contains("DuckDuckGo")) {
+                        val linkPattern = Regex("""<a[^>]*class=["']result__a["'][^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                        val snippetPattern = Regex("""<a[^>]*class=["']result__snippet["'][^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                        val links = linkPattern.findAll(html).toList()
+                        val snippetMatches = snippetPattern.findAll(html).toList()
+                        val count = minOf(links.size, snippetMatches.size, 5)
+
+                        for (i in 0 until count) {
+                            val rawUrl = links[i].groupValues[1]
+                            val rawTitle = links[i].groupValues[2]
+                            val rawSnippet = snippetMatches[i].groupValues[1]
+
+                            val cleanUrl = decodeDestinationUrl(rawUrl)
+                            val domain = extractDomainFromUrl(cleanUrl)
+
+                            val cleanTitle = rawTitle.replace(Regex("<[^>]*>"), "").replace("&quot;", "\"").replace("&#x27;", "'").replace("&#039;", "'").replace("&amp;", "&").trim()
+                            val cleanSnippet = rawSnippet.replace(Regex("<[^>]*>"), "").replace("&quot;", "\"").replace("&#x27;", "'").replace("&#039;", "'").replace("&amp;", "&").trim()
+
+                            if (cleanSnippet.length >= 20 && !cleanSnippet.contains("DuckDuckGo")) {
                                 snippets.add(JsonObject().apply {
-                                    addProperty("title", "Web Result")
+                                    addProperty("title", cleanTitle.ifBlank { "Web Result" })
                                     addProperty("summary", cleanSnippet)
-                                    addProperty("source", "Web Search")
+                                    addProperty("url", cleanUrl)
+                                    addProperty("source", domain)
                                 })
                             }
                         }
@@ -7136,7 +7214,7 @@ object IshaToolRegistry {
 
             Log.i(TAG, "Web search completed for \"$query\": extracted ${snippets.size()} snippets")
 
-            // 2. DuckDuckGo Instant Answer API (Entity facts, definitions)
+            // 3. DuckDuckGo Instant Answer API (Entity facts, definitions)
             if (snippets.size() < 2) {
                 try {
                     val ddgUrl = "https://api.duckduckgo.com/?q=$encoded&format=json&no_html=1&skip_disambig=1"
@@ -7148,11 +7226,14 @@ object IshaToolRegistry {
                             val parsed = com.google.gson.JsonParser.parseString(ddgJsonStr).asJsonObject
                             val abstractText = parsed.get("AbstractText")?.asString ?: ""
                             val heading = parsed.get("Heading")?.asString ?: ""
+                            val abstractUrl = parsed.get("AbstractURL")?.asString ?: ""
                             val entity = parsed.get("Entity")?.asString ?: ""
                             if (abstractText.isNotBlank()) {
                                 val snip = JsonObject().apply {
                                     addProperty("title", heading.ifBlank { query })
                                     addProperty("summary", abstractText)
+                                    if (abstractUrl.isNotBlank()) addProperty("url", abstractUrl)
+                                    addProperty("source", if (abstractUrl.isNotBlank()) extractDomainFromUrl(abstractUrl) else "duckduckgo.com")
                                     if (entity.isNotBlank()) addProperty("entity_type", entity)
                                 }
                                 snippets.add(snip)
@@ -7163,10 +7244,13 @@ object IshaToolRegistry {
                                     val rObj = related.get(r)
                                     if (rObj.isJsonObject && rObj.asJsonObject.has("Text")) {
                                         val relText = rObj.asJsonObject.get("Text").asString
+                                        val firstUrl = rObj.asJsonObject.get("FirstURL")?.asString ?: ""
                                         if (relText.isNotBlank()) {
                                             snippets.add(JsonObject().apply {
                                                 addProperty("title", "Related Info")
                                                 addProperty("summary", relText)
+                                                if (firstUrl.isNotBlank()) addProperty("url", firstUrl)
+                                                addProperty("source", if (firstUrl.isNotBlank()) extractDomainFromUrl(firstUrl) else "duckduckgo.com")
                                             })
                                         }
                                     }
@@ -7179,7 +7263,7 @@ object IshaToolRegistry {
                 }
             }
 
-            // 3. Wikipedia Search API as rich factual complement
+            // 4. Wikipedia Search API as rich factual complement
             if (snippets.size() < 2) {
                 try {
                     val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encoded&utf8=&format=json"
@@ -7193,6 +7277,7 @@ object IshaToolRegistry {
                             for (s in 0 until minOf(2, searchArr.size())) {
                                 val item = searchArr.get(s).asJsonObject
                                 val wTitle = item.get("title")?.asString ?: ""
+                                val wUrl = "https://en.wikipedia.org/wiki/" + URLEncoder.encode(wTitle.replace(' ', '_'), "UTF-8")
                                 val wSnippet = item.get("snippet")?.asString
                                     ?.replace(Regex("<[^>]*>"), "")
                                     ?.replace("&quot;", "\"")
@@ -7202,7 +7287,8 @@ object IshaToolRegistry {
                                     snippets.add(JsonObject().apply {
                                         addProperty("title", wTitle)
                                         addProperty("summary", wSnippet)
-                                        addProperty("source", "Wikipedia")
+                                        addProperty("url", wUrl)
+                                        addProperty("source", "wikipedia.org")
                                     })
                                 }
                             }
@@ -8118,6 +8204,38 @@ object IshaToolRegistry {
                 )
                 result.addProperty("learned_rule", "Permanently taught skill '$actionName' to Isha's memory.")
             } catch (_: Exception) {}
+        }
+    }
+
+    private fun executeCheckAppUpdateTool(context: Context, args: JsonObject, result: JsonObject) {
+        val autoDownload = args.get("auto_download")?.asBoolean ?: false
+        var updateInfo: com.aura.assistant.sync.IshaUpdateManager.UpdateInfo? = null
+        runBlocking(Dispatchers.IO) {
+            updateInfo = com.aura.assistant.sync.IshaUpdateManager.checkForUpdate()
+        }
+        if (updateInfo != null) {
+            result.addProperty("status", "success")
+            result.addProperty("current_version", com.aura.assistant.BuildConfig.VERSION_NAME)
+            result.addProperty("latest_version", updateInfo!!.versionName)
+            result.addProperty("is_update_available", updateInfo!!.isUpdateAvailable)
+            result.addProperty("release_notes", updateInfo!!.releaseNotes)
+            result.addProperty("download_url", updateInfo!!.apkDownloadUrl)
+
+            if (updateInfo!!.isUpdateAvailable) {
+                if (autoDownload) {
+                    runBlocking(Dispatchers.IO) {
+                        com.aura.assistant.sync.IshaUpdateManager.downloadAndInstall(context, updateInfo!!)
+                    }
+                    result.addProperty("message", "Boss, naya update (v${updateInfo!!.versionName}) download karke install prompt open kar diya hai!")
+                } else {
+                    result.addProperty("message", "Boss, naya update available hai: v${updateInfo!!.versionName} (Aapka current version v${com.aura.assistant.BuildConfig.VERSION_NAME} hai).\n\nRelease Notes:\n${updateInfo!!.releaseNotes}\n\nAap bole to main abhi download aur install kar doon?")
+                }
+            } else {
+                result.addProperty("message", "Boss, aap already latest version (v${com.aura.assistant.BuildConfig.VERSION_NAME}) par hain! Koi naya update pending nahi hai.")
+            }
+        } else {
+            result.addProperty("status", "error")
+            result.addProperty("message", "Update server se connect nahi ho paya, Boss. Please internet connection check karein.")
         }
     }
 }
