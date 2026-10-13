@@ -69,3 +69,8 @@ The following working features and components are production-tested and **STRICT
 ### 5. 🔒 CODEBASE FREEZE POLICY
 The entire active codebase tested on physical hardware (LAVA LEX402) is in a validated, stable production state.
 - **Rule**: No edits, deletions, refactoring, or modifications should be performed unless explicitly requested by the user.
+
+### 6. 🔒 GIT REMOTE & REPOSITORY TARGET RESTRICTION
+- **Rule**: Never push code, branches, or tags to any Aura repository (`Aura-Personal-Ai-Assistant-for-Android`).
+- Only push to the official Isha repository: `origin` (`ISHA-Personal-AI-Assistant-For-Android`).
+
