@@ -205,31 +205,11 @@ data class IshaPersonaConfig(
      */
     fun getPreviewGreeting(userName: String = "Ansh"): String {
         val salutation = resolveSalutation(userName)
-        return when (ageGroup) {
-            UserAgeGroup.KIDS -> when (archetype) {
-                PersonaArchetype.BEST_FRIEND -> "Arre wah $salutation! Aao aaj hum milkar ek mazedaar game khelte hain ya koi exciting kahani sunte hain! ✨"
-                PersonaArchetype.STUDY_BUDDY -> "Hello $salutation! Aaj school ya drawing mein kya naya seekhna hai? Chalo saath mein dekhte hain! 🎨"
-                PersonaArchetype.JARVIS_EXECUTIVE -> "Hello $salutation! Aapka pocket task assistant ready hai. Batayein kya karna hai! 🚀"
-                PersonaArchetype.MENTOR_ADVISOR -> "Namaste $salutation! Har roz kuch naya seekhna achhi baat hai. Aaj kya sawaal hai aapka? 🌟"
-            }
-            UserAgeGroup.TEENS -> when (archetype) {
-                PersonaArchetype.BEST_FRIEND -> "Hey $salutation! Kaisa tha din? Koi problem ho ya homework attack karna ho toh bindass batao! 🙌"
-                PersonaArchetype.STUDY_BUDDY -> "Yo $salutation! Maths, Science ya coding jo bhi tough lag raha ho, aao milkar 2 minute mein crack karte hain! 📚"
-                PersonaArchetype.JARVIS_EXECUTIVE -> "Ready $salutation. Batayein agla task ya schedule kya hai, turant execute kar doongi."
-                PersonaArchetype.MENTOR_ADVISOR -> "Hey $salutation! Hamesha smart goals banayein aur consistency rakhein. Aaj kis topic par guidance chahiye?"
-            }
-            UserAgeGroup.YOUNG_ADULT -> when (archetype) {
-                PersonaArchetype.BEST_FRIEND -> "Yo $salutation! Kaisi chal rahi hai life aur projects? Batao aaj kis cheez ko rock karna hai! 💡"
-                PersonaArchetype.STUDY_BUDDY -> "Chalo $salutation, concept review karte hain. Doubt clear karo aur code run karte hain bina kisi tension ke! 💻"
-                PersonaArchetype.JARVIS_EXECUTIVE -> "Standing by, $salutation. Systems, tools aur tasks aligned hain. Kahiye kya execute karna hai."
-                PersonaArchetype.MENTOR_ADVISOR -> "Hello $salutation. Long-term goals par focus karte hue, aaj ka sabse high-impact task kya hona chahiye?"
-            }
-            UserAgeGroup.ADULT -> when (archetype) {
-                PersonaArchetype.BEST_FRIEND -> "Namaste $salutation. Din kaisa raha aapka? Main yahan hoon, aaram se baat kijiye ya koi plan share kijiye."
-                PersonaArchetype.STUDY_BUDDY -> "Namaste $salutation. Kisi bhi research, document ya complex analysis ko structured points mein break karte hain."
-                PersonaArchetype.JARVIS_EXECUTIVE -> "Good day, $salutation. Ready to streamline operations, schedules, and automate system tasks."
-                PersonaArchetype.MENTOR_ADVISOR -> "Namaste $salutation. Strategic decisions aur priorities ko balance karte hain. Kis mudde par discuss karna chahte hain?"
-            }
+        return when (archetype) {
+            PersonaArchetype.BEST_FRIEND -> "Yo $salutation! Kaisi chal rahi hai life aur projects? Batao aaj kis cheez ko rock karna hai! 💡"
+            PersonaArchetype.STUDY_BUDDY -> "Chalo $salutation, concept review karte hain. Doubt clear karo aur code run karte hain bina kisi tension ke! 💻"
+            PersonaArchetype.JARVIS_EXECUTIVE -> "Standing by, $salutation. Systems, tools aur tasks aligned hain. Kahiye kya execute karna hai."
+            PersonaArchetype.MENTOR_ADVISOR -> "Hello $salutation. Long-term goals par focus karte hue, aaj ka sabse high-impact task kya hona chahiye?"
         }
     }
 }

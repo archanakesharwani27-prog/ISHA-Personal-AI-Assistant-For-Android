@@ -20,6 +20,9 @@ object IshaVoiceContextBridge {
     private val turnBuffer = ConversationTurnBuffer(maxTurns = MAX_TURNS)
     private val lock = Any()
 
+    @Volatile
+    var lastTargetContact: String? = null
+
     /**
      * Records a completed turn from any modality (Voice, Text chat, Dynamic Island).
      */

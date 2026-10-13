@@ -538,8 +538,8 @@ private fun MainSettingsView(
             icon = Icons.Default.Face,
             iconTint = themePrimary,
             title = "AI Persona & Custom Instructions",
-            subtitle = "${personaConfig.archetype.title.substringBefore(" (")} • ${personaConfig.resolveSalutation(userProfile.name)} • ${personaConfig.ageGroup.title}",
-            badgeText = personaConfig.ageGroup.ageRange,
+            subtitle = "${personaConfig.archetype.title.substringBefore(" (")} • ${personaConfig.resolveSalutation(userProfile.name)}",
+            badgeText = null,
             onClick = { onNavigate(SettingsPage.PERSONA_STUDIO) }
         )
 
@@ -712,7 +712,7 @@ private fun PersonaStudioSubPage(
     userName: String,
     themePrimary: Color,
     themeSecondary: Color,
-    onAgeGroupChange: (UserAgeGroup) -> Unit,
+    onAgeGroupChange: (UserAgeGroup) -> Unit = {},
     onSalutationChange: (SalutationTitle, String) -> Unit,
     onArchetypeChange: (PersonaArchetype) -> Unit,
     onCustomAboutMeChange: (String) -> Unit,
@@ -770,7 +770,7 @@ private fun PersonaStudioSubPage(
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
-                        text = "${personaConfig.ageGroup.title} • ${personaConfig.resolveSalutation(userName)}",
+                        text = personaConfig.resolveSalutation(userName),
                         style = AuraTypography.bodySmall.copy(
                             color = ChatGptTextMuted,
                             fontSize = 10.sp
@@ -792,95 +792,7 @@ private fun PersonaStudioSubPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 1. Age Group Selector
-        Surface(
-            color = ChatGptCard,
-            shape = RoundedCornerShape(14.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "Age Group & Tone Model",
-                    style = AuraTypography.titleMedium.copy(color = ChatGptTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = "Adapts vocabulary, complexity, and storytelling automatically",
-                    style = AuraTypography.bodySmall.copy(color = ChatGptTextMuted, fontSize = 11.sp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    UserAgeGroup.entries.forEach { ageGroup ->
-                        val isSelected = ageGroup == personaConfig.ageGroup
-                        Surface(
-                            color = if (isSelected) themePrimary.copy(alpha = 0.12f) else ChatGptBackground,
-                            shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) themePrimary else ChatGptBorder
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onAgeGroupChange(ageGroup) }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = { onAgeGroupChange(ageGroup) },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = themePrimary,
-                                        unselectedColor = ChatGptTextMuted
-                                    ),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = ageGroup.title,
-                                            style = AuraTypography.bodyMedium.copy(
-                                                color = if (isSelected) themePrimary else ChatGptTextPrimary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
-                                            )
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(if (isSelected) themePrimary.copy(alpha = 0.2f) else ChatGptBorderSubtle)
-                                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                                        ) {
-                                            Text(
-                                                text = ageGroup.ageRange,
-                                                style = AuraTypography.labelSmall.copy(
-                                                    color = if (isSelected) themePrimary else ChatGptTextMuted,
-                                                    fontSize = 9.sp
-                                                )
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = ageGroup.subtitle,
-                                        style = AuraTypography.bodySmall.copy(
-                                            color = if (isSelected) ChatGptTextSecondary else ChatGptTextMuted,
-                                            fontSize = 11.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // 2. Salutation Selector
+        // 1. Salutation Selector
         Surface(
             color = ChatGptCard,
             shape = RoundedCornerShape(14.dp),

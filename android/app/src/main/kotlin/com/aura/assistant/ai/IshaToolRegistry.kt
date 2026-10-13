@@ -43,6 +43,7 @@ import java.io.StringReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -145,19 +146,19 @@ object IshaToolRegistry {
         // 3. WhatsApp (via Accessibility automation)
         toolsArray.add(createFunction(
             name = "send_whatsapp",
-            desc = "Send a WhatsApp text message to a named contact automatically. ALWAYS call when user asks to send a WhatsApp message (e.g. 'Rahul ko WhatsApp par hello bolo', 'Mom ko message bhejo WhatsApp pe').",
+            desc = "Send a WhatsApp text message to a contact automatically. ALWAYS call when user asks to send a WhatsApp message, or says 'reply karo', 'reply kro', 'jawab do', 'baat karo'. If contact_name is omitted or user says a pronoun ('usse', 'unse', 'isse', 'kro', 'karo') or 'reply karo', leave contact_name empty or use active chat contact. If message is not specified, formulate an intelligent, context-appropriate reply yourself based on chat history and send it autonomously. NEVER ask Boss who to send to or what to write when context is available!",
             params = mapOf("contact_name" to "string", "message" to "string"),
-            required = listOf("contact_name", "message"),
+            required = emptyList(),
             paramDescriptions = mapOf(
-                "contact_name" to "Exact or approximate name of the WhatsApp contact as stored in contacts",
-                "message" to "The text message content to send"
+                "contact_name" to "Name of the WhatsApp contact. Leave empty or pass active chat contact if user said 'usse / unse / reply karo / reply kro'.",
+                "message" to "Text message content. If user did not dictate words (e.g. 'reply karo'), formulate a charming, context-appropriate reply yourself and send it."
             )
         ))
 
         // WhatsApp / Universal Text Typing (No auto-send)
         toolsArray.add(createFunction(
             name = "type_message",
-            desc = "Type text or a message into an input field or WhatsApp chat WITHOUT sending it automatically. ALWAYS call when the user explicitly says 'type karo', 'ye message type kar do', 'WhatsApp par type karo', 'keyboard se likho', 'msg type karo'. Focuses the chat input field, opens keyboard, and types the exact text.",
+            desc = "Type text or a message into an input field or WhatsApp chat WITHOUT sending it automatically. ALWAYS call ONLY when the user explicitly says 'type karo', 'ye message type kar do', 'keyboard se likho', 'likh kar chhod do', 'bhejna mat'. NEVER call type_message for 'baat karo', 'chat karo', 'reply karo', or 'jawab do' — for chatting or replying, ALWAYS use chat_on_whatsapp or send_whatsapp to send directly!",
             params = mapOf(
                 "text" to "string",
                 "contact_name" to "string",
@@ -171,17 +172,25 @@ object IshaToolRegistry {
             )
         ))
 
-        // WhatsApp Autonomous Conversation & Reply Agent
+        // WhatsApp Autonomous Conversation & Continuous Reply Agent
         toolsArray.add(createFunction(
             name = "chat_on_whatsapp",
-            desc = "Open a WhatsApp chat with a contact and inspect recent received messages to converse with them. ALWAYS call when the user says 'WhatsApp par [contact] se baat karo / baat kar lo', 'unse chat karo', 'unka message dekh kar reply do'. Opens the conversation and reads visible messages on screen so you can understand what they sent and formulate an intelligent reply.",
+            desc = "Open a WhatsApp chat, inspect recent messages, and engage CONTINUOUS CHAT MODE to converse back and forth autonomously. ALWAYS call when the user says 'WhatsApp par baat karo', 'usse / unse baat karo', 'unse chat karo', 'reply karo', 'reply kro', 'jawab do', 'continuous chat karo', 'continue chat karo', 'continues chat', 'continue baat karo', 'kisi se continue baat karo', 'whatsapp par continue baat karo'. If contact_name is omitted or a pronoun ('usse', 'unse', 'isse', 'kro', 'karo', 'kisi'), leave empty to automatically inspect the currently active WhatsApp chat on screen. Never ask Boss who to send to or what to write!",
             params = mapOf(
                 "contact_name" to "string"
             ),
-            required = listOf("contact_name"),
+            required = emptyList(),
             paramDescriptions = mapOf(
-                "contact_name" to "The contact name to open chat with and converse"
+                "contact_name" to "Name of person to chat with. Leave empty if user said 'usse / unse / reply karo / reply kro' or WhatsApp is already open."
             )
+        ))
+
+        toolsArray.add(createFunction(
+            name = "stop_continuous_chat",
+            desc = "Stop continuous auto-reply chat mode on WhatsApp. ALWAYS call when user says 'baat band karo', 'chat band karo', 'chat stop karo', 'continuous chat roko', 'stop chat'.",
+            params = emptyMap(),
+            required = emptyList(),
+            paramDescriptions = emptyMap()
         ))
 
         // WhatsApp Media & Screenshot Sender
@@ -1757,237 +1766,19 @@ object IshaToolRegistry {
                 }
 
                 "send_whatsapp" -> {
-                    wakeAndUnlockIfNeeded(context)
-                    val contact = args.get("contact_name")?.asString
-                        ?: args.get("contact")?.asString
-                        ?: args.get("to")?.asString
-                        ?: ""
-                    var msg = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
-
-                    // If user asked to send screenshot/photo, route directly to real media sender
-                    if (msg.contains("screenshot", ignoreCase = true) || contact.contains("screenshot", ignoreCase = true) ||
-                        msg.contains("photo", ignoreCase = true) || msg.contains("image", ignoreCase = true)) {
-                        val cleanContact = contact.replace("screenshot", "", ignoreCase = true).trim().ifBlank { "Ansh" }
-                        val mediaArgs = JsonObject().apply {
-                            addProperty("contact_name", cleanContact)
-                            addProperty("media_type", "screenshot")
-                            addProperty("caption", if (!msg.contains("screenshot", ignoreCase = true)) msg else "")
-                        }
-                        return executeTool(context, "send_whatsapp_media", mediaArgs)
-                    }
-
-                    // If user asked to send copied text or message is blank, read from clipboard
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
-                    if (!clipText.isNullOrBlank() && (msg.isBlank() || msg.contains("copy", ignoreCase = true) || msg.contains("paste", ignoreCase = true) || msg.contains("clipboard", ignoreCase = true))) {
-                        msg = clipText
-                    }
-
-                    if (msg.isBlank()) {
-                        msg = "Hello"
-                    }
-
-                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-                    val a11y = IshaAccessibilityService.instance
-
-                    // ── In-Chat Instant Fast-Send Check ──
-                    // If WhatsApp is already open in a chat conversation (e.g. follow-up turn "ye bhi bhej do",
-                    // replying right after chat_on_whatsapp, or user is already chatting):
-                    if (a11y != null && a11y.isWhatsappChatOpen()) {
-                        val activeTitle = a11y.getWhatsappActiveContactTitle()?.lowercase() ?: ""
-                        val cLower = cleanContact.lowercase()
-                        val isSameChat = cleanContact.isBlank() ||
-                                cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
-                                (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle)))
-
-                        if (isSameChat) {
-                            val sent = a11y.armWhatsappInstantInChatSend(msg)
-                            if (sent) {
-                                result.addProperty("status", "success")
-                                result.addProperty("contact", if (activeTitle.isNotBlank()) activeTitle else contact)
-                                result.addProperty("message", "WhatsApp open chat me turant message bhej diya: \"$msg\"")
-                                return result
-                            }
-                        }
-                    }
-
-                    val resolvedPhone = resolveContactNumber(context, if (cleanContact.isNotBlank()) cleanContact else contact)
-                    val waPkg = try {
-                        context.packageManager.getPackageInfo("com.whatsapp", 0)
-                        "com.whatsapp"
-                    } catch (_: Exception) {
-                        "com.whatsapp.w4b"
-                    }
-
-                    if (!resolvedPhone.isNullOrBlank()) {
-                        val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
-                        val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
-                        try {
-                            val encodedMsg = URLEncoder.encode(msg, "UTF-8")
-                            val uri = Uri.parse("https://wa.me/$waNumber?text=$encodedMsg")
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                setPackage(waPkg)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            context.startActivity(intent)
-                            a11y?.armWhatsappAutoSendPreFilled()
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "WhatsApp message sent to $contact: \"$msg\"")
-                        } catch (e: Exception) {
-                            result.addProperty("status", "error")
-                            result.addProperty("message", "Could not open WhatsApp: ${e.message}")
-                        }
-                    } else if (contact.isNotBlank() && a11y != null) {
-                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                        if (intent != null) {
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        }
-                        a11y.armWhatsappSearchAndSend(cleanContact.ifBlank { contact }, msg)
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "Opened WhatsApp chat for $contact and sent: \"$msg\"")
-                    } else {
-                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                        if (intent != null) {
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        }
-                        a11y?.armWhatsappAutoSend(msg)
-                        result.addProperty("status", "success")
-                        result.addProperty("message", "WhatsApp opened to send: \"$msg\"")
-                    }
+                    executeSendWhatsappTool(context, args, result)
                 }
 
                 "type_message", "type_text" -> {
-                    wakeAndUnlockIfNeeded(context)
-                    val text = args.get("text")?.asString
-                        ?: args.get("message")?.asString
-                        ?: ""
-                    val contact = args.get("contact_name")?.asString
-                        ?: args.get("contact")?.asString
-                        ?: ""
-                    val app = args.get("app_name")?.asString?.lowercase() ?: ""
-                    val a11y = IshaAccessibilityService.instance
-
-                    if (text.isBlank()) {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "Type karne ke liye text nahi mila Boss.")
-                    } else if (app == "whatsapp" || contact.isNotBlank()) {
-                        val waPkg = try {
-                            context.packageManager.getPackageInfo("com.whatsapp", 0)
-                            "com.whatsapp"
-                        } catch (_: Exception) {
-                            "com.whatsapp.w4b"
-                        }
-
-                        val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-
-                        // If already in active WhatsApp chat with same person or generic follow-up, avoid reloading
-                        val isChatOpen = a11y?.isWhatsappChatOpen() == true
-                        val activeTitle = a11y?.getWhatsappActiveContactTitle()?.lowercase() ?: ""
-                        val cLower = cleanContact.lowercase()
-                        val isSameChat = isChatOpen && (cleanContact.isBlank() ||
-                                cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
-                                (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle))))
-
-                        if (!isSameChat) {
-                            val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
-                            if (!resolvedPhone.isNullOrBlank()) {
-                                val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
-                                val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
-                                val uri = Uri.parse("https://wa.me/$waNumber")
-                                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                    setPackage(waPkg)
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(intent)
-                            } else {
-                                val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                                if (intent != null) {
-                                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    context.startActivity(intent)
-                                }
-                            }
-                        }
-
-                        if (a11y != null) {
-                            a11y.armWhatsappTypeMessage(text)
-                            result.addProperty("status", "success")
-                            result.addProperty("message", "WhatsApp par \"$text\" type kar diya hai Boss! Keyboard open hai, aap review karke bhej sakte hain. ✍️")
-                        } else {
-                            result.addProperty("status", "partial")
-                            result.addProperty("message", "WhatsApp open kar diya hai Boss. Typing ke liye Accessibility Service enable karein.")
-                        }
-                    } else {
-                        if (a11y != null) {
-                            val typed = a11y.performTypeText(text)
-                            if (typed) {
-                                result.addProperty("status", "success")
-                                result.addProperty("message", "Screen par \"$text\" type kar diya hai Boss! ✍️")
-                            } else {
-                                a11y.armWhatsappTypeMessage(text)
-                                result.addProperty("status", "success")
-                                result.addProperty("message", "\"$text\" type kar diya hai Boss! ✍️")
-                            }
-                        } else {
-                            result.addProperty("status", "error")
-                            result.addProperty("message", "Type karne ke liye Accessibility Service required hai Boss.")
-                        }
-                    }
+                    executeTypeMessageTool(context, args, result)
                 }
 
-                "chat_on_whatsapp" -> {
-                    wakeAndUnlockIfNeeded(context)
-                    val contact = args.get("contact_name")?.asString
-                        ?: args.get("contact")?.asString
-                        ?: ""
-                    val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
-                    val waPkg = try {
-                        context.packageManager.getPackageInfo("com.whatsapp", 0)
-                        "com.whatsapp"
-                    } catch (_: Exception) {
-                        "com.whatsapp.w4b"
-                    }
-                    val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
-                    val a11y = IshaAccessibilityService.instance
+                "chat_on_whatsapp", "start_continuous_chat" -> {
+                    executeChatOnWhatsappTool(context, args, result)
+                }
 
-                    if (!resolvedPhone.isNullOrBlank()) {
-                        val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
-                        val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
-                        val uri = Uri.parse("https://wa.me/$waNumber")
-                        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                            setPackage(waPkg)
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(intent)
-                    } else if (cleanContact.isNotBlank()) {
-                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                        if (intent != null) {
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        }
-                        a11y?.armWhatsappOpenContactChat(cleanContact) {}
-                    } else {
-                        val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-                        if (intent != null) {
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        }
-                    }
-
-                    // Wait 1200ms for chat screen to render
-                    try {
-                        Thread.sleep(1200L)
-                    } catch (_: Exception) {}
-
-                    val screenHierarchy = a11y?.getScreenTextHierarchy() ?: ""
-                    result.addProperty("status", "success")
-                    result.addProperty("contact", contact)
-                    result.addProperty("screen_messages", screenHierarchy)
-                    result.addProperty(
-                        "message",
-                        "WhatsApp chat with $contact open ho gayi hai Boss! Screen text:\n$screenHierarchy\nAb in messages ko samajhkar reply dene ke liye send_whatsapp call karein."
-                    )
+                "stop_continuous_chat" -> {
+                    executeStopContinuousChatTool(context, args, result)
                 }
 
                 "send_whatsapp_media" -> {
@@ -5799,7 +5590,8 @@ object IshaToolRegistry {
 
             // WhatsApp
             lower in listOf("whatsapp", "send_whatsapp_message", "whatsapp_message", "send_wa_message", "wa_message", "send_whatsapp") -> "send_whatsapp"
-            lower in listOf("chat_whatsapp", "whatsapp_chat", "chat_on_whatsapp") -> "chat_on_whatsapp"
+            lower in listOf("chat_whatsapp", "whatsapp_chat", "chat_on_whatsapp", "continuous_chat", "start_continuous_chat", "continue_chat", "continues_chat", "auto_chat", "auto_reply") -> "chat_on_whatsapp"
+            lower in listOf("stop_chat", "stop_continuous_chat", "end_chat", "chat_stop", "stop_auto_chat") -> "stop_continuous_chat"
 
             // Volume & Brightness
             lower in listOf("volume", "change_volume", "set_sound_volume", "adjust_volume", "sound_volume", "set_volume") -> "set_volume"
@@ -8237,6 +8029,281 @@ object IshaToolRegistry {
             result.addProperty("status", "error")
             result.addProperty("message", "Update server se connect nahi ho paya, Boss. Please internet connection check karein.")
         }
+    }
+
+    private suspend fun executeSendWhatsappTool(context: Context, args: JsonObject, result: JsonObject) {
+        wakeAndUnlockIfNeeded(context)
+        val contact = args.get("contact_name")?.asString
+            ?: args.get("contact")?.asString
+            ?: args.get("to")?.asString
+            ?: ""
+        var msg = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
+
+        // If user asked to send screenshot/photo, route directly to real media sender
+        if (msg.contains("screenshot", ignoreCase = true) || contact.contains("screenshot", ignoreCase = true) ||
+            msg.contains("photo", ignoreCase = true) || msg.contains("image", ignoreCase = true)) {
+            val cleanContact = contact.replace("screenshot", "", ignoreCase = true).trim().ifBlank { "Ansh" }
+            val mediaArgs = JsonObject().apply {
+                addProperty("contact_name", cleanContact)
+                addProperty("media_type", "screenshot")
+                addProperty("caption", if (!msg.contains("screenshot", ignoreCase = true)) msg else "")
+            }
+            val mediaRes = executeTool(context, "send_whatsapp_media", mediaArgs)
+            mediaRes.entrySet().forEach { (k, v) -> result.add(k, v) }
+            return
+        }
+
+        // If user asked to send copied text or message is blank, read from clipboard
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
+        if (!clipText.isNullOrBlank() && (msg.isBlank() || msg.contains("copy", ignoreCase = true) || msg.contains("paste", ignoreCase = true) || msg.contains("clipboard", ignoreCase = true))) {
+            msg = clipText
+        }
+
+        if (msg.isBlank()) {
+            msg = "Hello"
+        }
+
+        val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val a11y = IshaAccessibilityService.instance
+        val cLower = cleanContact.lowercase()
+        val isPronoun = cLower in setOf("usse", "isse", "unse", "unhe", "inhe", "inko", "unko", "use", "ise", "isise", "usise", "wo", "ye", "yeh", "voh", "him", "her", "them", "same", "current", "here", "kisi", "someone", "reply", "chat", "kro", "karo", "eusse", "reply kro", "reply karo", "baat karo", "usse baat") || cLower.contains("reply") || cLower.contains("baat") || cLower.contains("kisi") || cLower.contains("someone") || cLower.contains("continue") || cLower.contains("vyakti") || cLower.contains("wyajti")
+        val activeScreenContact = if (a11y?.isWhatsappChatOpen() == true) a11y.getWhatsappActiveContactTitle() else null
+        val effectiveContact = when {
+            !activeScreenContact.isNullOrBlank() -> activeScreenContact
+            !isPronoun && cleanContact.isNotBlank() -> cleanContact
+            !IshaVoiceContextBridge.lastTargetContact.isNullOrBlank() -> IshaVoiceContextBridge.lastTargetContact!!
+            !cleanContact.isBlank() && !isPronoun -> cleanContact
+            else -> a11y?.getWhatsappActiveContactTitle() ?: ""
+        }
+        if (effectiveContact.isNotBlank()) {
+            IshaVoiceContextBridge.lastTargetContact = effectiveContact
+        }
+
+        // ── In-Chat Instant Fast-Send Check ──
+        if (a11y != null && a11y.isWhatsappChatOpen()) {
+            val activeTitle = a11y.getWhatsappActiveContactTitle()?.lowercase() ?: ""
+            val cLower = effectiveContact.lowercase()
+            val isSameChat = effectiveContact.isBlank() ||
+                    cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
+                    (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle)))
+
+            if (isSameChat) {
+                val sent = a11y.armWhatsappInstantInChatSend(msg)
+                if (sent) {
+                    result.addProperty("status", "success")
+                    result.addProperty("contact", if (activeTitle.isNotBlank()) activeTitle else effectiveContact)
+                    result.addProperty("message", "WhatsApp open chat me turant message bhej diya: \"$msg\"")
+                    return
+                }
+            }
+        }
+
+        val resolvedPhone = resolveContactNumber(context, if (effectiveContact.isNotBlank()) effectiveContact else contact)
+        val waPkg = try {
+            context.packageManager.getPackageInfo("com.whatsapp", 0)
+            "com.whatsapp"
+        } catch (_: Exception) {
+            "com.whatsapp.w4b"
+        }
+
+        if (!resolvedPhone.isNullOrBlank()) {
+            val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+            val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+            try {
+                val encodedMsg = URLEncoder.encode(msg, "UTF-8")
+                val uri = Uri.parse("https://wa.me/$waNumber?text=$encodedMsg")
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage(waPkg)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+                a11y?.armWhatsappAutoSendPreFilled()
+                result.addProperty("status", "success")
+                result.addProperty("message", "WhatsApp message sent to $contact: \"$msg\"")
+            } catch (e: Exception) {
+                result.addProperty("status", "error")
+                result.addProperty("message", "Could not open WhatsApp: ${e.message}")
+            }
+        } else if (contact.isNotBlank() && a11y != null) {
+            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+            if (intent != null) {
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(intent)
+            }
+            a11y.armWhatsappSearchAndSend(cleanContact.ifBlank { contact }, msg)
+            result.addProperty("status", "success")
+            result.addProperty("message", "Opened WhatsApp chat for $contact and sent: \"$msg\"")
+        } else {
+            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+            if (intent != null) {
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(intent)
+            }
+            a11y?.armWhatsappAutoSend(msg)
+            result.addProperty("status", "success")
+            result.addProperty("message", "WhatsApp opened to send: \"$msg\"")
+        }
+    }
+
+    private fun executeTypeMessageTool(context: Context, args: JsonObject, result: JsonObject) {
+        wakeAndUnlockIfNeeded(context)
+        val text = args.get("text")?.asString
+            ?: args.get("message")?.asString
+            ?: ""
+        val contact = args.get("contact_name")?.asString
+            ?: args.get("contact")?.asString
+            ?: ""
+        val app = args.get("app_name")?.asString?.lowercase() ?: ""
+        val a11y = IshaAccessibilityService.instance
+
+        if (text.isBlank()) {
+            result.addProperty("status", "error")
+            result.addProperty("message", "Type karne ke liye text nahi mila Boss.")
+        } else if (app == "whatsapp" || contact.isNotBlank()) {
+            val waPkg = try {
+                context.packageManager.getPackageInfo("com.whatsapp", 0)
+                "com.whatsapp"
+            } catch (_: Exception) {
+                "com.whatsapp.w4b"
+            }
+
+            val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+
+            val isChatOpen = a11y?.isWhatsappChatOpen() == true
+            val activeTitle = a11y?.getWhatsappActiveContactTitle()?.lowercase() ?: ""
+            val cLower = cleanContact.lowercase()
+            val isSameChat = isChatOpen && (cleanContact.isBlank() ||
+                    cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi", "reply", "chat", "kro", "karo", "reply kro", "reply karo", "baat karo", "usse baat") ||
+                    cLower.contains("reply") || cLower.contains("baat") ||
+                    (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle))))
+
+            if (!isSameChat) {
+                val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
+                if (!resolvedPhone.isNullOrBlank()) {
+                    val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+                    val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                    val uri = Uri.parse("https://wa.me/$waNumber")
+                    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                        setPackage(waPkg)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                } else {
+                    val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                    if (intent != null) {
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        context.startActivity(intent)
+                    }
+                }
+            }
+
+            if (a11y != null) {
+                a11y.armWhatsappTypeMessage(text)
+                result.addProperty("status", "success")
+                result.addProperty("message", "WhatsApp par \"$text\" type kar diya hai Boss! Keyboard open hai, aap review karke bhej sakte hain. ✍️")
+            } else {
+                result.addProperty("status", "partial")
+                result.addProperty("message", "WhatsApp open kar diya hai Boss. Typing ke liye Accessibility Service enable karein.")
+            }
+        } else {
+            if (a11y != null) {
+                val typed = a11y.performTypeText(text)
+                if (typed) {
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "Screen par \"$text\" type kar diya hai Boss! ✍️")
+                } else {
+                    a11y.armWhatsappTypeMessage(text)
+                    result.addProperty("status", "success")
+                    result.addProperty("message", "\"$text\" type kar diya hai Boss! ✍️")
+                }
+            } else {
+                result.addProperty("status", "error")
+                result.addProperty("message", "Type karne ke liye Accessibility Service required hai Boss.")
+            }
+        }
+    }
+
+    private fun executeChatOnWhatsappTool(context: Context, args: JsonObject, result: JsonObject) {
+        wakeAndUnlockIfNeeded(context)
+        val contact = args.get("contact_name")?.asString
+            ?: args.get("contact")?.asString
+            ?: ""
+        val cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
+        val a11y = IshaAccessibilityService.instance
+        val cLower = cleanContact.lowercase()
+        val isPronoun = cLower in setOf("usse", "isse", "unse", "unhe", "inhe", "inko", "unko", "use", "ise", "isise", "usise", "wo", "ye", "yeh", "voh", "him", "her", "them", "same", "current", "here", "kisi", "someone", "reply", "chat", "kro", "karo", "eusse", "reply kro", "reply karo", "baat karo", "usse baat") || cLower.contains("reply") || cLower.contains("baat") || cLower.contains("kisi") || cLower.contains("someone") || cLower.contains("continue") || cLower.contains("vyakti") || cLower.contains("wyajti")
+        val activeScreenContact = if (a11y?.isWhatsappChatOpen() == true) a11y.getWhatsappActiveContactTitle() else null
+        val effectiveContact = when {
+            !activeScreenContact.isNullOrBlank() -> activeScreenContact
+            !isPronoun && cleanContact.isNotBlank() -> cleanContact
+            !IshaVoiceContextBridge.lastTargetContact.isNullOrBlank() -> IshaVoiceContextBridge.lastTargetContact!!
+            !cleanContact.isBlank() && !isPronoun -> cleanContact
+            else -> a11y?.getWhatsappActiveContactTitle() ?: ""
+        }
+        if (effectiveContact.isNotBlank()) {
+            IshaVoiceContextBridge.lastTargetContact = effectiveContact
+        }
+        val waPkg = try {
+            context.packageManager.getPackageInfo("com.whatsapp", 0)
+            "com.whatsapp"
+        } catch (_: Exception) {
+            "com.whatsapp.w4b"
+        }
+
+        val isChatAlreadyOpen = a11y != null && a11y.isWhatsappChatOpen()
+        if (!isChatAlreadyOpen) {
+            val resolvedPhone = if (effectiveContact.isNotBlank()) resolveContactNumber(context, effectiveContact) else null
+            if (!resolvedPhone.isNullOrBlank()) {
+                val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
+                val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
+                val uri = Uri.parse("https://wa.me/$waNumber")
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage(waPkg)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } else if (effectiveContact.isNotBlank()) {
+                val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                if (intent != null) {
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    context.startActivity(intent)
+                }
+                a11y?.armWhatsappOpenContactChat(effectiveContact) {}
+            } else {
+                val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+                if (intent != null) {
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    context.startActivity(intent)
+                }
+            }
+
+            // Wait 1200ms for chat screen to render
+            try {
+                Thread.sleep(1200L)
+            } catch (_: Exception) {}
+        }
+
+        val screenHierarchy = a11y?.getScreenTextHierarchy() ?: ""
+        val targetContact = if (effectiveContact.isNotBlank()) effectiveContact else contact
+        a11y?.startContinuousChat(targetContact)
+        val taskGuidance = "\n\n[TASK GUIDANCE]: DO NOT ASK BOSS WHAT TO WRITE OR ASK FOR PERMISSION! Read the messages from screen hierarchy above, formulate a context-appropriate, helpful, charming reply in Isha's persona, and IMMEDIATELY execute send_whatsapp(contact_name='$targetContact', message=formulatedReply) right now in this turn without asking Boss! Continuous Chat Mode is now ACTIVE so you will automatically converse back and forth as replies arrive."
+        result.addProperty("status", "success")
+        result.addProperty("contact", targetContact)
+        result.addProperty("screen_messages", screenHierarchy)
+        result.addProperty("_task_guidance", taskGuidance)
+        result.addProperty("continuous_chat", true)
+        result.addProperty(
+            "message",
+            "WhatsApp chat with $targetContact open ho gayi hai Boss aur Continuous Chat Mode active hai! Screen text:\n$screenHierarchy$taskGuidance"
+        )
+    }
+
+    private fun executeStopContinuousChatTool(context: Context, args: JsonObject, result: JsonObject) {
+        val a11y = IshaAccessibilityService.instance
+        a11y?.stopContinuousChat()
+        result.addProperty("status", "success")
+        result.addProperty("message", "Boss, WhatsApp continuous chat mode stop kar diya gaya hai! ⏹️")
     }
 }
 

@@ -391,10 +391,28 @@ object IshaMemoryManager {
         val sb = StringBuilder()
         sb.appendLine("\n📱 ACTIVE RUNTIME & DEVICE CONTEXT (LIVE GROUNDING):")
 
-        // 1. Active Screen / Foreground App
-        val a11y = com.aura.assistant.AuraAccessibilityService.instance
-        val fgPkg = a11y?.rootInActiveWindow?.packageName?.toString() ?: (context?.packageName ?: "com.isha.assistant")
+        // 1. Active Screen / Foreground App & Live WhatsApp Chat Grounding
+        val ishaA11y = com.aura.assistant.IshaAccessibilityService.instance
+        val auraA11y = com.aura.assistant.AuraAccessibilityService.instance
+        val activeA11yRoot = ishaA11y?.rootInActiveWindow ?: auraA11y?.rootInActiveWindow
+        val fgPkg = activeA11yRoot?.packageName?.toString() ?: (context?.packageName ?: "com.isha.assistant")
         sb.appendLine("• Foreground Screen/App: $fgPkg")
+
+        val isWaOpen = (ishaA11y != null && ishaA11y.isWhatsappChatOpen()) || fgPkg.contains("whatsapp")
+        val activeWaContact = if (ishaA11y != null && ishaA11y.isWhatsappChatOpen()) {
+            ishaA11y.getWhatsappActiveContactTitle()
+        } else null
+        val lastContact = IshaVoiceContextBridge.lastTargetContact
+
+        if (!activeWaContact.isNullOrBlank()) {
+            sb.appendLine("• ACTIVE WHATSAPP CHAT ON SCREEN: '$activeWaContact'")
+            sb.appendLine("  -> ZERO-DISAMBIGUATION RULE: Boss is currently looking at WhatsApp chat with '$activeWaContact'. If Boss says 'reply kro', 'reply karo', 'baat karo', 'isse baat karo', 'unhe bolo', 'message bhejo', DO NOT ASK 'kisko bhejun' or 'kya likhun'! The contact is '$activeWaContact'. Read recent screen messages, formulate a context-appropriate, charming reply in Isha's persona, and IMMEDIATELY send it autonomously without asking permission!")
+        } else if (isWaOpen && !lastContact.isNullOrBlank()) {
+            sb.appendLine("• ACTIVE WHATSAPP SCREEN (Recently targeted contact: '$lastContact')")
+            sb.appendLine("  -> ZERO-DISAMBIGUATION RULE: WhatsApp is open. If Boss says 'reply kro' / 'baat karo', target contact is '$lastContact' or the active chat on screen. DO NOT ASK 'kisko bhejun'!")
+        } else if (!lastContact.isNullOrBlank()) {
+            sb.appendLine("• LAST TARGETED WHATSAPP CONTACT: '$lastContact' (Use as default if user refers to 'usse' / 'unhe' / 'unse' / 'reply kro').")
+        }
 
         // 2. Battery & Power State
         if (context != null) {
@@ -607,7 +625,6 @@ object IshaMemoryManager {
             appendLine("══════════════════════════════════════════════════════════════════════════════")
             appendLine("🎭 DYNAMIC AI PERSONA & USER PROFILE INSTRUCTIONS (USER CONFIGURATION):")
             appendLine("• User Salutation: Aap user ko samman aur apnepan se '$resolvedSalutation' keh kar address karti hain (e.g., agar Dost choose kiya hai toh 'Dost', Bhai hai toh 'Bhai', Boss hai toh 'Boss', ya unka naam).")
-            appendLine("• ${personaConfig.ageGroup.promptDirective}")
             appendLine("• ${personaConfig.archetype.promptDirective}")
             if (personaConfig.customAboutMe.isNotBlank()) {
                 appendLine("• USER PROFILE BACKGROUND (What the user wants you to know about them):\n  \"${personaConfig.customAboutMe.trim()}\"")
@@ -716,8 +733,12 @@ PILLAR 6 — PATTERN RECOGNITION (GPT-4o + Claude):
 PILLAR 7 — DISAMBIGUATION (Claude Sonnet style):
   Ambiguous command — HAMESHA PEHLE POOCHHO, PHIR KARO:
   Band karo — Boss, kya band karun? Torch, WiFi, Bluetooth, ya kuch aur?
-  Message bhejo — Zaroor Boss! Kise bhejun aur kya likhun?
-  Vague single words — ALWAYS ask for clarification first.
+  Message bhejo (sirf tab poochho jab screen par koi chat na ho aur recipient bilkul unknown ho) — Zaroor Boss! Kise bhejun aur kya likhun?
+  ⚠️ EXCEPTION (AUTONOMOUS WHATSAPP & REPLY — ZERO-ASKING RULE):
+  Jab user kahe 'reply kro', 'reply karo', 'baat karo', 'isse baat karo', 'unse chat karo', 'jawab do', ya screen par WhatsApp khula ho ya context me contact pata ho (jaise 'usse/unse'):
+  KABHI BHI 'kisko bhejun' ya 'kya likhun' pooch-pooch kar pareshan MAT karo!
+  Turant screen messages padho (chat_on_whatsapp), conversation context samjho, aur bina permission maange automatically reply bhej do (send_whatsapp)!
+  Vague single words — ALWAYS ask for clarification first (except when active screen context already makes it obvious).
 
 PILLAR 8 — COMMON SENSE AUTONOMOUS FALLBACK & CREATIVE PROBLEM SOLVING:
   Agar kisi task ka direct/dedicated tool na ho ya fail ho jaye, toh KABHI BHI haar maan kar jhooth mat bolo ('kar diya'). Apna brain aur alternative solutions use karo:
@@ -860,12 +881,15 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
    - 'WhatsApp par status/story lagao' → whatsapp_post_status(status_text=...).
    - 'WhatsApp backup lo / banao' → whatsapp_trigger_backup.
    - 'WhatsApp settings kholo / change karo' → whatsapp_open_settings(section=...).
-   - 'WhatsApp par ye message type karo / likho' → type_message(text=..., contact_name=...). KABHI BHI type command par send_whatsapp mat call karo!
-   - 'WhatsApp par [contact] se baat karo / baat karlo / unka message dekh kar reply do' →
-     STEP 1: IMMEDIATELY call chat_on_whatsapp(contact_name='...').
-     STEP 2: chat_on_whatsapp se jo recent messages return hon, unhe dhyan se padho aur unka context samjho.
-     STEP 3: AURA ki sweet female persona mein badhiya reply formulate karo aur IMMEDIATELY send_whatsapp(contact_name='...', message=reply) call karke send kar do!
-     STEP 4: Reply bhej lene ke baad Boss ko update do: 'Boss, maine unka message dekha: "[msg]" aur reply bhej diya: "[reply]"'.
+   - 'WhatsApp par ye message type karo / likho' → type_message(text=..., contact_name=...). Sirf tab call karo jab Boss explicitly type karne ya draft likhne ko kahe! KABHI BHI 'baat karo', 'chat karo', ya 'reply karo' par type_message call MAT karo — unke liye ALWAYS chat_on_whatsapp / send_whatsapp use karo taaki message seedha send ho!
+   - 'WhatsApp par baat karo / reply karo / jawab do / unse chat karo / continuous chat / continues chat / continue baat karo / kisi se continue baat karo' (CONTINUOUS CHAT MODE — ZERO ASKING RULE):
+     * STRICT DIRECTIVE: KABHI BHI Boss se 'kya reply bheju?', 'kisko bheju?', ya 'kya main bhej doon?' pooch-pooch kar pareshan MAT karo! Boss chahta hai ki aap ek intelligent, proactive companion ki tarah chat autonomously handle karein!
+     * CONTACT RESOLUTION: Agar Boss ne contact ka naam nahi liya (jaise sirf bola 'reply karo' ya 'baat karo'), to agar WhatsApp me chat open hai ya pichle context me contact tha, usi contact ko default maano.
+     * STEP 1: IMMEDIATELY call chat_on_whatsapp(contact_name='...'). Yeh WhatsApp chat open karega aur Continuous Chat Mode activate kar dega!
+     * STEP 2: chat_on_whatsapp se jo recent screen messages milein, unhe dhyan se padho aur conversation context samjho.
+     * STEP 3: Isha ki sweet, natural female persona mein context-appropriate badhiya reply formulate karo aur IMMEDIATELY bina Boss se puche send_whatsapp(contact_name='...', message=reply) call karke send kar do!
+     * CONTINUOUS REAL-TIME MODE: Once chat_on_whatsapp is active, Isha background me continuous chat mode me rehti hai aur samne wale ke har naye incoming reply ko detect karke real-time me back-and-forth auto-reply bhejti rahti hai!
+     * STOPPING CHAT: Jab Boss kahe 'baat band karo', 'chat band karo', 'chat stop karo', 'chat rok do', ya 'stop chat' → call stop_continuous_chat() turant!
    - 'Instagram post / reel like karo / double tap' → instagram_like_post.
    - 'Instagram par comment karo' → instagram_comment_post(comment=...).
    - 'Instagram DM / message bhejo' → instagram_send_dm(username=..., message=...).

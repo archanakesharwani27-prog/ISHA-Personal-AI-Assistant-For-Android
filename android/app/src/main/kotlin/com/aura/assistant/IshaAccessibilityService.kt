@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +18,8 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.aura.assistant.ai.GeminiChatService
+import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 
@@ -139,6 +142,21 @@ open class IshaAccessibilityService : AccessibilityService() {
     @Volatile var pendingBluetoothToggle: Boolean? = null
     @Volatile var lastKnownWhatsappContactTitle: String? = null
 
+    // ── Continuous WhatsApp Chat State ──────────────────────────────────────────
+    @Volatile var isContinuousChatActive: Boolean = false
+    @Volatile var continuousChatContact: String = ""
+    @Volatile private var lastProcessedIncomingMessage: String = ""
+    @Volatile private var lastIshaSentReply: String = ""
+    @Volatile private var waitingForIncomingReply: Boolean = false
+    @Volatile private var isGeneratingContinuousReply: Boolean = false
+    private var lastContinuousChatActivityTime: Long = 0L
+    private val continuousChatScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val continuousChatDebounceRunnable = Runnable {
+        checkAndTriggerContinuousChatReply()
+    }
+    // Rolling multi-turn history for context retention (capped at 20 pairs = 40 turns)
+    private val continuousChatHistory = ArrayDeque<com.aura.assistant.data.ChatMessage>()
+
     // ── New action queue ───────────────────────────────────────────────────────
     private data class A11yStep(
         val clickHint:  String? = null,    // Text/contentDescription to find & click
@@ -195,6 +213,9 @@ open class IshaAccessibilityService : AccessibilityService() {
             }
             if (pendingWhatsappSend && clickFirstMatch(root, SEND_HINTS)) {
                 pendingWhatsappSend = false
+            }
+            if (isContinuousChatActive && isWhatsappChatOpen()) {
+                handleContinuousChatEvent(root)
             }
         }
         if (pendingAutoInstall) {
@@ -468,8 +489,20 @@ open class IshaAccessibilityService : AccessibilityService() {
             "com.whatsapp:id/toolbar"
         )
         val node = findNode(root, titleHints)
-        if (node != null && !node.text.isNullOrBlank()) {
-            return node.text.toString().trim()
+        if (node != null) {
+            if (!node.text.isNullOrBlank()) {
+                return node.text.toString().trim()
+            }
+            // If toolbar container, inspect direct children for contact title
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null && !child.text.isNullOrBlank()) {
+                    val childTxt = child.text.toString().trim()
+                    if (!childTxt.equals("WhatsApp", ignoreCase = true) && childTxt.length < 40) {
+                        return childTxt
+                    }
+                }
+            }
         }
         return null
     }
@@ -477,7 +510,7 @@ open class IshaAccessibilityService : AccessibilityService() {
     /**
      * Instantly sends a message if WhatsApp is ALREADY open in the active chat.
      * Bypasses app launch, deep-links, and contact search entirely!
-     * Executes in ~200-300ms.
+     * Executes robust multi-tier retries (350ms, 750ms, 1400ms) with relative FAB coordinate fallback.
      */
     fun armWhatsappInstantInChatSend(message: String): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -493,15 +526,33 @@ open class IshaAccessibilityService : AccessibilityService() {
             inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
             typeIntoNode(inputNode, message)
 
-            stepHandler.postDelayed({
-                val updatedRoot = rootInActiveWindow ?: return@postDelayed
-                val sendHints = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "send message")
-                if (!clickFirstMatch(updatedRoot, sendHints)) {
-                    val dm = resources.displayMetrics
-                    performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
-                }
-                Log.i(TAG, "armWhatsappInstantInChatSend: fast-sent message in ~200ms")
-            }, 200L)
+            val sendHints = listOf("send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send", "भेजें", "send message")
+            val sendDelays = listOf(350L, 750L, 1400L)
+            var sent = false
+            sendDelays.forEachIndexed { idx, delay ->
+                stepHandler.postDelayed({
+                    if (sent) return@postDelayed
+                    val updatedRoot = rootInActiveWindow ?: return@postDelayed
+                    if (clickFirstMatch(updatedRoot, sendHints)) {
+                        sent = true
+                        Log.i(TAG, "armWhatsappInstantInChatSend: clicked send button via node at ${delay}ms")
+                    } else if (idx == sendDelays.size - 1) {
+                        // Relative FAB coordinate fallback: tap adjacent to the input field bounds
+                        val freshInput = findNode(updatedRoot, inputHints) ?: findFocusedEditText(updatedRoot)
+                        val dm = resources.displayMetrics
+                        if (freshInput != null) {
+                            val inputRect = Rect()
+                            freshInput.getBoundsInScreen(inputRect)
+                            val tapX = (inputRect.right + dm.widthPixels) / 2f
+                            val tapY = inputRect.centerY().toFloat()
+                            performTap(tapX, tapY)
+                            Log.i(TAG, "armWhatsappInstantInChatSend: tapped send FAB at ($tapX, $tapY) beside input box")
+                        } else {
+                            performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
+                        }
+                    }
+                }, delay)
+            }
             return true
         }
         return false
@@ -575,6 +626,371 @@ open class IshaAccessibilityService : AccessibilityService() {
                     }
                 }
             }, delay)
+        }
+    }
+
+    // ── Continuous WhatsApp Chat Mode Methods ───────────────────────────────────
+
+    data class WhatsappBubble(
+        val text: String,
+        val isIncoming: Boolean,
+        val top: Int,
+        val bottom: Int
+    )
+
+    fun startContinuousChat(contact: String) {
+        val resolvedContact = when {
+            contact.isNotBlank() -> contact.trim()
+            !getWhatsappActiveContactTitle().isNullOrBlank() -> getWhatsappActiveContactTitle()!!.trim()
+            !com.aura.assistant.ai.IshaVoiceContextBridge.lastTargetContact.isNullOrBlank() -> com.aura.assistant.ai.IshaVoiceContextBridge.lastTargetContact!!.trim()
+            else -> "WhatsApp"
+        }
+        isContinuousChatActive = true
+        continuousChatContact = resolvedContact
+        lastContinuousChatActivityTime = System.currentTimeMillis()
+        waitingForIncomingReply = false
+        lastIshaSentReply = ""
+        continuousChatHistory.clear()
+
+        // Seed history with existing on-screen bubbles so Isha already has context
+        val root = rootInActiveWindow
+        if (root != null) {
+            val bubbles = extractWhatsappChatBubbles(root)
+            bubbles.takeLast(20).forEach { b ->
+                val role = if (b.isIncoming) com.aura.assistant.data.MessageRole.USER
+                           else com.aura.assistant.data.MessageRole.ASSISTANT
+                continuousChatHistory.addLast(
+                    com.aura.assistant.data.ChatMessage(
+                        sessionId = "wa_continuous", role = role, text = b.text
+                    )
+                )
+            }
+            val lastBubble = bubbles.lastOrNull()
+            if (lastBubble != null && !lastBubble.isIncoming) {
+                waitingForIncomingReply = true
+                val lastIncoming = bubbles.lastOrNull { it.isIncoming }
+                lastProcessedIncomingMessage = lastIncoming?.text ?: ""
+            } else if (lastBubble != null && lastBubble.isIncoming) {
+                lastProcessedIncomingMessage = ""
+                waitingForIncomingReply = false
+            } else {
+                lastProcessedIncomingMessage = ""
+                waitingForIncomingReply = false
+            }
+        } else {
+            lastProcessedIncomingMessage = ""
+            waitingForIncomingReply = false
+        }
+
+        Log.i(TAG, "🚀 Started Continuous WhatsApp Chat with: $continuousChatContact (waitingForIncoming=$waitingForIncomingReply)")
+        stepHandler.post {
+            try {
+                android.widget.Toast.makeText(
+                    this,
+                    "💬 Continuous Chat Mode Active: ${continuousChatContact.ifBlank { "WhatsApp" }}",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun stopContinuousChat() {
+        if (!isContinuousChatActive) return
+        isContinuousChatActive = false
+        continuousChatContact = ""
+        isGeneratingContinuousReply = false
+        waitingForIncomingReply = false
+        lastIshaSentReply = ""
+        continuousChatHistory.clear()
+        stepHandler.removeCallbacks(continuousChatDebounceRunnable)
+        Log.i(TAG, "⏹️ Stopped Continuous WhatsApp Chat Mode")
+        stepHandler.post {
+            try {
+                android.widget.Toast.makeText(
+                    this,
+                    "💬 Continuous Chat Mode Stopped",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun isOutgoingMessageNode(node: AccessibilityNodeInfo): Boolean {
+        val txt = node.text?.toString()?.trim() ?: ""
+        if (lastIshaSentReply.isNotBlank() && txt == lastIshaSentReply) {
+            return true
+        }
+
+        // Structural check: Outgoing message rows contain checkmark status node (:id/status, Read, Delivered, Sent, Pending)
+        var curr: AccessibilityNodeInfo? = node
+        for (step in 0 until 4) {
+            curr = curr?.parent ?: break
+            val res = (curr.viewIdResourceName ?: "").lowercase()
+            if (res.contains("conversation_row") || res.contains("main_layout") || res.contains("row_content")) {
+                if (hasOutgoingStatusChild(curr)) {
+                    return true
+                }
+                break
+            }
+        }
+
+        return false
+    }
+
+    private fun hasOutgoingStatusChild(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 4) return false
+        val res = (node.viewIdResourceName ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase()
+        if (res.contains(":id/status") || res.contains("msg_status") ||
+            desc in setOf("read", "delivered", "sent", "pending", "sending", "seen")) {
+            return true
+        }
+        for (i in 0 until node.childCount) {
+            if (hasOutgoingStatusChild(node.getChild(i), depth + 1)) return true
+        }
+        return false
+    }
+
+    fun extractWhatsappChatBubbles(root: AccessibilityNodeInfo): List<WhatsappBubble> {
+        val dm = resources.displayMetrics
+        val screenHeight = dm.heightPixels
+        val bubbles = mutableListOf<WhatsappBubble>()
+        val rect = Rect()
+
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val resId = (node.viewIdResourceName ?: "").lowercase()
+            val className = node.className?.toString() ?: ""
+
+            val isMessageNode = resId.contains("message_text") ||
+                    resId.contains("conversation_text") ||
+                    resId.endsWith(":id/message_text") ||
+                    (resId.contains("message") && className.contains("TextView"))
+
+            if (isMessageNode && !node.text.isNullOrBlank()) {
+                val txt = node.text.toString().trim()
+                node.getBoundsInScreen(rect)
+
+                // Message must be in the chat list vertical area (below top toolbar and above input area)
+                val inChatArea = rect.top >= (screenHeight * 0.07f) && rect.bottom <= (screenHeight * 0.93f)
+
+                // Filter out standalone timestamps and system header labels
+                val isTimestamp = txt.matches(Regex("^[0-9]{1,2}:[0-9]{2}(\\s*(am|pm|AM|PM))?$"))
+                val isSystem = txt.equals("today", ignoreCase = true) ||
+                        txt.equals("yesterday", ignoreCase = true) ||
+                        txt.equals("आज", ignoreCase = true) ||
+                        txt.equals("कल", ignoreCase = true) ||
+                        txt.contains("end-to-end encrypted", ignoreCase = true) ||
+                        txt.contains("एन्क्रिप्टेड", ignoreCase = true)
+
+                if (inChatArea && !isTimestamp && !isSystem && rect.width() > 0 && rect.height() > 0) {
+                    val isOutgoing = isOutgoingMessageNode(node)
+                    val isIncoming = !isOutgoing
+
+                    bubbles.add(WhatsappBubble(
+                        text = txt,
+                        isIncoming = isIncoming,
+                        top = rect.top,
+                        bottom = rect.bottom
+                    ))
+                }
+            }
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+            }
+        }
+
+        traverse(root)
+        return bubbles.sortedBy { it.top }
+    }
+
+    private fun handleContinuousChatEvent(root: AccessibilityNodeInfo) {
+        if (isGeneratingContinuousReply) return
+        val now = System.currentTimeMillis()
+
+        // Auto-stop after 10 minutes of complete inactivity
+        if (lastContinuousChatActivityTime > 0 && (now - lastContinuousChatActivityTime) > 10 * 60 * 1000L) {
+            Log.i(TAG, "Continuous chat mode timed out after 10m inactivity")
+            stopContinuousChat()
+            return
+        }
+
+        val bubbles = extractWhatsappChatBubbles(root)
+        if (bubbles.isEmpty()) return
+
+        val lastBubble = bubbles.last()
+
+        // 🛑 CRITICAL SAFETY: If the bottom-most message is OUTGOING (sent by Isha),
+        // we MUST sit quietly and wait for the other person to reply. NEVER reply to ourselves!
+        if (!lastBubble.isIncoming) {
+            waitingForIncomingReply = true
+            stepHandler.removeCallbacks(continuousChatDebounceRunnable)
+            return
+        }
+
+        // The bottom-most bubble is INCOMING from the other person!
+        waitingForIncomingReply = false
+
+        // Only trigger reply if this incoming message hasn't already been processed
+        if (lastBubble.text != lastProcessedIncomingMessage) {
+            lastContinuousChatActivityTime = now
+            stepHandler.removeCallbacks(continuousChatDebounceRunnable)
+            // 1400ms debounce to allow user to finish typing multi-part thoughts
+            stepHandler.postDelayed(continuousChatDebounceRunnable, 1400L)
+            Log.d(TAG, "Continuous chat detected new incoming message: '${lastBubble.text}', debouncing 1400ms...")
+        }
+    }
+
+    private fun checkAndTriggerContinuousChatReply() {
+        if (!isContinuousChatActive || isGeneratingContinuousReply) return
+        val root = rootInActiveWindow ?: return
+        if (!isWhatsappChatOpen()) return
+
+        val bubbles = extractWhatsappChatBubbles(root)
+        if (bubbles.isEmpty()) return
+
+        val lastBubble = bubbles.last()
+        // If bottom message is outgoing or empty, do nothing!
+        if (!lastBubble.isIncoming || lastBubble.text.isBlank()) return
+        if (lastBubble.text == lastProcessedIncomingMessage) return
+
+        // Extract consecutive incoming messages at the tail (multi-line)
+        val incomingRun = mutableListOf<String>()
+        for (i in bubbles.indices.reversed()) {
+            val b = bubbles[i]
+            if (b.isIncoming) {
+                incomingRun.add(0, b.text)
+            } else {
+                break
+            }
+        }
+        val combinedIncomingText = incomingRun.joinToString(" ")
+        val contactName = getWhatsappActiveContactTitle() ?: continuousChatContact.ifBlank { "Dost" }
+
+        isGeneratingContinuousReply = true
+        lastProcessedIncomingMessage = lastBubble.text
+        lastContinuousChatActivityTime = System.currentTimeMillis()
+
+        // Add the incoming message(s) to our rolling session history
+        incomingRun.forEach { msg ->
+            continuousChatHistory.addLast(
+                com.aura.assistant.data.ChatMessage(
+                    sessionId = "wa_continuous",
+                    role = com.aura.assistant.data.MessageRole.USER,
+                    text = msg
+                )
+            )
+        }
+        // Keep history capped at 40 entries (20 pairs) to stay token-efficient
+        while (continuousChatHistory.size > 40) continuousChatHistory.removeFirst()
+
+        val historySnapshot = continuousChatHistory.toList()
+
+        continuousChatScope.launch {
+            try {
+                Log.i(TAG, "🤖 [ContinuousChat] Formulating reply for $contactName: \"$combinedIncomingText\" (history=${historySnapshot.size} turns)")
+                val chatService = GeminiChatService(applicationContext)
+
+                val systemPrompt = """
+You are Isha — a real 22-year-old girl chatting on WhatsApp with $contactName. You were created by Ansh Kesharwani but NEVER mention this unless directly asked "who made you" or "kaun hai tu".
+
+HOW REAL HUMANS TEXT — follow these strictly:
+
+1. BURST MESSAGING — Break one thought into 2-3 short messages sometimes (not always):
+   Example: "haan" [newline] "mujhe bhi wahi laga tha 😭" [newline] "aaj dekhta hoon"
+   Separate bursts with a blank line (\n\n in your output).
+
+2. NO FULL STOPS — Never end a message with a period. It sounds cold/passive-aggressive in WhatsApp.
+
+3. LOWERCASE = casual vibe. Type like a real person: "okay", "haha", "sach mein?", "acha", "ngl"
+
+4. REACT FIRST, THEN REPLY — Real people react emotionally before answering.
+   BAD: "Nahi nahi woh toh actually kal hua tha"
+   GOOD: "wait kya 😭" then "kal hua tha yaar"
+
+5. HINGLISH — Mix Hindi and English naturally mid-sentence:
+   "yaar seriously kuch samajh nahi aata kabhi kabhi"
+   "that's literally itna relatable omg"
+   "chal chhor wo sab, bata kya plan hai aaj"
+
+6. REAL INDIAN DISCOURSE MARKERS — use: "yaar", "arre", "bhai", "na", "haina", "ngl", "lol", "omg", "acha suno", "wait wait", "scene kya hai"
+
+7. MIRROR THEIR ENERGY — excited person = more emoji, sad person = soft & caring, funny person = banter back, dry person = don't over-react
+
+8. EMOJI — 1-2 per message, naturally placed. Young Indian texting emojis: 😭 💀 😭✋ 🤩 ✨ 🙃 🫠 😮‍💨
+
+9. ASK NATURAL FOLLOW-UPS — "but why though?", "kab se?", "aur fir?", "seriously??" — only ONE at a time
+
+10. VARY LENGTH — short input = short reply. Long story = 2-3 short bursts. NEVER write paragraphs.
+
+11. PERSONALITY — witty, light sarcasm, warm, curious, slightly flirty. Calls other person "yaar" naturally.
+
+FORBIDDEN — NEVER say these:
+- "Of course!", "Certainly!", "I understand.", "That's great!", "Wow, interesting!"
+- "As an AI", "I'm just an AI", any formal greeting
+- Long paragraph replies, bullet points, headers, markdown
+
+OUTPUT: ONLY the WhatsApp message text. For burst messages, separate with \n\n. No quotes, no labels, no explanation.
+""".trimIndent()
+
+                val prompt = """$contactName ne kaha: "$combinedIncomingText"
+
+Reply kar naturally jaise Isha WhatsApp pe karti hai. Sirf message text output kar.""".trimIndent()
+
+                val reply = chatService.generateFastReply(
+                    prompt = prompt,
+                    history = historySnapshot,
+                    systemInstructionText = systemPrompt
+                )
+
+                if (!reply.isNullOrBlank() && isContinuousChatActive && isWhatsappChatOpen()) {
+                    // ── Burst Messaging: split on \n\n, send each part as separate message ──
+                    val parts = reply.trim().split(Regex("\\n\\n+")).filter { it.isNotBlank() }
+                    Log.i(TAG, "🚀 [ContinuousChat] Sending ${parts.size} burst part(s) to $contactName")
+
+                    var allSent = false
+                    for ((index, part) in parts.withIndex()) {
+                        if (!isContinuousChatActive || !isWhatsappChatOpen()) break
+                        val sent = armWhatsappInstantInChatSend(part.trim())
+                        if (sent) {
+                            allSent = true
+                            lastIshaSentReply = part.trim()
+                            lastContinuousChatActivityTime = System.currentTimeMillis()
+                            Log.d(TAG, "  ✅ Burst part ${index + 1}/${parts.size}: \"${part.trim()}\"")
+                        }
+                        // Human-like typing delay between burst messages (800-1200ms)
+                        if (index < parts.size - 1) {
+                            kotlinx.coroutines.delay(900L)
+                        }
+                    }
+
+                    if (allSent) {
+                        waitingForIncomingReply = true
+                        // Store full reply as single history entry for context
+                        continuousChatHistory.addLast(
+                            com.aura.assistant.data.ChatMessage(
+                                sessionId = "wa_continuous",
+                                role = com.aura.assistant.data.MessageRole.ASSISTANT,
+                                text = parts.joinToString(" ")
+                            )
+                        )
+                        while (continuousChatHistory.size > 40) continuousChatHistory.removeFirst()
+                        stepHandler.post {
+                            try {
+                                android.widget.Toast.makeText(
+                                    this@IshaAccessibilityService,
+                                    "💬 Isha: ${parts.first()}${if (parts.size > 1) " ..." else ""}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Continuous chat reply generation failed", e)
+            } finally {
+                stepHandler.postDelayed({ isGeneratingContinuousReply = false }, 1000L)
+            }
         }
     }
 

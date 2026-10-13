@@ -336,7 +336,6 @@ fun IshaMainScreen(
                     textSize = textSize,
                     isSoundEnabled = isSoundEnabled,
                     personaConfig = personaConfig,
-                    onAgeGroupChange = { viewModel.setAgeGroup(it) },
                     onSalutationChange = { title, custom -> viewModel.setSalutation(title, custom) },
                     onArchetypeChange = { viewModel.setArchetype(it) },
                     onThemePaletteChange = { viewModel.setThemePalette(it) },

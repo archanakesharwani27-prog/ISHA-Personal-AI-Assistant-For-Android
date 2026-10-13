@@ -191,6 +191,13 @@ class GeminiChatService(private val context: Context) {
                 newPrompt
             }
 
+        // Live Context Freshness: Invalidate cached system instructions on communication queries or when WhatsApp is open
+        val isCommsOrWaPrompt = newPrompt.contains(Regex("\\b(reply|baat|whatsapp|kro|karo|bhejo|unse|usse|isse|unhe|likho|type|msg|message)\\b", RegexOption.IGNORE_CASE)) ||
+                com.aura.assistant.IshaAccessibilityService.instance?.isWhatsappChatOpen() == true
+        if (isCommsOrWaPrompt) {
+            invalidateSystemInstructionCache()
+        }
+
         // ⚡ Multimodal Continuity Engine:
         // Cache active image bytes, and restore for follow-up questions referencing images
         var effectiveImageBytes = imageBytes
@@ -516,6 +523,8 @@ class GeminiChatService(private val context: Context) {
 
                                 val guidance = if (isFailure) {
                                     "CRITICAL TOOL FAILURE: Tool '$toolName' FAILED with error: \"$errMsg\". You MUST be 100% honest and transparent with Boss: Do NOT claim that this tool or any verification succeeded! If a previous action (like creating alarm) already succeeded via a prior tool, acknowledge that it was scheduled, but explicitly tell Boss that '$toolName' (verification) failed with reason: \"$errMsg\". If permission or capability is unavailable, state the exact limitation clearly (e.g. 'Mere paas Location permission nahi hai')."
+                                } else if (outputObj.has("_task_guidance") && outputObj.get("_task_guidance").asString.isNotBlank()) {
+                                    outputObj.get("_task_guidance").asString
                                 } else {
                                     "Step $currentStep complete. Original user request: \"$originalPrompt\". Agar aur tasks baaki hain (jaise screenshot ke baad WhatsApp par bhejna, ya YouTube ke baad DND lagana, app/game kholna, battery check karna), to IMMEDIATELY unka tool call karo — text summary abhi mat do! Sare tasks ke tool call hone ke baad hi natural Hindi me short spoken confirmation do."
                                 }
@@ -535,9 +544,10 @@ class GeminiChatService(private val context: Context) {
             add("contents", contents)
 
             // Include tool declarations so model has schema context
-            // Prune to executed tools schema (<1KB) for instant confirmation turn unless multi-step chained intent
+            // Prune to executed tools schema (<1KB) for instant confirmation turn unless multi-step chained intent or follow-up tool needed
             val executedNames = executedTools.map { it.first }.toSet()
-            val hasChainedIntent = originalPrompt.contains(Regex("\\b(aur|then|uske baad|and|phir|also|bhejo|send|dono|teeno)\\b", RegexOption.IGNORE_CASE)) || originalPrompt.contains(",")
+            val needsFollowUpTools = executedNames.any { it in setOf("chat_on_whatsapp", "take_screenshot", "open_camera", "read_notifications") }
+            val hasChainedIntent = needsFollowUpTools || originalPrompt.contains(Regex("\\b(aur|then|uske baad|and|phir|also|bhejo|send|reply|baat|dono|teeno)\\b", RegexOption.IGNORE_CASE)) || originalPrompt.contains(",")
             val declarations = if (hasChainedIntent) {
                 IshaToolRegistry.getGeminiToolDeclarations()
             } else {
@@ -1101,6 +1111,142 @@ class GeminiChatService(private val context: Context) {
         }
 
         return contents
+    }
+
+    /**
+     * Generates a rapid conversational text reply (e.g. for continuous WhatsApp auto-chat).
+     * Routes via Fast LLM (Groq / OpenRouter) or candidate Gemini Flash models.
+     * @param history Optional prior conversation turns for context retention.
+     */
+    suspend fun generateFastReply(
+        prompt: String,
+        history: List<ChatMessage> = emptyList(),
+        systemInstructionText: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
+        if (hasFastLlmKey) {
+            try {
+                var resultText = ""
+                openRouterClient.streamFastChat(
+                    systemPrompt = systemInstructionText ?: "You are Isha, a sweet, witty, natural AI companion created by Ansh Kesharwani.",
+                    history = history,
+                    prompt = prompt,
+                    callback = object : ChatStreamCallback {
+                        val buf = StringBuilder()
+                        override fun onToken(chunk: String) { buf.append(chunk) }
+                        override fun onToolExecution(toolName: String, args: String, result: String) {}
+                        override fun onComplete(fullText: String) { resultText = fullText }
+                        override fun onError(errorMessage: String) {}
+                    }
+                )
+                if (resultText.isNotBlank()) {
+                    return@withContext cleanLlmReply(resultText)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Fast LLM fast reply failed: ${e.message}, falling back to Gemini Flash")
+            }
+        }
+
+        val apiKey = Secrets.getActiveGeminiKey(context)
+        val sysPrompt = systemInstructionText ?: "You are Isha, a sweet, witty, natural AI companion created by Ansh Kesharwani. Respond in 1-2 natural, lively sentences in conversational Hinglish without quotes or markdown."
+
+        val requestJson = JsonObject().apply {
+            val contents = JsonArray().apply {
+                // Inject prior conversation history for context
+                for (msg in history) {
+                    add(JsonObject().apply {
+                        addProperty("role", if (msg.role == MessageRole.ASSISTANT) "model" else "user")
+                        add("parts", JsonArray().apply {
+                            add(JsonObject().apply { addProperty("text", msg.text) })
+                        })
+                    })
+                }
+                // Current user message
+                add(JsonObject().apply {
+                    addProperty("role", "user")
+                    add("parts", JsonArray().apply {
+                        add(JsonObject().apply { addProperty("text", prompt) })
+                    })
+                })
+            }
+            add("contents", contents)
+            add("system_instruction", JsonObject().apply {
+                add("parts", JsonArray().apply {
+                    add(JsonObject().apply { addProperty("text", sysPrompt) })
+                })
+            })
+            add("generationConfig", JsonObject().apply {
+                addProperty("temperature", 0.7)
+                addProperty("maxOutputTokens", 256)
+            })
+        }
+        val bodyStr = requestJson.toString()
+
+        for (model in CANDIDATE_MODELS) {
+            val (url, extraHeaders) = IshaGatewayConfig.getChatStreamUrl(context, model, apiKey)
+            val body = bodyStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url(url).post(body)
+            for ((k, v) in extraHeaders) reqBuilder.addHeader(k, v)
+            val req = reqBuilder.build()
+
+            var resp = try {
+                client.newCall(req).execute()
+            } catch (e: Exception) {
+                Log.w(TAG, "Fast reply error with $model: ${e.message}")
+                null
+            }
+
+            if ((resp == null || !resp.isSuccessful) && apiKey.isNotBlank() && !url.contains("generativelanguage.googleapis.com")) {
+                try { resp?.close() } catch (_: Exception) {}
+                val directUrl = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+                val directReq = Request.Builder().url(directUrl).post(body).build()
+                resp = try { client.newCall(directReq).execute() } catch (_: Exception) { null }
+            }
+
+            if (resp != null && resp.isSuccessful) {
+                val stream = resp.body?.byteStream() ?: continue
+                val reader = BufferedReader(InputStreamReader(stream))
+                val sb = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val cur = line ?: break
+                    if (cur.startsWith("data: ")) {
+                        val json = cur.removePrefix("data: ").trim()
+                        if (json == "[DONE]" || json.isBlank()) continue
+                        try {
+                            val parsed = JsonParser.parseString(json).asJsonObject
+                            val parts = parsed.getAsJsonArray("candidates")?.get(0)?.asJsonObject?.getAsJsonObject("content")?.getAsJsonArray("parts")
+                            if (parts != null) {
+                                for (i in 0 until parts.size()) {
+                                    val part = parts.get(i).asJsonObject
+                                    if (part.has("text") && (!part.has("thought") || !part.get("thought").asBoolean)) {
+                                        sb.append(part.get("text").asString)
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                resp.close()
+                val finalStr = sb.toString().trim()
+                if (finalStr.isNotBlank()) {
+                    return@withContext cleanLlmReply(finalStr)
+                }
+            } else {
+                resp?.close()
+            }
+        }
+        null
+    }
+
+    private fun cleanLlmReply(raw: String): String {
+        return raw.trim()
+            .removeSurrounding("\"")
+            .removeSurrounding("'")
+            .lines()
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim()
     }
 
     fun cancelCurrentGeneration() {

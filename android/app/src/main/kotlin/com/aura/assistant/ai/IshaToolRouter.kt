@@ -46,6 +46,8 @@ object IshaToolRouter {
         "type_message",
         "type_text",
         "chat_on_whatsapp",
+        "start_continuous_chat",
+        "stop_continuous_chat",
         "send_whatsapp_media",
         "query_contact",
         "get_contacts_list",
@@ -110,6 +112,7 @@ object IshaToolRouter {
         "send_whatsapp",
         "chat_on_whatsapp",
         "type_message",
+        "stop_continuous_chat",
         "toggle_flashlight",
         "set_volume",
         "set_brightness",
@@ -146,7 +149,7 @@ object IshaToolRouter {
     )
 
     private val COMMS_PATTERN = Pattern.compile(
-        "\\b(call|dial|phone|whatsapp|message|msg|sms|bhejo|send|text|chat|kaat do|uthalo|contact|number)\\b",
+        "\\b(call|dial|phone|whatsapp|message|msg|sms|bhejo|send|text|chat|kaat do|uthalo|contact|number|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -216,7 +219,10 @@ object IshaToolRouter {
         if (HARDWARE_PATTERN.matcher(clean).find()) {
             selectedNames.addAll(HARDWARE_TOOLS)
         }
-        if (COMMS_PATTERN.matcher(clean).find()) {
+        val isWhatsappOpen = try {
+            com.aura.assistant.IshaAccessibilityService.instance?.isWhatsappChatOpen() == true
+        } catch (_: Exception) { false }
+        if (COMMS_PATTERN.matcher(clean).find() || isWhatsappOpen) {
             selectedNames.addAll(COMMS_TOOLS)
         }
         if (TIME_PATTERN.matcher(clean).find()) {
