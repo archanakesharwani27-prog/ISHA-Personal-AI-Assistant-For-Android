@@ -21,6 +21,7 @@ object ApiKeyManager {
     private const val PREFS_NAME = "aura_api_config"
     private const val KEY_USER_API_KEY = "user_gemini_api_key"
     private const val KEY_OPENROUTER_API_KEY = "user_openrouter_api_key"
+    private const val KEY_TRUECALLER_TOKEN = "user_truecaller_token"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -112,6 +113,34 @@ object ApiKeyManager {
 
     fun hasGroqKey(context: Context): Boolean {
         return getGroqKey(context).isNotBlank()
+    }
+
+    /**
+     * Retrieves the stored Truecaller installation token if present and non-blank.
+     */
+    fun getTruecallerToken(context: Context): String {
+        return getPrefs(context).getString(KEY_TRUECALLER_TOKEN, "")?.trim() ?: ""
+    }
+
+    /**
+     * Persistently saves a user-configured Truecaller installation Bearer token.
+     */
+    fun saveTruecallerToken(context: Context, token: String) {
+        val clean = token.trim().removePrefix("Bearer ").trim()
+        getPrefs(context).edit().putString(KEY_TRUECALLER_TOKEN, clean).apply()
+        Log.i(TAG, "Saved Truecaller installation token (length=${clean.length})")
+    }
+
+    /**
+     * Clears the stored Truecaller token.
+     */
+    fun clearTruecallerToken(context: Context) {
+        getPrefs(context).edit().remove(KEY_TRUECALLER_TOKEN).apply()
+        Log.i(TAG, "Cleared user Truecaller token")
+    }
+
+    fun hasTruecallerToken(context: Context): Boolean {
+        return getTruecallerToken(context).isNotBlank()
     }
 
 

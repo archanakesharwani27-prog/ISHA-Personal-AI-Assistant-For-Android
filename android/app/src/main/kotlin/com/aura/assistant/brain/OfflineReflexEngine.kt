@@ -1,6 +1,7 @@
 package com.aura.assistant.brain
 
 import android.content.Context
+import com.aura.assistant.ai.IshaCallerLookupEngine
 import com.aura.assistant.ai.IshaContactMemoryManager
 import com.aura.assistant.ai.IshaToolRegistry
 import com.google.gson.JsonObject
@@ -474,10 +475,66 @@ object OfflineReflexEngine {
             return OfflineReflexResult("get_daily_briefing", msg, true)
         }
 
-        // 17. Contact Memory Reflex (Save & Update Phone Numbers with Versioning)
+        // 17. Caller / Unknown Number Identification Reflex (<100ms)
         val phoneNum = extractPhoneNumber(prompt)
-        val hasContactIntent = (clean.contains("number") || clean.contains("no") || clean.contains("phone") || clean.contains("mobile") || clean.contains("contact")) &&
-                (clean.contains("save") || clean.contains("update") || clean.contains("yaad") || clean.contains("rakh") || clean.contains("store") || clean.contains("likh") || clean.contains("ka hai") || clean.contains("ki hai"))
+        val isCallerIdQuery = phoneNum != null && (
+            clean.contains("kiska") || clean.contains("kiski") || clean.contains("identify") ||
+            clean.contains("spam") || clean.contains("unknown") || clean.contains("check") ||
+            clean.contains("caller") || clean.contains("kaun") || clean.contains("pehechan") ||
+            clean.contains("pahchan") || clean.contains("kahan se") || clean.contains("kaha se")
+        )
+        if (isCallerIdQuery) {
+            val identity = if (execute) {
+                IshaCallerLookupEngine.identifyCaller(context, phoneNum)
+            } else {
+                IshaCallerLookupEngine.getInstantProfile(phoneNum) ?: IshaCallerLookupEngine.CallerIdentityResult(
+                    rawNumber = phoneNum,
+                    cleanDigits = phoneNum,
+                    formattedDisplay = phoneNum,
+                    source = "preview",
+                    displayName = null,
+                    isSpam = false,
+                    details = "Looking up caller...",
+                    recommendation = ""
+                )
+            }
+            val resp = buildString {
+                if (identity.isSpam) {
+                    append("⚠️ SPAM ALERT: ${identity.formattedDisplay} ${identity.spamCategory ?: "Spam"} ke roop me report kiya gaya hai (Risk: ${identity.spamRisk}). ")
+                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                    append(identity.details).append(" ")
+                    append("Recommendation: ${identity.recommendation}")
+                } else if (!identity.displayName.isNullOrBlank()) {
+                    append("Boss, ye number ${identity.displayName} (${identity.formattedDisplay}) ka hai. ")
+                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                    append(identity.details).append(" ")
+                    append(identity.recommendation)
+                } else {
+                    append("Boss, ye number ${identity.formattedDisplay} hai. ")
+                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                    append(identity.details).append(" ")
+                    append(identity.recommendation)
+                }
+            }
+            return OfflineReflexResult("identify_caller", resp, true)
+        }
+
+        // 18. Truecaller Installation Token Configuration Reflex (<10ms)
+        if (clean.contains("truecaller") && (clean.contains("token") || clean.contains("key") || clean.contains("save") || clean.contains("set"))) {
+            val tokenMatch = Regex("""\b(?:token|key|save|hai|set|to)\s*[:=]?\s*([a-zA-Z0-9_\-\.]{15,})\b""", RegexOption.IGNORE_CASE).find(prompt)
+                ?: Regex("""\b(a1i[a-zA-Z0-9_\-\.]{15,})\b""").find(prompt)
+            if (tokenMatch != null) {
+                val token = tokenMatch.groupValues[1]
+                if (execute) {
+                    com.aura.assistant.config.ApiKeyManager.saveTruecallerToken(context, token)
+                }
+                return OfflineReflexResult("set_truecaller_token", "Boss, aapka Truecaller token successfully save ho gaya hai! Ab se main sabhi unknown calls aur numbers ko Truecaller ke 350-crore database se direct unke asli naam ke saath pehchanungi.", true)
+            }
+        }
+
+        // 19. Contact Memory Reflex (Save & Update Phone Numbers with Versioning)
+        val hasContactIntent = !isCallerIdQuery && (clean.contains("number") || clean.contains("no") || clean.contains("phone") || clean.contains("mobile") || clean.contains("contact")) &&
+                (clean.contains("save") || clean.contains("update") || clean.contains("yaad") || clean.contains("rakh") || clean.contains("store") || clean.contains("likh") || (clean.contains("ka hai") && !clean.contains("kiska")) || (clean.contains("ki hai") && !clean.contains("kiski")))
         if (phoneNum != null && hasContactIntent) {
             val contactName = extractContactName(prompt, phoneNum)
             if (contactName.isNotBlank() && contactName.length >= 2) {

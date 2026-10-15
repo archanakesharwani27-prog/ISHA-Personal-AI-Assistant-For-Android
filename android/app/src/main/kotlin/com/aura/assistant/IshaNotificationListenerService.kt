@@ -394,6 +394,20 @@ open class IshaNotificationListenerService : NotificationListenerService() {
             return
         }
 
+        // Truecaller app notification intercept: if Truecaller identifies an incoming caller, cache it for announcement
+        if (pkg.contains("truecaller", ignoreCase = true)) {
+            val tcName = title.takeIf { it.isNotBlank() && !it.contains("Truecaller", ignoreCase = true) }
+                ?: text.takeIf { it.isNotBlank() && !it.contains("Truecaller", ignoreCase = true) }
+            val numMatch = Regex("""(?:\+?91)?[6-9]\d{9}""").find("$title $text")?.value
+            if (tcName != null && numMatch != null) {
+                com.aura.assistant.ai.IshaCallerLookupEngine.cacheIdentifiedName(
+                    rawNumber = numMatch,
+                    name = tcName,
+                    isSpam = "$title $text".contains("spam", ignoreCase = true)
+                )
+            }
+        }
+
         val priority = classifyPriority(pkg, title, text)
 
         // Broadcast to Flutter for persistent history

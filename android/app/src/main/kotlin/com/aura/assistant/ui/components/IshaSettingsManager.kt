@@ -125,4 +125,12 @@ object IshaSettingsManager {
     fun getSavedTextSize(context: Context): String {
         return getPrefs(context).getString(KEY_TEXT_SIZE, "Default") ?: "Default"
     }
+
+    fun getTruecallerToken(context: Context): String {
+        return com.aura.assistant.config.ApiKeyManager.getTruecallerToken(context)
+    }
+
+    fun setTruecallerToken(context: Context, token: String) {
+        com.aura.assistant.config.ApiKeyManager.saveTruecallerToken(context, token)
+    }
 }

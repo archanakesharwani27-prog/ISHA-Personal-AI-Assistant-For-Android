@@ -41,6 +41,7 @@ object IshaToolRouter {
         "make_call",
         "accept_call",
         "decline_call",
+        "identify_caller",
         "send_sms",
         "send_whatsapp",
         "send_whatsapp_media",
@@ -112,6 +113,7 @@ object IshaToolRouter {
         "make_call",
         "accept_call",
         "decline_call",
+        "identify_caller",
         "send_whatsapp",
         "chat_on_whatsapp",
         "type_message",
@@ -152,7 +154,7 @@ object IshaToolRouter {
     )
 
     private val COMMS_PATTERN = Pattern.compile(
-        "\\b(call|dial|phone|whatsapp|whatsap|message|msg|sms|bhejo|bhej|send|share|text|chat|kaat do|uthalo|contact|number|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues|padho|padh|check|dekho|sunao|kya bola|kya likha|kya aaya|kya bheja|pucho|poocho)\\b",
+        "\\b(call|dial|phone|whatsapp|whatsap|message|msg|sms|bhejo|bhej|send|share|text|chat|kaat do|uthalo|contact|number|kiska|caller|spam|unknown|identify|pehechan|pahchan|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues|padho|padh|check|dekho|sunao|kya bola|kya likha|kya aaya|kya bheja|pucho|poocho)\\b",
         Pattern.CASE_INSENSITIVE
     )
 

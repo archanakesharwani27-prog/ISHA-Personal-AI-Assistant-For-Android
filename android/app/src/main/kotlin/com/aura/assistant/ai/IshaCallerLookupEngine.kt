@@ -9,8 +9,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import com.aura.assistant.config.ApiKeyManager
+import com.google.gson.JsonParser
 
 /**
  * Caller Identification & Spam Detection Engine for ISHA.
@@ -130,7 +133,24 @@ object IshaCallerLookupEngine {
         // 5. Telecom Circle & Operator static inference (India NNP)
         val carrierCircle = inferCarrierAndCircle(clean)
 
-        // 6. Real-time Live Web Search & Spam Directory Lookup
+        // 6. Direct Truecaller API Lookup (if user provided free Truecaller installation token)
+        val tcToken = ApiKeyManager.getTruecallerToken(context)
+        if (tcToken.isNotBlank()) {
+            val tcResult = lookupTruecaller(clean, carrierCircle, tcToken)
+            if (tcResult != null) {
+                lookupCache[clean] = tcResult
+                return@withContext tcResult
+            }
+        }
+
+        // 7. Tellows India Directory Lookup (Public free crowd-sourced database)
+        val tellowsResult = lookupTellows(clean, carrierCircle)
+        if (tellowsResult != null && (tellowsResult.displayName != null || tellowsResult.isSpam)) {
+            lookupCache[clean] = tellowsResult
+            return@withContext tellowsResult
+        }
+
+        // 8. Real-time Live Web Search & Spam Directory Lookup
         val webResult = performOnlineSpamAndBusinessSearch(clean, carrierCircle)
         lookupCache[clean] = webResult
         return@withContext webResult
@@ -431,6 +451,24 @@ object IshaCallerLookupEngine {
                     )
                 }
 
+                // 3. Extract actual Person / Owner Name from public listings (e.g. JustDial, IndiaMART, LinkedIn, classifieds)
+                val personName = extractPersonName(titles, snippets, clean)
+                if (personName != null) {
+                    val snippetPreview = snippets.firstOrNull()?.take(140) ?: "Publicly listed contact."
+                    return CallerIdentityResult(
+                        rawNumber = clean,
+                        cleanDigits = clean,
+                        formattedDisplay = formatted,
+                        source = "web_search",
+                        displayName = personName,
+                        isSpam = false,
+                        spamRisk = "Low",
+                        operatorAndCircle = carrierCircle,
+                        details = "Owner identified as '$personName' ($carrierCircle) from web public directory listings. \"$snippetPreview\"",
+                        recommendation = "Personal contact identified online."
+                    )
+                }
+
                 // Directory Listing Found (General Title)
                 val relevantTitle = titles.firstOrNull { t ->
                     !t.contains("DuckDuckGo", ignoreCase = true) && t.length > 5 && !t.contains("Search")
@@ -467,6 +505,215 @@ object IshaCallerLookupEngine {
             details = "Personal or unlisted mobile number ($carrierCircle). Not listed in spam databases or public business directories.",
             recommendation = "Answer with caution if expecting a personal call, or let it ring."
         )
+    }
+
+    /**
+     * Queries Truecaller Non-EU Search API with the user's Bearer token.
+     * Returns exact Truecaller profile: name, badges, spamScore, spamType, addresses.
+     */
+    private fun lookupTruecaller(clean: String, carrierCircle: String, token: String): CallerIdentityResult? {
+        if (token.isBlank()) return null
+        val queryNumber = if (clean.startsWith("+")) clean else "+91$clean"
+        try {
+            val url = "https://search5-noneu.truecaller.com/v2/search?q=${URLEncoder.encode(queryNumber, "UTF-8")}&countryCode=IN&type=4&locAddr=&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("Authorization", "Bearer $token")
+                .header("User-Agent", "Truecaller/11.75.5 (Android;10)")
+                .header("Accept", "application/json")
+                .header("Accept-Encoding", "gzip, deflate")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                Log.w(TAG, "Truecaller API response code: ${response.code}")
+                return null
+            }
+            val body = response.body?.string() ?: return null
+            val json = JsonParser.parseString(body).asJsonObject
+            val dataArray = json.getAsJsonArray("data")
+            if (dataArray == null || dataArray.size() == 0) return null
+
+            val profile = dataArray.get(0).asJsonObject
+            val rawName = profile.get("name")?.asString?.trim()
+            val altName = profile.get("altName")?.asString?.trim()
+            val verifiedName = when {
+                !rawName.isNullOrBlank() -> rawName
+                !altName.isNullOrBlank() -> altName
+                else -> null
+            }
+
+            // Extract carrier & circle from Truecaller phone info if available
+            val phones = profile.getAsJsonArray("phones")
+            val phoneObj = if (phones != null && phones.size() > 0) phones.get(0).asJsonObject else null
+            val tcCarrier = phoneObj?.get("carrier")?.asString?.takeIf { it.isNotBlank() }
+            val addresses = profile.getAsJsonArray("addresses")
+            val addressObj = if (addresses != null && addresses.size() > 0) addresses.get(0).asJsonObject else null
+            val tcCity = addressObj?.get("city")?.asString?.takeIf { it.isNotBlank() }
+
+            val effectiveNetwork = when {
+                tcCarrier != null && tcCity != null -> "$tcCarrier • $tcCity"
+                tcCarrier != null -> "$tcCarrier • $carrierCircle"
+                else -> carrierCircle
+            }
+
+            // Extract spam info
+            val spamInfo = profile.getAsJsonObject("spamInfo")
+            val spamScore = spamInfo?.get("spamScore")?.asInt ?: phoneObj?.get("spamScore")?.asInt ?: 0
+            val spamType = spamInfo?.get("spamType")?.asString ?: phoneObj?.get("spamType")?.asString
+            val numReports = spamInfo?.get("numReports")?.asInt ?: 0
+            val badges = profile.getAsJsonArray("badges")?.map { it.asString } ?: emptyList()
+            val isVerified = badges.any { it.contains("verified", ignoreCase = true) }
+
+            val isSpam = spamScore >= 30 || !spamType.isNullOrBlank()
+            val spamRisk = when {
+                spamScore >= 60 || (spamType != null && spamType.contains("fraud", ignoreCase = true)) -> "High"
+                spamScore >= 30 || spamType != null -> "Moderate"
+                else -> "None"
+            }
+
+            val formatted = formatNumberDisplay(clean)
+            return CallerIdentityResult(
+                rawNumber = clean,
+                cleanDigits = clean,
+                formattedDisplay = formatted,
+                source = "truecaller",
+                displayName = verifiedName,
+                isSpam = isSpam,
+                spamCategory = spamType ?: if (isSpam) "Spam / Telemarketing" else null,
+                spamRisk = spamRisk,
+                operatorAndCircle = effectiveNetwork,
+                details = buildString {
+                    append("Identified via Truecaller. ")
+                    if (isVerified) append("Badge: Verified. ")
+                    if (isSpam) append("Reported by $numReports users as $spamType (Score: $spamScore%). ")
+                }.trim(),
+                recommendation = if (isSpam) "Spam call detected — recommend rejecting." else "Safe to answer — identified Truecaller contact."
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Truecaller lookup exception: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * Tellows India open caller directory lookup (free, no token needed).
+     */
+    private fun lookupTellows(clean: String, carrierCircle: String): CallerIdentityResult? {
+        try {
+            val url = "https://www.tellows.in/num/$clean"
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120.0 Mobile")
+                .header("Accept", "text/html,application/xhtml+xml")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            val html = response.body?.string() ?: return null
+
+            // Tellows caller name: <span id="caller_name"> or <div class="caller_name"> or regex
+            val nameMatch = Regex("""id=['"]caller_name['"][^>]*>([^<]+)<""", RegexOption.IGNORE_CASE).find(html)
+                ?: Regex("""caller-name[^>]*>([^<]+)<""", RegexOption.IGNORE_CASE).find(html)
+            val callerName = nameMatch?.groupValues?.get(1)?.trim()?.takeIf {
+                it.length > 2 && !it.equals("Unknown", ignoreCase = true) && !it.contains("No Name", ignoreCase = true)
+            }
+
+            val tellowsScoreMatch = Regex("""score\s*([1-9])""", RegexOption.IGNORE_CASE).find(html)
+                ?: Regex("""tellowsScore['"]?>([1-9])<""", RegexOption.IGNORE_CASE).find(html)
+            val score = tellowsScoreMatch?.groupValues?.get(1)?.toIntOrNull() ?: 5
+
+            val isSpam = score >= 7
+            if (callerName != null || isSpam) {
+                val formatted = formatNumberDisplay(clean)
+                return CallerIdentityResult(
+                    rawNumber = clean,
+                    cleanDigits = clean,
+                    formattedDisplay = formatted,
+                    source = "tellows",
+                    displayName = callerName ?: if (isSpam) "⚠️ Suspected Spam" else null,
+                    isSpam = isSpam,
+                    spamCategory = if (isSpam) "Tellows Score $score/9 Spam" else null,
+                    spamRisk = if (score >= 8) "High" else if (score >= 6) "Moderate" else "Low",
+                    operatorAndCircle = carrierCircle,
+                    details = "Identified via Tellows India (Community Score: $score/9). ${callerName ?: ""}".trim(),
+                    recommendation = if (isSpam) "Reported unwanted caller — reject or block." else "Identified caller."
+                )
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Tellows lookup skipped: ${e.message}")
+        }
+        return null
+    }
+
+    /**
+     * Extracts high-confidence individual person names from search result text & snippets.
+     */
+    private fun extractPersonName(titles: List<String>, snippets: List<String>, clean: String): String? {
+        val allText = (titles + snippets).joinToString("\n")
+
+        // Pattern 1: Explicit labels: Name: Ramesh Kumar / Contact: Ansh Verma / Owner: Suresh Singh
+        val labeledPattern = Regex("""(?i)\b(?:name|contact person|owner|proprietor|dr\.|mr\.|mrs\.|ms\.)[:\s-]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})""")
+        labeledPattern.find(allText)?.let {
+            val candidate = it.groupValues[1].trim()
+            if (isValidPersonName(candidate)) return candidate
+        }
+
+        // Pattern 2: Name preceding phone number: "Ramesh Sharma - 9811..." or "Ankit Verma: +91 9811..."
+        val precedingPattern = Regex("""([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*[-–|:]\s*(?:\+?91)?\s*$clean""")
+        precedingPattern.find(allText)?.let {
+            val candidate = it.groupValues[1].trim()
+            if (isValidPersonName(candidate)) return candidate
+        }
+
+        // Pattern 3: Clean titles that start with Person Name and phone number
+        for (title in titles) {
+            val titleMatch = Regex("""^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*[\(\|-]""").find(title)
+            if (titleMatch != null) {
+                val candidate = titleMatch.groupValues[1].trim()
+                if (isValidPersonName(candidate)) return candidate
+            }
+        }
+
+        return null
+    }
+
+    private fun isValidPersonName(name: String): Boolean {
+        if (name.length < 3 || name.length > 30) return false
+        val stopWords = setOf(
+            "duckduckgo", "google", "search", "mobile", "number", "phone", "call", "caller", "india",
+            "telecom", "airtel", "reliance", "jio", "vodafone", "bsnl", "truecaller", "details",
+            "information", "report", "reported", "spam", "fraud", "scam", "customer", "care", "service",
+            "login", "sign", "online", "portal", "website", "bank", "credit", "card", "loan", "check",
+            "find", "reverse", "lookup", "who", "calls", "callerid", "directory", "post", "blog"
+        )
+        val words = name.lowercase().split(Regex("\\s+"))
+        return words.none { stopWords.contains(it) } && words.size in 1..3
+    }
+
+    /**
+     * Dynamically caches caller names intercepted from Truecaller app notifications or external services.
+     */
+    fun cacheIdentifiedName(rawNumber: String, name: String, isSpam: Boolean = false) {
+        val clean = cleanPhoneNumber(rawNumber)
+        if (clean.isBlank() || name.isBlank()) return
+        val carrierCircle = inferCarrierAndCircle(clean)
+        val result = CallerIdentityResult(
+            rawNumber = rawNumber,
+            cleanDigits = clean,
+            formattedDisplay = formatNumberDisplay(clean),
+            source = "truecaller_app",
+            displayName = name,
+            isSpam = isSpam,
+            spamRisk = if (isSpam) "High" else "None",
+            operatorAndCircle = carrierCircle,
+            details = "Identified as '$name' ($carrierCircle) via Truecaller.",
+            recommendation = if (isSpam) "Spam call detected — recommend rejecting." else "Identified Truecaller caller."
+        )
+        lookupCache[clean] = result
+        Log.i(TAG, "Cached caller name from Truecaller: $name for $clean")
     }
 
     private fun cleanHtml(raw: String): String {
