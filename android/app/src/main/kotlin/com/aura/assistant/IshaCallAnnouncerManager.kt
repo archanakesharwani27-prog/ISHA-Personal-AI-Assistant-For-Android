@@ -608,10 +608,6 @@ object IshaCallAnnouncerManager {
         } catch (_: Exception) {}
     }
 
-    // ── 4. Interactive Floating Call Heads-Up HUD (Hand Tap) ───────────────────
-    private fun showFloatingCallHud(context: Context, callerDisplay: String) {
-        // Disabled per user request: Caller ID HUD is removed, keeping full focus on hands-free voice experience.
-    }
 
     fun dismissFloatingCallHud() {
         mainHandler.post {

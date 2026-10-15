@@ -741,32 +741,3 @@ private fun GeminiLiveCircleButton(
     }
 }
 
-@Composable
-fun ChatGPTVoiceScreen(
-    liveState: AuraLiveState,
-    amplitude: Float,
-    liveTranscript: String,
-    onCloseVoiceMode: () -> Unit,
-    onToggleMute: (Boolean) -> Unit = {},
-    onStartListening: () -> Unit = {},
-    onSendCameraImage: (ByteArray) -> Unit = {},
-    onSendScreenCapture: () -> Unit = {},
-    isScreenSharing: Boolean = false,
-    onStopScreenSharing: () -> Unit = {},
-    userName: String = "Ansh",
-    modifier: Modifier = Modifier
-) = IshaVoiceScreen(
-    liveState = liveState,
-    amplitude = amplitude,
-    liveTranscript = liveTranscript,
-    onCloseVoiceMode = onCloseVoiceMode,
-    onToggleMute = onToggleMute,
-    onStartListening = onStartListening,
-    onSendCameraImage = onSendCameraImage,
-    onSendScreenCapture = onSendScreenCapture,
-    isScreenSharing = isScreenSharing,
-    onStopScreenSharing = onStopScreenSharing,
-    userName = userName,
-    modifier = modifier
-)
-

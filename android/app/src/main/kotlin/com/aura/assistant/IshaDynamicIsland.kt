@@ -3,7 +3,6 @@ package com.aura.assistant
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
-import java.util.Locale
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -11,26 +10,15 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.os.*
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
 import android.view.*
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.AlphaAnimation
-import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
-import android.view.animation.RotateAnimation
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.aura.assistant.R
-import com.aura.assistant.ai.GeminiChatService
-import com.aura.assistant.data.ChatMessage
 
 /**
  * Apple Dynamic Island style minimal top bubble for ISHA.
@@ -46,22 +34,11 @@ object IshaDynamicIsland {
 
     private const val TAG = "IshaDynamicIsland"
     private const val IDLE_DISMISS_MS = 12_000L // 12 seconds idle before auto-dismiss
-    private const val LISTENING_ANIM_MS = 600L  // Wave animation duration
-    private const val EXPAND_COLLAPSE_MS = 200L // Expand/collapse animation duration
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
     private val handler = Handler(Looper.getMainLooper())
     private val dismissRunnable = Runnable { hide() }
-
-    private var speechRecognizer: SpeechRecognizer? = null
-    private var isListeningSpeech = false
-    private var isSpeaking = false
-    private var isThinking = false
-    private var isExpanded = false
-
-    private var audioManager: AudioManager? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
 
     // Audio wave visualizer
     private var waveView: WaveformView? = null
@@ -79,18 +56,6 @@ object IshaDynamicIsland {
     private val STROKE_LISTENING = Color.parseColor("#9900E5FF") // Electric Cyan Glow
     private val STROKE_THINKING = Color.parseColor("#99A855F7")  // Neural Violet Glow
     private val STROKE_SPEAKING = Color.parseColor("#9910B981")  // Emerald Glow
-
-    private var islandTts: android.speech.tts.TextToSpeech? = null
-    private var isIslandTtsReady = false
-
-    private fun initTts(ctx: Context) {
-        // Disabled: User strictly uses Gemini Live Bidirectional Voice duplex ("Aoede")
-    }
-
-    private fun speakText(text: String) {
-        // Suppressed: All assistant voice output is handled via 24kHz PCM duplex by GeminiLiveClient
-        Log.d(TAG, "Legacy TTS speakText suppressed in favor of Gemini Live: $text")
-    }
 
     @Volatile private var currentReason: String = "wake"
     @Volatile var isAppInForeground = false
@@ -280,7 +245,6 @@ object IshaDynamicIsland {
 
     private fun _hide() {
         handler.removeCallbacks(dismissRunnable)
-        stopSpeechListening()
         lotusSpinAnimator?.cancel()
         lotusSpinAnimator = null
         lotusIcon?.clearAnimation()
@@ -505,357 +469,11 @@ object IshaDynamicIsland {
         lotusSpinAnimator = null
         lotusIcon?.clearAnimation()
         lotusIcon?.rotation = 0f
-        isListeningSpeech = false
-        isSpeaking = false
-        isThinking = false
-        isExpanded = false
         stateText?.text = "ISHA"
         updateBackgroundColor("Idle")
         waveView?.reset()
     }
 
-    private fun toggleExpandedState() {
-        isExpanded = !isExpanded
-        // Animate height change using WindowManager.LayoutParams (NOT ViewGroup.MarginLayoutParams!)
-        // The overlay view is managed by WindowManager, so we must use updateViewLayout().
-        val ov = overlayView ?: return
-        val wm = windowManager ?: return
-        val wmParams = ov.layoutParams as? WindowManager.LayoutParams ?: return
-
-        val startHeight = if (isExpanded) 48.dp(ov.context) else 80.dp(ov.context)
-        val endHeight   = if (isExpanded) 80.dp(ov.context) else 48.dp(ov.context)
-
-        val anim = ValueAnimator.ofInt(startHeight, endHeight).apply {
-            duration = EXPAND_COLLAPSE_MS
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { animator ->
-                val height = animator.animatedValue as Int
-                try {
-                    wmParams.height = height
-                    wm.updateViewLayout(ov, wmParams)
-                } catch (e: Exception) {
-                    Log.w(TAG, "updateViewLayout failed during expand animation: ${e.message}")
-                    cancel()
-                }
-            }
-        }
-        anim.start()
-    }
-
-    private fun startSpeechListening(ctx: Context, root: View) {
-        // Disabled: User strictly uses Gemini Live Bidirectional Voice duplex ("Aoede") via MainActivity
-        Log.d(TAG, "Dynamic Island SpeechRecognizer disabled in favor of Gemini Live Voice")
-    }
-
-    private fun stopSpeechListening() {
-        try {
-            speechRecognizer?.stopListening()
-            speechRecognizer?.destroy()
-        } catch (_: Exception) {}
-        speechRecognizer = null
-        isListeningSpeech = false
-        abandonDucking()
-    }
-
-    private fun updateStateUI(state: String) {
-        handler.post {
-            stateText?.text = when (state) {
-                "Listening" -> "Listening..."
-                "Thinking" -> "Thinking..."
-                "Speaking" -> "Speaking..."
-                "Error" -> "Mic error"
-                else -> "ISHA"
-            }
-            updateBackgroundColor(state)
-            waveView?.apply {
-                setListening(state == "Listening")
-                setThinking(state == "Thinking")
-                setSpeaking(state == "Speaking")
-            }
-        }
-    }
-
-    private fun handleSpokenCommand(ctx: Context, command: String) {
-        val lower = command.lowercase()
-        Log.d(TAG, "Command received: $command")
-
-        // Show we heard the command
-        stateText?.text = "\"$command\""
-        updateBackgroundColor("Listening")
-        waveView?.setListening(true)
-
-        // If currently speaking, INTERRUPT immediately (barge-in)
-        if (isSpeaking) {
-            isSpeaking = false
-            // Signal Gemini Live service to interrupt generation
-            // This is done via method channel in MainActivity - we'll broadcast an interrupt intent
-            val interruptIntent = Intent("com.aura.voice.INTERRUPT")
-                    .putExtra("reason", "barge_in")
-            ctx.sendBroadcast(interruptIntent)
-        }
-
-        // Process command via accessibility service (A11y) for instant execution
-        val a11y = AuraAccessibilityService.instance
-        when {
-            lower.contains("screen") || lower.contains("photo") || lower.contains("dekho") || lower.contains("analyze") -> {
-                // Background screen analysis via Gemini AI
-                stateText?.text = "Screen analyzing..."
-                updateBackgroundColor("Thinking")
-                waveView?.setThinking(true)
-
-                a11y?.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes ->
-                    handler.post {
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            val screenHierarchy = a11y.getScreenTextHierarchy().take(1200)
-                            val chatService = GeminiChatService(ctx)
-                            val prompt = if (command.length < 15) {
-                                "Boss ne kaha hai screen dekho aur batao kya dikh raha hai. Screen text:\n$screenHierarchy\nScreen ko analyze karke short crisp me batao."
-                            } else {
-                                "$command\n\n[Active Screen Context]:\n$screenHierarchy"
-                            }
-                            chatService.sendChatStream(
-                                history = emptyList(),
-                                newPrompt = prompt,
-                                imageBytes = bytes,
-                                callback = object : com.aura.assistant.ai.ChatStreamCallback {
-                                    val responseBuf = StringBuilder()
-                                    override fun onToken(chunk: String) {
-                                        responseBuf.append(chunk)
-                                    }
-                                    override fun onToolExecution(toolName: String, args: String, result: String) {
-                                        handler.post { stateText?.text = "$toolName ✓" }
-                                    }
-                                    override fun onComplete(fullText: String) {
-                                        handler.post {
-                                            val shortResp = fullText.lines().firstOrNull { it.isNotBlank() } ?: "Done ✓"
-                                            val display = if (shortResp.length > 28) shortResp.take(25) + "..." else shortResp
-                                            stateText?.text = display
-                                            updateBackgroundColor("Speaking")
-                                            waveView?.setThinking(false)
-                                            waveView?.setSpeaking(true)
-                                            speakText(fullText)
-                                            handler.postDelayed({ hide() }, 4500L)
-                                        }
-                                    }
-                                    override fun onError(errorMessage: String) {
-                                        handler.post {
-                                            stateText?.text = "Analysis error"
-                                            updateBackgroundColor("Idle")
-                                            waveView?.reset()
-                                            handler.postDelayed({ hide() }, 1500L)
-                                        }
-                                    }
-                                }
-                            )
-                        } else {
-                            stateText?.text = "Screen capture failed"
-                            handler.postDelayed({ hide() }, 1500L)
-                        }
-                    }
-                }
-            }
-            lower.contains("like") || lower.contains("pasand") -> {
-                val ok = a11y?.performYoutubeLike() ?: false
-                stateText?.text = if (ok) "Liked! 👍" else "No like button"
-                handler.postDelayed({ hide() }, 1200L)
-            }
-            lower.contains("skip") || lower.contains("hatao") -> {
-                val ok = a11y?.performYoutubeSkipAd() ?: false
-                stateText?.text = if (ok) "Ad skipped! ⏭️" else "No skip"
-                handler.postDelayed({ hide() }, 1200L)
-            }
-            lower.contains("torch on") || lower.contains("flashlight on") -> {
-                toggleFlashlight(ctx, true)
-                stateText?.text = "Torch on"
-                handler.postDelayed({ hide() }, 1000L)
-            }
-            lower.contains("torch off") || lower.contains("flashlight off") -> {
-                toggleFlashlight(ctx, false)
-                stateText?.text = "Torch off"
-                handler.postDelayed({ hide() }, 1000L)
-            }
-            lower.contains("volume up") -> {
-                adjustVolume(ctx, AudioManager.ADJUST_RAISE)
-                stateText?.text = "Volume up"
-                handler.postDelayed({ hide() }, 800L)
-            }
-            lower.contains("volume down") -> {
-                adjustVolume(ctx, AudioManager.ADJUST_LOWER)
-                stateText?.text = "Volume down"
-                handler.postDelayed({ hide() }, 800L)
-            }
-            lower.contains("mute") -> {
-                adjustVolume(ctx, AudioManager.ADJUST_MUTE)
-                stateText?.text = "Muted"
-                handler.postDelayed({ hide() }, 1000L)
-            }
-            lower.contains("unmute") -> {
-                adjustVolume(ctx, AudioManager.ADJUST_UNMUTE)
-                stateText?.text = "Unmuted"
-                handler.postDelayed({ hide() }, 1000L)
-            }
-            lower.contains("open") || lower.contains("kholo") -> {
-                // Open app request
-                val appName = extractAppName(command)
-                if (appName.isNotEmpty()) {
-                    launchApp(ctx, appName)
-                    stateText?.text = "Opening $appName"
-                    handler.postDelayed({ hide() }, 1500L)
-                } else {
-                    stateText?.text = "Which app?"
-                    handler.postDelayed({ hide() }, 1200L)
-                }
-            }
-            else -> {
-                stateText?.text = "Thinking..."
-                updateBackgroundColor("Thinking")
-                waveView?.setListening(false)
-                waveView?.setThinking(true)
-
-                val chatService = GeminiChatService(ctx)
-                chatService.sendChatStream(
-                    history = emptyList<ChatMessage>(),
-                    newPrompt = command,
-                    callback = object : com.aura.assistant.ai.ChatStreamCallback {
-                        val responseBuf = StringBuilder()
-                        override fun onToken(chunk: String) {
-                            responseBuf.append(chunk)
-                        }
-                        override fun onToolExecution(toolName: String, args: String, result: String) {
-                            handler.post {
-                                stateText?.text = "$toolName ✓"
-                            }
-                        }
-                        override fun onComplete(fullText: String) {
-                            handler.post {
-                                val shortResp = fullText.lines().firstOrNull { it.isNotBlank() } ?: "Done ✓"
-                                val display = if (shortResp.length > 28) shortResp.take(25) + "..." else shortResp
-                                stateText?.text = display
-                                updateBackgroundColor("Speaking")
-                                waveView?.setThinking(false)
-                                waveView?.setSpeaking(true)
-                                speakText(fullText)
-
-                                // Persist user voice prompt and Aura response to Chat History
-                                try {
-                                    val repo = com.aura.assistant.data.AuraChatRepository(ctx)
-                                    val sessions = repo.getAllSessions()
-                                    val sessId = sessions.firstOrNull()?.id ?: repo.createSession(if (command.length > 28) command.take(25) + "..." else command).id
-                                    val msgs = repo.getMessages(sessId)
-                                    msgs.add(ChatMessage(sessionId = sessId, role = com.aura.assistant.data.MessageRole.USER, text = command))
-                                    if (fullText.isNotBlank()) {
-                                        msgs.add(ChatMessage(sessionId = sessId, role = com.aura.assistant.data.MessageRole.ASSISTANT, text = fullText))
-                                    }
-                                    repo.saveMessages(sessId, msgs)
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Failed to save voice chat history: $e")
-                                }
-
-                                handler.postDelayed({ hide() }, 4000L)
-                            }
-                        }
-                        override fun onError(errorMessage: String) {
-                            handler.post {
-                                stateText?.text = "Done ✓"
-                                updateBackgroundColor("Idle")
-                                waveView?.reset()
-                                handler.postDelayed({ hide() }, 1200L)
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    private fun toggleFlashlight(ctx: Context, enable: Boolean) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val camManager = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
-                val camId = camManager?.cameraIdList?.firstOrNull()
-                if (camId != null) {
-                    camManager.setTorchMode(camId, enable)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Flashlight error", e)
-        }
-    }
-
-    private fun adjustVolume(ctx: Context, direction: Int) {
-        try {
-            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            am?.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
-        } catch (e: Exception) {
-            Log.w(TAG, "Volume error", e)
-        }
-    }
-
-    private fun launchApp(ctx: Context, appName: String) {
-        try {
-            val intent = com.aura.assistant.ai.IshaToolRegistry.resolveAppIntent(ctx, appName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                ctx.startActivity(intent)
-            } else {
-                // If package is unresolvable directly, use Accessibility service's intelligent home search fallback
-                val a11y = com.aura.assistant.AuraAccessibilityService.instance
-                if (a11y != null) {
-                    a11y.armAppSearchAndLaunch(appName)
-                } else {
-                    Log.w(TAG, "Cannot launch app '$appName': not found and AccessibilityService not active")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Open app error for $appName", e)
-        }
-    }
-
-    private fun extractAppName(command: String): String {
-        // Simple extraction - in reality would use NLP
-        val apps = listOf("whatsapp", "gmail", "youtube", "chrome", "settings", "spotify", "instagram", "telegram")
-        val lower = command.lowercase()
-        for (app in apps) {
-            if (lower.contains(app)) return app.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-        }
-        return ""
-    }
-
-    private fun requestDucking(ctx: Context) {
-        try {
-            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            audioManager = am
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                        .setAudioAttributes(
-                            AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                    .build()
-                        )
-                        .setOnAudioFocusChangeListener { /* no-op */ }
-                        .build()
-                audioFocusRequest = req
-                am.requestAudioFocus(req)
-            } else {
-                @Suppress("DEPRECATION")
-                am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun abandonDucking() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager?.abandonAudioFocus(null)
-            }
-            audioFocusRequest = null
-            audioManager = null
-        } catch (_: Exception) {}
-    }
 
     private fun resetDismissTimer(durationMs: Long = IDLE_DISMISS_MS) {
         handler.removeCallbacks(dismissRunnable)

@@ -208,14 +208,6 @@ fun IshaTopBar(
     )
 }
 
-@Composable
-fun ChatGPTTopBar(
-    onOpenDrawer: () -> Unit,
-    onNewChat: () -> Unit,
-    modifier: Modifier = Modifier,
-    onActionPositioned: ((Offset) -> Unit)? = null
-) = IshaTopBar(onOpenDrawer, onNewChat, modifier, onActionPositioned)
-
 // ── 2. ISHA Navigation Drawer ─────────────────────────────────────────────────
 @Composable
 fun IshaDrawer(
@@ -579,35 +571,6 @@ fun IshaDrawer(
 }
 
 @Composable
-fun ChatGPTDrawer(
-    sessions: List<ChatSession>,
-    activeSessionId: String,
-    onSelectSession: (String) -> Unit,
-    onNewChat: () -> Unit,
-    onRenameSession: (String, String) -> Unit,
-    onDeleteSession: (String) -> Unit,
-    onClearAllChats: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenApiKeyEntry: () -> Unit = {},
-    userProfile: UserProfile = UserProfile(),
-    onLogout: () -> Unit = {},
-    modifier: Modifier = Modifier
-) = IshaDrawer(
-    sessions = sessions,
-    activeSessionId = activeSessionId,
-    onSelectSession = onSelectSession,
-    onNewChat = onNewChat,
-    onRenameSession = onRenameSession,
-    onDeleteSession = onDeleteSession,
-    onClearAllChats = onClearAllChats,
-    onOpenSettings = onOpenSettings,
-    onOpenApiKeyEntry = onOpenApiKeyEntry,
-    userProfile = userProfile,
-    onLogout = onLogout,
-    modifier = modifier
-)
-
-@Composable
 private fun DrawerSectionHeader(title: String) {
     Text(
         text = title,
@@ -618,49 +581,6 @@ private fun DrawerSectionHeader(title: String) {
         ),
         modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp)
     )
-}
-
-@Composable
-private fun DrawerFooterItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    subtitle: String,
-    iconTint: Color,
-    onClick: () -> Unit
-) {
-    Surface(
-        color = Color.Transparent,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(iconTint.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(16.dp))
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = label,
-                    style = AuraTypography.titleMedium.copy(color = ChatGptTextPrimary, fontSize = 13.sp)
-                )
-                Text(
-                    text = subtitle,
-                    style = AuraTypography.bodyMedium.copy(color = ChatGptTextMuted, fontSize = 10.sp)
-                )
-            }
-        }
-    }
 }
 
 
@@ -777,9 +697,6 @@ fun IshaThinkingIndicator(modifier: Modifier = Modifier) {
         }
     }
 }
-
-@Composable
-fun ChatGPTThinkingIndicator(modifier: Modifier = Modifier) = IshaThinkingIndicator(modifier)
 
 @Composable
 fun StreamingCursor(modifier: Modifier = Modifier) {
@@ -1204,7 +1121,7 @@ fun ChatMessageItem(
                 .padding(vertical = 8.dp)
         ) {
             if (message.isStreaming && message.text.isBlank()) {
-                ChatGPTThinkingIndicator()
+                IshaThinkingIndicator()
             } else {
                 SelectionContainer {
                     RenderMarkdownText(text = message.text, textScale = textScale)
@@ -1567,205 +1484,6 @@ private fun CodeBlockCard(code: String, onCopy: () -> Unit) {
     }
 }
 
-// ── 4. ISHA Neural Lotus AI Animation ─────────────────────────────────────────
-@Composable
-fun IshaNeuralLotus(
-    modifier: Modifier = Modifier,
-    lotusSize: Dp = 150.dp
-) {
-    val infiniteTransition = rememberInfiniteTransition(label = "NeuralLotusInfinite")
-
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(14000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "lotusRotation"
-    )
-
-    val breatheScale by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "lotusBreathe"
-    )
-
-    val corePulse by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.22f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "corePulse"
-    )
-
-    val auraAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "auraAlpha"
-    )
-
-    Box(
-        modifier = modifier.size(lotusSize),
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val cx = this.size.width / 2f
-            val cy = this.size.height / 2f
-            val maxR = minOf(cx, cy)
-            val isCompact = lotusSize < 40.dp
-
-            // Ambient background glow (only on large displays; disabled in compact icon mode to prevent blur)
-            if (!isCompact) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            ChatGptAccentGreen.copy(alpha = 0.28f * auraAlpha),
-                            ChatGptAccentCyan.copy(alpha = 0.12f * auraAlpha),
-                            Color.Transparent
-                        ),
-                        center = Offset(cx, cy),
-                        radius = maxR * 0.95f
-                    ),
-                    center = Offset(cx, cy),
-                    radius = maxR * 0.95f
-                )
-            }
-
-            // Dynamic stroke widths scaled to icon size
-            val primaryStrokePx = if (isCompact) (maxR * 0.11f).coerceIn(1.4f, 2.6f) else 2.2f.dp.toPx()
-            val subStrokePx = if (isCompact) (maxR * 0.08f).coerceIn(1.0f, 2.0f) else 1.5f.dp.toPx()
-            val spineStrokePx = if (isCompact) (maxR * 0.07f).coerceIn(1.0f, 1.8f) else 1.2f.dp.toPx()
-
-            // Helper to draw a single petal
-            fun drawPetal(angleDeg: Float, scale: Float, alpha: Float, isPrimary: Boolean) {
-                rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
-                    val len = maxR * (if (isCompact) 0.78f else 0.72f) * scale
-                    val w = maxR * 0.38f * scale
-
-                    val petalPath = Path().apply {
-                        moveTo(cx, cy)
-                        cubicTo(
-                            cx - w, cy - len * 0.45f,
-                            cx - w * 0.7f, cy - len * 0.9f,
-                            cx, cy - len
-                        )
-                        cubicTo(
-                            cx + w * 0.7f, cy - len * 0.9f,
-                            cx + w, cy - len * 0.45f,
-                            cx, cy
-                        )
-                        close()
-                    }
-
-                    // Petal Gradient Fill — high contrast & vivid in compact mode
-                    drawPath(
-                        path = petalPath,
-                        brush = Brush.verticalGradient(
-                            colors = if (isPrimary) {
-                                if (isCompact) {
-                                    listOf(
-                                        Color(0xFF00E5FF).copy(alpha = 0.60f),
-                                        Color(0xFF10B981).copy(alpha = 0.85f),
-                                        Color(0xFF00E5FF).copy(alpha = 0.95f)
-                                    )
-                                } else {
-                                    listOf(
-                                        ChatGptAccentCyan.copy(alpha = 0.18f * alpha),
-                                        ChatGptAccentGreen.copy(alpha = 0.45f * alpha),
-                                        ChatGptAccentCyan.copy(alpha = 0.85f * alpha)
-                                    )
-                                }
-                            } else {
-                                if (isCompact) {
-                                    listOf(
-                                        Color(0xFF10B981).copy(alpha = 0.45f),
-                                        Color(0xFF00E5FF).copy(alpha = 0.70f)
-                                    )
-                                } else {
-                                    listOf(
-                                        ChatGptAccentGreen.copy(alpha = 0.12f * alpha),
-                                        ChatGptAccentCyan.copy(alpha = 0.32f * alpha)
-                                    )
-                                }
-                            },
-                            startY = cy,
-                            endY = cy - len
-                        )
-                    )
-
-                    // Luminous Petal Outline — crisp & razor sharp
-                    drawPath(
-                        path = petalPath,
-                        color = if (isPrimary) Color(0xFF00E5FF) else Color(0xFF10B981).copy(alpha = 0.9f),
-                        style = Stroke(width = if (isPrimary) primaryStrokePx else subStrokePx)
-                    )
-
-                    // Center luminous spine
-                    if (isPrimary) {
-                        drawLine(
-                            color = Color.White.copy(alpha = if (isCompact) 0.95f else 0.65f * alpha),
-                            start = Offset(cx, cy - (if (isCompact) 1f else 8f)),
-                            end = Offset(cx, cy - len * 0.85f),
-                            strokeWidth = spineStrokePx
-                        )
-                    }
-                }
-            }
-
-            // Draw 3 Primary Petals (120° apart, clockwise rotating)
-            for (i in 0..2) {
-                val angle = (i * 120f) + rotation
-                drawPetal(angleDeg = angle, scale = breatheScale, alpha = 1.0f, isPrimary = true)
-            }
-
-            // Draw 3 Ethereal Sub-Petals (60° offset, counter-rotating at half speed)
-            for (i in 0..2) {
-                val angle = (i * 120f) + 60f - (rotation * 0.5f)
-                drawPetal(angleDeg = angle, scale = breatheScale * 0.72f, alpha = 0.45f, isPrimary = false)
-            }
-
-            // Central Radiant Core Spark — proportional radius so it never blows out small sizes!
-            val coreR = if (isCompact) {
-                (maxR * 0.22f) * corePulse
-            } else {
-                14f.dp.toPx() * corePulse
-            }
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color.White,
-                        Color(0xFF00E5FF).copy(alpha = 0.95f),
-                        Color(0xFF10B981).copy(alpha = 0.55f),
-                        Color.Transparent
-                    ),
-                    center = Offset(cx, cy),
-                    radius = coreR
-                ),
-                center = Offset(cx, cy),
-                radius = coreR
-            )
-
-            // Sharp pinpoint white diamond center for crisp icon definition
-            drawCircle(
-                color = Color.White,
-                radius = (maxR * (if (isCompact) 0.10f else 0.05f)).coerceAtLeast(1.5f),
-                center = Offset(cx, cy)
-            )
-        }
-    }
-}
 
 // ── 5. Ultra-Clean Minimal Empty State (ChatGPT / Gemini Style) ───────────────
 @Composable
@@ -1814,12 +1532,6 @@ fun IshaEmptyState(
         )
     }
 }
-
-@Composable
-fun ChatGPTEmptyState(
-    onPromptClick: (String) -> Unit = {},
-    modifier: Modifier = Modifier
-) = IshaEmptyState(onPromptClick, modifier)
 
 // ── 5. ChatGPT Capsule Bottom Input Bar ───────────────────────────────────────
 // ── Thumbnail Image Loader ──────────────────────────────────────────────────
@@ -2077,30 +1789,6 @@ fun IshaBottomBar(
     }
 }
 
-@Composable
-fun ChatGPTBottomBar(
-    onSendMessage: (String) -> Unit,
-    onVoiceClick: () -> Unit,
-    onStopGenerating: () -> Unit,
-    onPlusClick: () -> Unit,
-    isGenerating: Boolean,
-    attachedMedia: com.aura.assistant.ui.contract.AttachedMedia? = null,
-    onClearAttachment: () -> Unit = {},
-    initialText: String = "",
-    onTextConsumed: () -> Unit = {},
-    modifier: Modifier = Modifier
-) = IshaBottomBar(
-    onSendMessage = onSendMessage,
-    onVoiceClick = onVoiceClick,
-    onStopGenerating = onStopGenerating,
-    onPlusClick = onPlusClick,
-    isGenerating = isGenerating,
-    attachedMedia = attachedMedia,
-    onClearAttachment = onClearAttachment,
-    initialText = initialText,
-    onTextConsumed = onTextConsumed,
-    modifier = modifier
-)
 
 // ── 6. Attachment & Device Tools Bottom Sheet ─────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2307,18 +1995,3 @@ fun AuraAttachmentBottomSheet(
     }
 }
 
-// Backward compatibility wrapper
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun QuickToolsBottomSheet(
-    onToolSelected: (prompt: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AuraAttachmentBottomSheet(
-        onTakePhoto = {},
-        onPickGallery = {},
-        onPickDocument = {},
-        onToolSelected = onToolSelected,
-        onDismiss = onDismiss
-    )
-}

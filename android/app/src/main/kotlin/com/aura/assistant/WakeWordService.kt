@@ -702,9 +702,6 @@ class WakeWordService : Service(), SensorEventListener {
         }
     }
 
-    /** Legacy entry-point kept for compatibility; now routes to correct engine. */
-    private fun initWakeWordEngine() = initWakeWordEngineFallback()
-
     private fun startWakeEngine() {
         if (!wakeEnabled || isPaused || isTtsSpeaking) return
         if (!MicOwnershipManager.requestOwnership(MicOwner.WAKE_WORD)) {

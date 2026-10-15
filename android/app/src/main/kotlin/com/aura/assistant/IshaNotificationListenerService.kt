@@ -477,11 +477,6 @@ open class IshaNotificationListenerService : NotificationListenerService() {
         }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
     }
-
-    private fun extractOtp(text: String): String {
-        val match = Regex("\\b(\\d{4,8})\\b").find(text)
-        return match?.value?.let { it.chunked(1).joinToString(" ") } ?: "check your notification"
-    }
 }
 
 /** Backward compatibility subclass for AuraNotificationListenerService */

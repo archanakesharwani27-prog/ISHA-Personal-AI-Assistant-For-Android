@@ -843,22 +843,6 @@ class GeminiChatService(private val context: Context) {
         return reasoningKeywords.any { lower.contains(it) }
     }
 
-    private fun isDeviceActionIntent(prompt: String): Boolean {
-        val lower = prompt.lowercase().trim()
-        val actionKeywords = listOf(
-            "khol", "open", "band", "close", "on kar", "off kar", "toggle", "chalu",
-            "bhejo", "send", "call", "phone", "dial", "lagao", "set", "alarm",
-            "timer", "volume", "brightness", "torch", "flashlight", "wifi",
-            "bluetooth", "hotspot", "screenshot", "camera", "photo", "whatsapp",
-            "message", "sms", "navigate", "location", "battery", "storage",
-            "clean", "clear", "type", "likho", "tap", "click", "search", "dhoondo",
-            "play", "chalao", "sunao", "youtube", "music", "song", "insta", "instagram",
-            "dialer", "contact", "read", "screen", "padh", "padho", "kya likha",
-            "dekh", "dekho", "dekho screen", "batao battery", "percentage"
-        )
-        return actionKeywords.any { lower.contains(it) }
-    }
-
     private fun getDynamicTemperature(prompt: String): Double {
         val lower = prompt.lowercase()
         val isActionIntent = listOf(
