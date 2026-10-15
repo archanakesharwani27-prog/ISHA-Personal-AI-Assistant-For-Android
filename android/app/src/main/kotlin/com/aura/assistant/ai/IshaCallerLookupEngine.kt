@@ -187,13 +187,37 @@ object IshaCallerLookupEngine {
     }
 
     /**
+     * Instantly resolves caller carrier, circle, and TRAI regulatory status without any network call (0ms).
+     */
+    fun getInstantProfile(rawNumber: String): CallerIdentityResult? {
+        val clean = cleanPhoneNumber(rawNumber)
+        if (clean.isBlank()) return null
+        lookupCache[clean]?.let { return it }
+        val trai = checkTraiPrefix(clean)
+        if (trai != null) return trai
+        val carrierCircle = inferCarrierAndCircle(clean)
+        return CallerIdentityResult(
+            rawNumber = rawNumber,
+            cleanDigits = clean,
+            formattedDisplay = formatNumberDisplay(clean),
+            source = "carrier_inference",
+            displayName = null,
+            isSpam = false,
+            spamRisk = "None",
+            operatorAndCircle = carrierCircle,
+            details = "Mobile line from $carrierCircle.",
+            recommendation = "Normal unknown caller."
+        )
+    }
+
+    /**
      * Detects official TRAI allocated regulatory prefixes in India:
      * - 140 series: Mandated strictly for Commercial / Telemarketing calls.
      * - 160 series: Mandated strictly for Transactional / Service calls (Banks, OTPs, Delivery).
      * - 1800 series: Toll-Free.
      * - 1860 series: Commercial Local Toll.
      */
-    private fun checkTraiPrefix(clean: String): CallerIdentityResult? {
+    fun checkTraiPrefix(clean: String): CallerIdentityResult? {
         val formatted = formatNumberDisplay(clean)
         return when {
             clean.startsWith("140") -> {
@@ -248,7 +272,7 @@ object IshaCallerLookupEngine {
     /**
      * Infers telecom operator and telecom circle based on standard Indian National Numbering Plan (NNP).
      */
-    private fun inferCarrierAndCircle(clean: String): String {
+    fun inferCarrierAndCircle(clean: String): String {
         if (clean.length < 4) return "Indian Cellular Network"
         val prefix4 = clean.take(4)
         val prefix2 = clean.take(2)

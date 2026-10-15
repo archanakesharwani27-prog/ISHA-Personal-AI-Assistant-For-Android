@@ -364,12 +364,26 @@ object IshaCallAnnouncerManager {
             return
         }
 
-        val speechText = if (isOldNumber) {
-            "Incoming call from $resolvedName, purana number, identified by Isha."
-        } else if (resolvedName.isNotBlank() && resolvedName != "Unknown Caller") {
-            "Incoming call from $resolvedName, identified by Isha."
-        } else {
-            "Incoming call from an unknown number, identified by Isha."
+        val speechText = when {
+            isOldNumber -> {
+                "Incoming call from $resolvedName, purana number, identified by Isha."
+            }
+            resolvedName.startsWith("Spam", ignoreCase = true) -> {
+                val carrier = IshaCallerLookupEngine.inferCarrierAndCircle(currentCallerNumber)
+                "Boss, suspected $resolvedName, SIM $carrier se. Say answer or decline."
+            }
+            resolvedName.isNotBlank() && resolvedName != "Unknown Caller" -> {
+                "Incoming call from $resolvedName, identified by Isha."
+            }
+            else -> {
+                val instantProfile = IshaCallerLookupEngine.getInstantProfile(currentCallerNumber)
+                val carrierInfo = instantProfile?.operatorAndCircle
+                if (carrierInfo != null && !carrierInfo.contains("National", ignoreCase = true)) {
+                    "Boss, incoming unknown call, SIM $carrierInfo se hai. Say answer or decline."
+                } else {
+                    "Incoming call from an unknown number, identified by Isha. Say answer or decline."
+                }
+            }
         }
 
         if (nativeTts == null) init(context)
