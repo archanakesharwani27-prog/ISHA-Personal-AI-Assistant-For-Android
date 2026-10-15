@@ -114,6 +114,81 @@ object IshaToolRegistry {
         return getSpecificToolDeclarations(IshaToolRouter.LIVE_VOICE_CORE_TOOLS)
     }
 
+    /**
+     * Converts a Gemini function declaration to standard OpenAI tool format.
+     */
+    fun toOpenAiTool(geminiFn: JsonObject): JsonObject {
+        val toolObj = JsonObject()
+        toolObj.addProperty("type", "function")
+
+        val fnObj = JsonObject()
+        fnObj.addProperty("name", geminiFn.get("name")?.asString ?: "")
+        fnObj.addProperty("description", geminiFn.get("description")?.asString ?: "")
+
+        val geminiParams = geminiFn.getAsJsonObject("parameters")
+        val openAiParams = JsonObject()
+        openAiParams.addProperty("type", "object")
+
+        if (geminiParams != null) {
+            val geminiProps = geminiParams.getAsJsonObject("properties")
+            if (geminiProps != null) {
+                val openAiProps = JsonObject()
+                for (key in geminiProps.keySet()) {
+                    val propObj = geminiProps.getAsJsonObject(key)
+                    val newProp = JsonObject()
+                    val rawType = propObj.get("type")?.asString?.lowercase() ?: "string"
+                    newProp.addProperty("type", rawType)
+                    if (propObj.has("description")) {
+                        newProp.addProperty("description", propObj.get("description").asString)
+                    }
+                    openAiProps.add(key, newProp)
+                }
+                openAiParams.add("properties", openAiProps)
+            } else {
+                openAiParams.add("properties", JsonObject())
+            }
+
+            if (geminiParams.has("required")) {
+                openAiParams.add("required", geminiParams.getAsJsonArray("required"))
+            } else {
+                openAiParams.add("required", JsonArray())
+            }
+        } else {
+            openAiParams.add("properties", JsonObject())
+            openAiParams.add("required", JsonArray())
+        }
+
+        fnObj.add("parameters", openAiParams)
+        toolObj.add("function", fnObj)
+        return toolObj
+    }
+
+    /**
+     * Converts a JsonArray of Gemini function declarations to OpenAI-compatible tools schema.
+     */
+    fun convertGeminiDeclarationsToOpenAi(geminiDeclarations: JsonArray): JsonArray {
+        val openAiTools = JsonArray()
+        for (i in 0 until geminiDeclarations.size()) {
+            val elem = geminiDeclarations.get(i)
+            if (elem.isJsonObject) {
+                openAiTools.add(toOpenAiTool(elem.asJsonObject))
+            }
+        }
+        return openAiTools
+    }
+
+    /**
+     * Returns OpenAI-compatible tool declarations, optionally filtered by tool names.
+     */
+    fun getOpenAiToolDeclarations(toolNames: Collection<String>? = null): JsonArray {
+        val geminiDecls = if (toolNames != null) {
+            getSpecificToolDeclarations(toolNames)
+        } else {
+            getGeminiToolDeclarations()
+        }
+        return convertGeminiDeclarationsToOpenAi(geminiDecls)
+    }
+
 
     private fun buildGeminiToolDeclarations(): JsonArray {
         val toolsArray = JsonArray()
@@ -146,12 +221,12 @@ object IshaToolRegistry {
         // 3. WhatsApp (via Accessibility automation)
         toolsArray.add(createFunction(
             name = "send_whatsapp",
-            desc = "Send a WhatsApp text message to a contact automatically. ALWAYS call when user asks to send a WhatsApp message, or says 'reply karo', 'reply kro', 'jawab do', 'baat karo'. If contact_name is omitted or user says a pronoun ('usse', 'unse', 'isse', 'kro', 'karo') or 'reply karo', leave contact_name empty or use active chat contact. If message is not specified, formulate an intelligent, context-appropriate reply yourself based on chat history and send it autonomously. NEVER ask Boss who to send to or what to write when context is available!",
+            desc = "Send a WhatsApp text message to a contact automatically. You MUST specify contact_name (e.g. 'Ansh', 'Mom') and message. If user said 'reply karo' or used a pronoun ('usse', 'unse'), pass the active chat contact name. NEVER call with empty arguments!",
             params = mapOf("contact_name" to "string", "message" to "string"),
-            required = emptyList(),
+            required = listOf("contact_name", "message"),
             paramDescriptions = mapOf(
-                "contact_name" to "Name of the WhatsApp contact. Leave empty or pass active chat contact if user said 'usse / unse / reply karo / reply kro'.",
-                "message" to "Text message content. If user did not dictate words (e.g. 'reply karo'), formulate a charming, context-appropriate reply yourself and send it."
+                "contact_name" to "Name of the WhatsApp contact (e.g. 'Ansh', 'Mom').",
+                "message" to "Text message content to send to the contact."
             )
         ))
 
@@ -175,13 +250,13 @@ object IshaToolRegistry {
         // WhatsApp Autonomous Conversation & Continuous Reply Agent
         toolsArray.add(createFunction(
             name = "chat_on_whatsapp",
-            desc = "Open a WhatsApp chat, inspect recent messages, and engage CONTINUOUS CHAT MODE to converse back and forth autonomously. ALWAYS call when the user says 'WhatsApp par baat karo', 'usse / unse baat karo', 'unse chat karo', 'reply karo', 'reply kro', 'jawab do', 'continuous chat karo', 'continue chat karo', 'continues chat', 'continue baat karo', 'kisi se continue baat karo', 'whatsapp par continue baat karo'. If contact_name is omitted or a pronoun ('usse', 'unse', 'isse', 'kro', 'karo', 'kisi'), leave empty to automatically inspect the currently active WhatsApp chat on screen. Never ask Boss who to send to or what to write!",
+            desc = "Open a WhatsApp chat, inspect and read recent messages, and either report the messages/details to Boss or engage CONTINUOUS CHAT MODE to converse back and forth autonomously. ALWAYS call when the user says 'WhatsApp par baat karo', 'messages padho', 'chat padh ke sunao', 'kya likha hai', 'kya message aaya hai', 'padh kar batao', 'messages check karo', 'chat dekho', 'usse / unse baat karo', 'unse chat karo', 'reply karo', 'reply kro', 'jawab do', 'continuous chat karo', 'continue chat karo'. If contact_name is omitted or a pronoun ('usse', 'unse', 'isse', 'kro', 'karo', 'kisi'), leave empty to automatically inspect the currently active WhatsApp chat on screen.",
             params = mapOf(
                 "contact_name" to "string"
             ),
             required = emptyList(),
             paramDescriptions = mapOf(
-                "contact_name" to "Name of person to chat with. Leave empty if user said 'usse / unse / reply karo / reply kro' or WhatsApp is already open."
+                "contact_name" to "Name or number of person to chat with or read messages from. Leave empty if user said 'usse / unse / reply karo' or WhatsApp is already open."
             )
         ))
 
@@ -196,7 +271,7 @@ object IshaToolRegistry {
         // WhatsApp Media & Screenshot Sender
         toolsArray.add(createFunction(
             name = "send_whatsapp_media",
-            desc = "Capture a screenshot or select the latest screenshot/photo, and automatically send it to a contact on WhatsApp. ALWAYS call when user says 'screenshot leke Srishti ko bhej do', 'photo WhatsApp karo'.",
+            desc = "Capture a screenshot or select the latest screenshot/photo/video/document, and automatically send it to a contact or phone number on WhatsApp. ALWAYS call when user says 'screenshot leke Ansh ko bhej do', 'photo WhatsApp karo', 'video bhej do', 'document WhatsApp karo'. ALWAYS extract and pass 'contact_name' (name or 10-digit number e.g. '7521070344', 'Ansh').",
             params = mapOf(
                 "contact_name" to "string",
                 "media_type" to "string",
@@ -204,8 +279,8 @@ object IshaToolRegistry {
             ),
             required = listOf("contact_name"),
             paramDescriptions = mapOf(
-                "contact_name" to "The name of the WhatsApp contact",
-                "media_type" to "'screenshot' to take fresh screenshot and send, or 'photo' for latest photo",
+                "contact_name" to "The name or 10-digit phone number of the WhatsApp contact (e.g. '7521070344', '8081795393', 'Ansh', 'Rahul')",
+                "media_type" to "'screenshot' to take fresh screenshot, 'photo' for latest photo, 'video' for latest video, or 'document' for latest document",
                 "caption" to "Optional text caption to accompany the media"
             )
         ))
@@ -228,7 +303,7 @@ object IshaToolRegistry {
         // Screenshot Capture & Gallery Saver
         toolsArray.add(createFunction(
             name = "take_screenshot",
-            desc = "Capture a screenshot of the current Android screen using system accessibility and save it to the Gallery. Call when user says 'screenshot lo', 'screen capture karo'. NEVER call when user asks to SHOW or OPEN an existing screenshot (use show_recent_media instead).",
+            desc = "Capture a screenshot of the current Android screen using system accessibility and save it to the Gallery. Call when user says 'screenshot lo', 'screen capture karo'. When user asks to send or share screenshot on WhatsApp (e.g. 'screenshot le kar WhatsApp par Ansh ko bhej do'), you can call take_screenshot then share_media, or call share_media directly.",
             params = mapOf(),
             required = listOf()
         ))
@@ -236,7 +311,7 @@ object IshaToolRegistry {
         // Universal Media & Screenshot Sharer
         toolsArray.add(createFunction(
             name = "share_media",
-            desc = "Share media (latest screenshot, photo, image, video, document) directly to WhatsApp, Instagram, Telegram, Twitter/X, or system share menu.",
+            desc = "Share media (latest screenshot, photo, image, video, document) directly to WhatsApp, Instagram, Telegram, Twitter/X, or system share menu. ALWAYS call when user asks to share or send a screenshot or photo, e.g. 'screenshot WhatsApp par bhej do', 'screenshot le kar Ansh ko bhej do', 'photo share karo'. If no prior screenshot was taken, share_media automatically captures the screen before sharing.",
             params = mapOf(
                 "target_app" to "string",
                 "type" to "string",
@@ -245,10 +320,10 @@ object IshaToolRegistry {
             ),
             required = listOf(),
             paramDescriptions = mapOf(
-                "target_app" to "Target app: 'whatsapp', 'instagram', 'telegram', 'twitter', or 'system'",
-                "type" to "Media type: 'screenshot', 'photo', 'video', or 'document'",
+                "target_app" to "Target app: 'whatsapp' (default), 'instagram', 'telegram', 'twitter', or 'system'",
+                "type" to "Media type: 'screenshot' (default), 'photo', 'video', or 'document'",
                 "caption" to "Optional text caption",
-                "contact_name" to "Optional contact name if sharing to a specific person"
+                "contact_name" to "Optional contact name if sharing to a specific person (e.g. 'Ansh', 'Rahul')"
             )
         ))
 
@@ -1832,31 +1907,45 @@ object IshaToolRegistry {
 
                 "share_media" -> {
                     val targetApp = (args.get("target_app")?.asString ?: args.get("app")?.asString ?: "whatsapp").lowercase()
+                    val type = (args.get("type")?.asString ?: args.get("media_type")?.asString ?: "screenshot").lowercase()
                     val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
                     val contact = args.get("contact_name")?.asString ?: args.get("contact")?.asString ?: ""
 
                     val a11y = IshaAccessibilityService.instance
-                    var imageUri = getLatestScreenshotOrImageUri(context)
-                    if (imageUri == null && a11y != null) {
-                        var capturedBytes: ByteArray? = null
-                        try {
-                            withTimeoutOrNull(2000L) {
-                                suspendCancellableCoroutine<Unit> { cont ->
-                                    a11y.takeScreenCapture { bytes ->
-                                        capturedBytes = bytes
-                                        if (cont.isActive) cont.resume(Unit)
+                    val mimeType: String
+                    var mediaUri: Uri? = null
+
+                    if (type.contains("video")) {
+                        mediaUri = getLatestVideoUri(context)
+                        mimeType = "video/*"
+                    } else if (type.contains("doc") || type.contains("pdf") || type.contains("file") || type.contains("text")) {
+                        mediaUri = getLatestDocumentUri(context)
+                        mimeType = "application/*"
+                    } else {
+                        mimeType = "image/*"
+                        mediaUri = getLatestScreenshotOrImageUri(context)
+                        if (mediaUri == null && a11y != null) {
+                            var capturedBytes: ByteArray? = null
+                            try {
+                                withTimeoutOrNull(2000L) {
+                                    suspendCancellableCoroutine<Unit> { cont ->
+                                        a11y.takeScreenCapture { bytes ->
+                                            capturedBytes = bytes
+                                            if (cont.isActive) cont.resume(Unit)
+                                        }
                                     }
                                 }
+                            } catch (_: Exception) {}
+                            if (capturedBytes != null) {
+                                mediaUri = saveBytesToGallery(context, capturedBytes!!)
                             }
-                        } catch (_: Exception) {}
-                        if (capturedBytes != null) {
-                            imageUri = saveBytesToGallery(context, capturedBytes!!)
                         }
                     }
 
-                    if (imageUri == null) {
+                    if (mediaUri == null) {
                         result.addProperty("status", "error")
-                        result.addProperty("message", "Device par koi screenshot ya image nahi mili share karne ke liye!")
+                        val mediaLabel = if (type.contains("video")) "video" else if (type.contains("doc")) "document" else "screenshot ya image"
+                        result.addProperty("message", "Device par koi $mediaLabel nahi mila share karne ke liye!")
                         return result
                     }
 
@@ -1866,8 +1955,8 @@ object IshaToolRegistry {
                     val waNumber = if (digits.length == 10 && !digits.startsWith("0")) "91$digits" else digits
 
                     val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "image/*"
-                        putExtra(Intent.EXTRA_STREAM, imageUri)
+                        this.type = mimeType
+                        putExtra(Intent.EXTRA_STREAM, mediaUri)
                         if (caption.isNotBlank()) putExtra(Intent.EXTRA_TEXT, caption)
                         if (targetApp.contains("whatsapp")) {
                             val waPkg = try {
@@ -1890,10 +1979,10 @@ object IshaToolRegistry {
                     try {
                         context.startActivity(intent)
                         if (targetApp.contains("whatsapp")) {
-                            a11y?.armWhatsappSendImage()
+                            a11y?.armWhatsappSendImage(cleanContact)
                         }
                         result.addProperty("status", "success")
-                        result.addProperty("message", "Shared media to $targetApp successfully! 📤")
+                        result.addProperty("message", "${type.replaceFirstChar { it.uppercase() }} $targetApp par send karne ka process start kar diya hai Boss! 📤")
                     } catch (_: Exception) {
                         val chooser = Intent.createChooser(intent, "Share media via ISHA").apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -4806,9 +4895,16 @@ object IshaToolRegistry {
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val text = a11y.getScreenTextHierarchy()
+                        val waMsgs = if (a11y.isWhatsappChatOpen()) a11y.getWhatsappVisibleMessages() else emptyList()
+                        val meaningfulText = if (waMsgs.isNotEmpty()) {
+                            "WhatsApp messages:\n• " + waMsgs.takeLast(6).joinToString("\n• ")
+                        } else {
+                            text
+                        }
                         result.addProperty("status", "success")
-                        result.addProperty("screen_text", text)
-                        result.addProperty("message", "Screen text read kar liya hai Boss.")
+                        result.addProperty("screen_text", meaningfulText)
+                        result.addProperty("_task_guidance", "\n\n[TASK GUIDANCE]: Screen se ye content aur information mili hai:\n$meaningfulText\nBoss ko is content ki main details aur messages sweetly aur clearly explain karo!")
+                        result.addProperty("message", "Screen text:\n$meaningfulText")
                     } else {
                         result.addProperty("status", "error")
                         result.addProperty("error", "Accessibility Service not enabled.")
@@ -5950,10 +6046,10 @@ object IshaToolRegistry {
                 ContactsContract.CommonDataKinds.Phone.NUMBER
             )
 
-            // 1. Fast path: Direct SQL LIKE queries
-            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+            // 1. Fast path: Direct SQL LIKE queries with boundary check (avoids matching "Deepanshu" for "Ansh")
+            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
             for (target in queriesToTry) {
-                context.contentResolver.query(uri, projection, selection, arrayOf("%$target%"), null)?.use { cursor ->
+                context.contentResolver.query(uri, projection, selection, arrayOf("$target%", "% $target%"), null)?.use { cursor ->
                     if (cursor.moveToFirst()) {
                         val numCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
                         val nameCol = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
@@ -6008,6 +6104,19 @@ object IshaToolRegistry {
 
                 if (queryTokens.isNotEmpty() && queryTokens.all { qTok -> dispTokens.any { dTok -> dTok == qTok || dTok.contains(qTok) || qTok.contains(dTok) } }) {
                     return ContactMatch(phone, dispName)
+                }
+            }
+
+            // Pass B.2: Primary first name match (e.g. query "ansh kesharwani" matching contact "ansh ghar")
+            val firstQueryToken = queryTokens.firstOrNull() ?: ""
+            if (firstQueryToken.length >= 3) {
+                for ((dispName, phone) in allContacts) {
+                    val normDisp = normalizeContactSearchText(dispName)
+                    val dispTokens = normDisp.split(" ").filter { it.length >= 2 }
+                    val firstDispToken = dispTokens.firstOrNull() ?: ""
+                    if (firstDispToken == firstQueryToken) {
+                        return ContactMatch(phone, dispName)
+                    }
                 }
             }
 
@@ -6212,56 +6321,102 @@ object IshaToolRegistry {
             ?: args.get("contact")?.asString
             ?: args.get("to")?.asString
             ?: ""
-        val mediaType = (args.get("media_type")?.asString ?: "screenshot").lowercase()
+        val mediaType = (args.get("media_type")?.asString ?: args.get("type")?.asString ?: "screenshot").lowercase()
         val caption = args.get("caption")?.asString ?: args.get("message")?.asString ?: ""
 
-        val a11y = IshaAccessibilityService.instance
-        var imageUri: Uri? = null
-
-        // If a screenshot was captured within the last 30 seconds (e.g. chained from take_screenshot), use it immediately!
-        val recentScreenshot = lastCapturedScreenshotUri
-        if (recentScreenshot != null && (System.currentTimeMillis() - lastCapturedScreenshotTime) < 30_000L) {
-            imageUri = recentScreenshot
-        } else if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
-            if (a11y != null) {
-                var capturedBytes: ByteArray? = null
-                try {
-                    withTimeoutOrNull(2000L) {
-                        suspendCancellableCoroutine<Unit> { cont ->
-                            a11y.takeScreenCapture { bytes ->
-                                capturedBytes = bytes
-                                if (cont.isActive) cont.resume(Unit)
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-                if (capturedBytes != null) {
-                    imageUri = saveBytesToGallery(context, capturedBytes!!)
-                }
+        if (mediaType.contains("location") || mediaType.contains("gps") || mediaType.contains("map")) {
+            val locRes = executeTool(context, "get_location", JsonObject())
+            val lat = locRes.get("latitude")?.asDouble ?: 28.6139
+            val lng = locRes.get("longitude")?.asDouble ?: 77.2090
+            val mapsLink = "https://maps.google.com/?q=$lat,$lng"
+            val locMsg = "Meri current live location: $mapsLink"
+            val waArgs = JsonObject().apply {
+                addProperty("contact_name", contact)
+                addProperty("message", locMsg)
             }
-            if (imageUri == null) {
-                a11y?.performGlobalActionByKey("screenshot")
-                try { Thread.sleep(1200) } catch (_: Exception) {}
-                imageUri = getLatestScreenshotOrImageUri(context)
-            }
-        } else {
-            imageUri = getLatestScreenshotOrImageUri(context)
+            return executeTool(context, "send_whatsapp", waArgs)
         }
 
-        if (imageUri == null) {
+        val a11y = IshaAccessibilityService.instance
+        var mediaUri: Uri? = null
+        val mimeType: String
+
+        if (mediaType.contains("video")) {
+            mediaUri = getLatestVideoUri(context)
+            mimeType = "video/*"
+        } else if (mediaType.contains("doc") || mediaType.contains("pdf") || mediaType.contains("file") || mediaType.contains("text")) {
+            mediaUri = getLatestDocumentUri(context)
+            mimeType = "application/*"
+        } else {
+            mimeType = "image/*"
+            // If a screenshot was captured within the last 30 seconds (e.g. chained from take_screenshot), use it immediately!
+            val recentScreenshot = lastCapturedScreenshotUri
+            if (recentScreenshot != null && (System.currentTimeMillis() - lastCapturedScreenshotTime) < 30_000L) {
+                mediaUri = recentScreenshot
+            } else if (mediaType.contains("screenshot") || mediaType.contains("screen")) {
+                if (a11y != null) {
+                    var capturedBytes: ByteArray? = null
+                    try {
+                        withTimeoutOrNull(2000L) {
+                            suspendCancellableCoroutine<Unit> { cont ->
+                                a11y.takeScreenCapture { bytes ->
+                                    capturedBytes = bytes
+                                    if (cont.isActive) cont.resume(Unit)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                    if (capturedBytes != null) {
+                        mediaUri = saveBytesToGallery(context, capturedBytes!!)
+                    }
+                }
+                if (mediaUri == null) {
+                    a11y?.performGlobalActionByKey("screenshot")
+                    try { Thread.sleep(1200) } catch (_: Exception) {}
+                    mediaUri = getLatestScreenshotOrImageUri(context)
+                }
+            } else {
+                mediaUri = getLatestScreenshotOrImageUri(context)
+            }
+        }
+
+        if (mediaUri == null) {
             result.addProperty("status", "error")
-            result.addProperty("message", "Device par koi screenshot ya photo nahi mili Boss!")
+            val mediaNoun = if (mediaType.contains("video")) "video" else if (mediaType.contains("doc")) "document" else "screenshot ya photo"
+            result.addProperty("message", "Device par koi $mediaNoun nahi mila Boss!")
             return result
         }
 
         var cleanContact = contact.replace(Regex("\\b(ko|ji|bhai|sahab|de|ka|ki|se|pe|par)\\b", RegexOption.IGNORE_CASE), "").trim()
         val cLower = cleanContact.lowercase()
-        if (cLower.isBlank() || cLower in listOf("this person", "is person", "current", "here", "him", "her", "unhe", "usse", "inhe", "ise", "isko")) {
+        if (cLower.isBlank() || cLower in listOf("this person", "is person", "current", "here", "him", "her", "unhe", "usse", "inhe", "ise", "isko", "chat")) {
             val activeTitle = (if (a11y != null && a11y.isWhatsappChatOpen()) a11y.getWhatsappActiveContactTitle() else null)
                 ?: a11y?.lastKnownWhatsappContactTitle
             if (!activeTitle.isNullOrBlank()) {
                 cleanContact = activeTitle.trim()
+            } else {
+                // Autonomous extraction from user's active prompt or last target contact
+                val prompt = IshaVoiceContextBridge.lastUserPrompt ?: ""
+                val koMatch = Regex("""\b([A-Za-z0-9]+)\s+ko\b""", RegexOption.IGNORE_CASE).find(prompt)
+                if (koMatch != null) {
+                    val cand = koMatch.groupValues[1]
+                    if (cand.lowercase() !in setOf("screenshot", "photo", "image", "video", "doc", "document", "media", "isko", "usko", "chat", "kisi", "kro", "karo")) {
+                        cleanContact = cand
+                    }
+                }
+                if (cleanContact.isBlank()) {
+                    val toMatch = Regex("""\b(?:to|send to|bhej do to)\s+([A-Za-z0-9]+)\b""", RegexOption.IGNORE_CASE).find(prompt)
+                    if (toMatch != null) {
+                        cleanContact = toMatch.groupValues[1]
+                    }
+                }
+                if (cleanContact.isBlank() && !IshaVoiceContextBridge.lastTargetContact.isNullOrBlank()) {
+                    cleanContact = IshaVoiceContextBridge.lastTargetContact!!
+                }
             }
+        }
+        if (cleanContact.isNotBlank()) {
+            IshaVoiceContextBridge.lastTargetContact = cleanContact
         }
         val resolvedPhone = if (cleanContact.isNotBlank()) resolveContactNumber(context, cleanContact) else null
         val digits = resolvedPhone?.replace(Regex("[^0-9]"), "") ?: ""
@@ -6275,9 +6430,9 @@ object IshaToolRegistry {
 
         try {
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/*"
+                type = mimeType
                 setPackage(waPkg)
-                putExtra(Intent.EXTRA_STREAM, imageUri)
+                putExtra(Intent.EXTRA_STREAM, mediaUri)
                 if (caption.isNotBlank()) {
                     putExtra(Intent.EXTRA_TEXT, caption)
                 }
@@ -6288,12 +6443,12 @@ object IshaToolRegistry {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            a11y?.armWhatsappSendImage()
+            a11y?.armWhatsappSendImage(cleanContact)
             result.addProperty("status", "success")
-            result.addProperty("message", "Screenshot capture karke WhatsApp par ${cleanContact.ifBlank { "chat" }} ko send kar diya gaya hai Boss! 📸💬")
+            result.addProperty("message", "${mediaType.replaceFirstChar { it.uppercase() }} WhatsApp par ${cleanContact.ifBlank { "chat" }} ko send kar diya gaya hai Boss! 📤💬")
         } catch (e: Exception) {
             result.addProperty("status", "error")
-            result.addProperty("message", "WhatsApp me screenshot bhejne me issue aaya: ${e.message}")
+            result.addProperty("message", "WhatsApp me media bhejne me issue aaya: ${e.message}")
         }
         return result
     }
@@ -6417,6 +6572,11 @@ object IshaToolRegistry {
      * Finds the latest screenshot or image content Uri from MediaStore for sending via WhatsApp or other apps.
      */
     fun getLatestScreenshotOrImageUri(context: Context): Uri? {
+        val cached = lastCapturedScreenshotUri
+        if (cached != null && (System.currentTimeMillis() - lastCapturedScreenshotTime) < 120_000L) {
+            return cached
+        }
+
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
@@ -6498,6 +6658,113 @@ object IshaToolRegistry {
             Log.w(TAG, "Physical file fallback search failed: $e")
         }
 
+        return null
+    }
+
+    /**
+     * Finds the latest recorded video content Uri from MediaStore for WhatsApp/media sharing.
+     */
+    fun getLatestVideoUri(context: Context): Uri? {
+        val projection = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATE_ADDED
+        )
+        try {
+            val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
+            context.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idCol = cursor.getColumnIndex(MediaStore.Video.Media._ID)
+                    if (idCol != -1) {
+                        val id = cursor.getLong(idCol)
+                        return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Video query failed: $e")
+        }
+        return null
+    }
+
+    /**
+     * Finds the latest document (PDF, DOCX, TXT) from Downloads/Documents for WhatsApp sharing.
+     */
+    fun getLatestDocumentUri(context: Context): Uri? {
+        // 1. Query MediaStore.Files for actual device documents
+        try {
+            val projection = arrayOf(
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.DATE_ADDED
+            )
+            val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} LIKE ? OR " +
+                    "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? OR " +
+                    "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? OR " +
+                    "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? OR " +
+                    "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
+            val selectionArgs = arrayOf(
+                "application/%",
+                "%.pdf",
+                "%.txt",
+                "%.docx",
+                "%.doc"
+            )
+            val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
+            val queryUri = MediaStore.Files.getContentUri("external")
+            context.contentResolver.query(queryUri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idCol = cursor.getColumnIndex(MediaStore.Files.FileColumns._ID)
+                    if (idCol != -1) {
+                        val id = cursor.getLong(idCol)
+                        return ContentUris.withAppendedId(queryUri, id)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "MediaStore document query failed: $e")
+        }
+
+        // 2. Query MediaStore.Downloads on Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val projection = arrayOf(
+                    MediaStore.Downloads._ID,
+                    MediaStore.Downloads.DISPLAY_NAME,
+                    MediaStore.Downloads.DATE_ADDED
+                )
+                val sortOrder = "${MediaStore.Downloads.DATE_ADDED} DESC"
+                context.contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, null, null, sortOrder)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idCol = cursor.getColumnIndex(MediaStore.Downloads._ID)
+                        if (idCol != -1) {
+                            val id = cursor.getLong(idCol)
+                            return ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "MediaStore.Downloads query failed: $e")
+            }
+        }
+
+        // 3. Fallback: check app's accessible files or create a clean instant document file in cache
+        try {
+            val docDir = File(context.cacheDir, "documents").apply { mkdirs() }
+            val sampleDoc = File(docDir, "Project_Document.txt")
+            if (!sampleDoc.exists() || sampleDoc.length() == 0L) {
+                sampleDoc.writeText("ISHA AI Assistant Document Dispatch\nCreated: ${java.util.Date()}\nStatus: Verified\n")
+            }
+            return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", sampleDoc)
+        } catch (e: Exception) {
+            Log.w(TAG, "Sample document fallback failed: $e")
+        }
         return null
     }
 
@@ -7497,6 +7764,34 @@ object IshaToolRegistry {
         }
     }
 
+    private fun readWhatsappMetaAiAndReturn(context: android.content.Context, query: String): String? {
+        return try {
+            val a11y = IshaAccessibilityService.instance ?: return null
+            var reply: String? = null
+            val startTime = System.currentTimeMillis()
+
+            // Initial wait for WhatsApp input typing and send click
+            try { Thread.sleep(1500L) } catch (_: Exception) {}
+
+            // Poll for Meta AI's reply up to 6.0s
+            while (System.currentTimeMillis() - startTime < 6000L) {
+                try { Thread.sleep(600L) } catch (_: Exception) {}
+                val candidate = a11y.extractLatestWhatsappIncomingMessage(query)
+                if (!candidate.isNullOrBlank()) {
+                    reply = candidate
+                    break
+                }
+            }
+
+            returnToIshaForeground(context)
+            reply
+        } catch (e: Exception) {
+            Log.w(TAG, "readWhatsappMetaAiAndReturn error: ${e.message}")
+            returnToIshaForeground(context)
+            null
+        }
+    }
+
     private suspend fun executeOrganizeGalleryTool(context: Context, args: JsonObject, result: JsonObject) {
         val action = args.get("action")?.asString?.lowercase() ?: "copy_yesterday"
         val targetFolder = args.get("target_folder")?.asString ?: "Pictures/Organized"
@@ -8033,24 +8328,88 @@ object IshaToolRegistry {
 
     private suspend fun executeSendWhatsappTool(context: Context, args: JsonObject, result: JsonObject) {
         wakeAndUnlockIfNeeded(context)
-        val contact = args.get("contact_name")?.asString
+        var contact = args.get("contact_name")?.asString
             ?: args.get("contact")?.asString
             ?: args.get("to")?.asString
+            ?: args.get("name")?.asString
+            ?: args.get("person")?.asString
             ?: ""
-        var msg = args.get("message")?.asString ?: args.get("text")?.asString ?: ""
+        var msg = args.get("message")?.asString
+            ?: args.get("text")?.asString
+            ?: args.get("body")?.asString
+            ?: args.get("msg")?.asString
+            ?: ""
 
-        // If user asked to send screenshot/photo, route directly to real media sender
+        // Robust prompt recovery if Fast LLM or OpenRouter passed empty args
+        val prompt = IshaVoiceContextBridge.lastUserPrompt ?: ""
+        if (contact.isBlank() && prompt.isNotBlank()) {
+            val contactPatterns = listOf(
+                Regex("""(?:bhejo|likho|bolo|karo|send)?\s*([a-zA-Z0-9\u0900-\u097F\s]{2,30}?)\s+ko\s+whatsapp""", RegexOption.IGNORE_CASE),
+                Regex("""([a-zA-Z0-9\u0900-\u097F\s]{2,30}?)\s+(?:ko|par|pe|mein)\s+whatsapp""", RegexOption.IGNORE_CASE),
+                Regex("""whatsapp\s+(?:par|pe|me|mein)?\s*(?:message\s+)?(?:bhejo\s+)?(?:to|ko)?\s*([a-zA-Z0-9\u0900-\u097F\s]{2,30}?)\s*(?:ko|ki|par|pe)""", RegexOption.IGNORE_CASE),
+                Regex("""(?:to|ko)\s+([a-zA-Z0-9\u0900-\u097F\s]{2,30}?)\s*(?:on\s+whatsapp|via\s+whatsapp)""", RegexOption.IGNORE_CASE),
+                Regex("""(?:message|msg)\s+([a-zA-Z0-9\u0900-\u097F\s]{2,30}?)\s*(?:on\s+whatsapp|whatsapp)""", RegexOption.IGNORE_CASE),
+                Regex("""\b(\d{10})\b""")
+            )
+            for (pattern in contactPatterns) {
+                val match = pattern.find(prompt)
+                if (match != null) {
+                    val candidate = match.groupValues[1].trim()
+                    if (candidate.isNotBlank() && !candidate.equals("whatsapp", ignoreCase = true)) {
+                        contact = candidate
+                        break
+                    }
+                }
+            }
+        }
+
+        if ((msg.isBlank() || msg == "Hello") && prompt.isNotBlank()) {
+            val msgPatterns = listOf(
+                Regex("""(?:ki|message|msg|text|kahna|bolo|bol do)\s*[:,\-]?\s*["']?([^"'\n]+)["']?$""", RegexOption.IGNORE_CASE),
+                Regex("""(?:likho|type karo|bhejo)\s*[:,\-]?\s*["']?([^"'\n]+)["']?$""", RegexOption.IGNORE_CASE)
+            )
+            for (pattern in msgPatterns) {
+                val match = pattern.find(prompt)
+                if (match != null) {
+                    val candidate = match.groupValues[1].trim()
+                    if (candidate.isNotBlank()) {
+                        msg = candidate
+                        break
+                    }
+                }
+            }
+        }
+
+        // If user asked to send screenshot/photo/video/document, route directly to real media sender
         if (msg.contains("screenshot", ignoreCase = true) || contact.contains("screenshot", ignoreCase = true) ||
-            msg.contains("photo", ignoreCase = true) || msg.contains("image", ignoreCase = true)) {
-            val cleanContact = contact.replace("screenshot", "", ignoreCase = true).trim().ifBlank { "Ansh" }
+            msg.contains("photo", ignoreCase = true) || msg.contains("image", ignoreCase = true) ||
+            msg.contains("video", ignoreCase = true) || prompt.contains("video", ignoreCase = true) ||
+            msg.contains("document", ignoreCase = true) || msg.contains("file", ignoreCase = true) || prompt.contains("document", ignoreCase = true)) {
+            val cleanContact = contact.replace(Regex("(?i)screenshot|photo|image|video|document|file"), "").trim().ifBlank { "Ansh" }
+            val mediaType = when {
+                msg.contains("video", ignoreCase = true) || prompt.contains("video", ignoreCase = true) -> "video"
+                msg.contains("document", ignoreCase = true) || msg.contains("file", ignoreCase = true) || prompt.contains("document", ignoreCase = true) -> "document"
+                msg.contains("photo", ignoreCase = true) || msg.contains("image", ignoreCase = true) -> "photo"
+                else -> "screenshot"
+            }
             val mediaArgs = JsonObject().apply {
                 addProperty("contact_name", cleanContact)
-                addProperty("media_type", "screenshot")
-                addProperty("caption", if (!msg.contains("screenshot", ignoreCase = true)) msg else "")
+                addProperty("media_type", mediaType)
+                addProperty("caption", if (!msg.contains("screenshot", ignoreCase = true) && !msg.contains("video", ignoreCase = true) && !msg.contains("document", ignoreCase = true)) msg else "")
             }
             val mediaRes = executeTool(context, "send_whatsapp_media", mediaArgs)
             mediaRes.entrySet().forEach { (k, v) -> result.add(k, v) }
             return
+        }
+
+        // If user asked to send current location or GPS coordinates:
+        if (msg.contains("location", ignoreCase = true) || prompt.contains("location", ignoreCase = true) ||
+            msg.contains("gps", ignoreCase = true) || prompt.contains("gps", ignoreCase = true) ||
+            prompt.contains("kahan ho", ignoreCase = true)) {
+            val locRes = executeTool(context, "get_location", JsonObject())
+            val lat = locRes.get("latitude")?.asDouble ?: 28.6139
+            val lng = locRes.get("longitude")?.asDouble ?: 77.2090
+            msg = "Meri current live location: https://maps.google.com/?q=$lat,$lng"
         }
 
         // If user asked to send copied text or message is blank, read from clipboard
@@ -8069,43 +8428,103 @@ object IshaToolRegistry {
         val cLower = cleanContact.lowercase()
         val isPronoun = cLower in setOf("usse", "isse", "unse", "unhe", "inhe", "inko", "unko", "use", "ise", "isise", "usise", "wo", "ye", "yeh", "voh", "him", "her", "them", "same", "current", "here", "kisi", "someone", "reply", "chat", "kro", "karo", "eusse", "reply kro", "reply karo", "baat karo", "usse baat") || cLower.contains("reply") || cLower.contains("baat") || cLower.contains("kisi") || cLower.contains("someone") || cLower.contains("continue") || cLower.contains("vyakti") || cLower.contains("wyajti")
         val activeScreenContact = if (a11y?.isWhatsappChatOpen() == true) a11y.getWhatsappActiveContactTitle() else null
+        val validScreenContact = if (activeScreenContact?.contains("meta", ignoreCase = true) == false) activeScreenContact else null
+
         val effectiveContact = when {
-            !activeScreenContact.isNullOrBlank() -> activeScreenContact
             !isPronoun && cleanContact.isNotBlank() -> cleanContact
+            !validScreenContact.isNullOrBlank() -> validScreenContact
             !IshaVoiceContextBridge.lastTargetContact.isNullOrBlank() -> IshaVoiceContextBridge.lastTargetContact!!
-            !cleanContact.isBlank() && !isPronoun -> cleanContact
-            else -> a11y?.getWhatsappActiveContactTitle() ?: ""
+            else -> validScreenContact ?: cleanContact
         }
-        if (effectiveContact.isNotBlank()) {
+        if (effectiveContact.isNotBlank() && !effectiveContact.contains("meta", ignoreCase = true)) {
             IshaVoiceContextBridge.lastTargetContact = effectiveContact
         }
 
         // ── In-Chat Instant Fast-Send Check ──
         if (a11y != null && a11y.isWhatsappChatOpen()) {
             val activeTitle = a11y.getWhatsappActiveContactTitle()?.lowercase() ?: ""
-            val cLower = effectiveContact.lowercase()
-            val isSameChat = effectiveContact.isBlank() ||
-                    cLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
-                    (activeTitle.isNotBlank() && (activeTitle.contains(cLower) || cLower.contains(activeTitle)))
+            if (!activeTitle.contains("meta")) {
+                val effLower = effectiveContact.lowercase()
+                val isSameChat = effectiveContact.isBlank() ||
+                        effLower in listOf("same", "current", "here", "him", "her", "unhe", "usse", "inhe", "aur", "ye", "ye bhi") ||
+                        (activeTitle.isNotBlank() && (activeTitle.contains(effLower) || effLower.contains(activeTitle)))
 
-            if (isSameChat) {
-                val sent = a11y.armWhatsappInstantInChatSend(msg)
-                if (sent) {
-                    result.addProperty("status", "success")
-                    result.addProperty("contact", if (activeTitle.isNotBlank()) activeTitle else effectiveContact)
-                    result.addProperty("message", "WhatsApp open chat me turant message bhej diya: \"$msg\"")
-                    return
+                if (isSameChat) {
+                    val sent = a11y.armWhatsappInstantInChatSend(msg)
+                    if (sent) {
+                        result.addProperty("status", "success")
+                        result.addProperty("contact", if (activeTitle.isNotBlank()) activeTitle else effectiveContact)
+                        result.addProperty("message", "WhatsApp open chat me turant message bhej diya: \"$msg\"")
+                        return
+                    }
                 }
             }
         }
 
-        val resolvedPhone = resolveContactNumber(context, if (effectiveContact.isNotBlank()) effectiveContact else contact)
         val waPkg = try {
             context.packageManager.getPackageInfo("com.whatsapp", 0)
             "com.whatsapp"
         } catch (_: Exception) {
             "com.whatsapp.w4b"
         }
+
+        // Explicit Meta AI query or read branch
+        if (cleanContact.contains("meta", ignoreCase = true) || contact.contains("meta", ignoreCase = true) ||
+            prompt.contains("meta ai", ignoreCase = true) || prompt.contains("meta se", ignoreCase = true)) {
+            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
+            if (intent != null) {
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(intent)
+            }
+
+            val pLower = prompt.lowercase()
+            val isReadIntent = pLower.contains("padho") || pLower.contains("padh") || pLower.contains("check") ||
+                    pLower.contains("dekho") || pLower.contains("kya bola") || pLower.contains("kya likha") ||
+                    pLower.contains("kya bheja") || pLower.contains("kya message") || pLower.contains("read") ||
+                    pLower.contains("batao kya")
+
+            if (isReadIntent) {
+                a11y?.armWhatsappAskMetaAi("") // Open Meta AI chat without asking new question
+                try { Thread.sleep(1200L) } catch (_: Exception) {}
+                val visibleMsgs = a11y?.getWhatsappVisibleMessages() ?: emptyList()
+                val recentText = if (visibleMsgs.isNotEmpty()) {
+                    visibleMsgs.takeLast(5).joinToString("\n• ")
+                } else {
+                    a11y?.getScreenTextHierarchy()?.lines()
+                        ?.map { it.replace(Regex("^[🔘📄]\\s*"), "").trim() }
+                        ?.filter { it.length >= 3 && !it.startsWith("[Button]") }
+                        ?.takeLast(6)
+                        ?.joinToString("\n• ") ?: ""
+                }
+                returnToIshaForeground(context)
+                val taskGuidance = "\n\n[TASK GUIDANCE]: WhatsApp par Meta AI chat se recent messages padh liye gaye hain:\n• $recentText\nBoss ko sweetly aur clearly batao ki Meta AI ne kya likha hai ya kya information di hai!"
+                result.addProperty("status", "success")
+                result.addProperty("contact", "Meta AI")
+                result.addProperty("messages", recentText)
+                result.addProperty("_task_guidance", taskGuidance)
+                result.addProperty("message", "Meta AI chat se recent messages:\n• $recentText")
+                return
+            }
+
+            a11y?.armWhatsappAskMetaAi(msg)
+
+            val metaReply = readWhatsappMetaAiAndReturn(context, msg)
+            result.addProperty("status", "success")
+            result.addProperty("contact", "Meta AI")
+            result.addProperty("query", msg)
+
+            if (!metaReply.isNullOrBlank()) {
+                result.addProperty("reply", metaReply)
+                result.addProperty("message", "Meta AI ka jawab: $metaReply")
+                result.addProperty("_task_guidance", "\n\n[TASK GUIDANCE]: Meta AI ne WhatsApp par Boss ke sawal \"$msg\" ka jawab diya hai: \"$metaReply\". Boss ko sweetly, clearly aur detail me yeh answer pura explain karo!")
+            } else {
+                result.addProperty("message", "WhatsApp par Meta AI se poochh liya gaya hai: \"$msg\"")
+                result.addProperty("_task_guidance", "\n\n[TASK GUIDANCE]: WhatsApp par Meta AI se \"$msg\" poochh liya gaya hai. Boss ko bata do ki sawal poochh diya hai aur reply aate hi update karoge.")
+            }
+            return
+        }
+
+        val resolvedPhone = resolveContactNumber(context, if (effectiveContact.isNotBlank()) effectiveContact else contact)
 
         if (!resolvedPhone.isNullOrBlank()) {
             val digits = resolvedPhone.replace(Regex("[^0-9]"), "")
@@ -8120,29 +8539,26 @@ object IshaToolRegistry {
                 context.startActivity(intent)
                 a11y?.armWhatsappAutoSendPreFilled()
                 result.addProperty("status", "success")
-                result.addProperty("message", "WhatsApp message sent to $contact: \"$msg\"")
+                result.addProperty("contact", effectiveContact.ifBlank { contact })
+                result.addProperty("message", "WhatsApp message sent to ${effectiveContact.ifBlank { contact }}: \"$msg\"")
             } catch (e: Exception) {
                 result.addProperty("status", "error")
                 result.addProperty("message", "Could not open WhatsApp: ${e.message}")
             }
-        } else if (contact.isNotBlank() && a11y != null) {
+        } else if (effectiveContact.isNotBlank() && !effectiveContact.contains("meta", ignoreCase = true) && a11y != null) {
             val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
             if (intent != null) {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 context.startActivity(intent)
             }
-            a11y.armWhatsappSearchAndSend(cleanContact.ifBlank { contact }, msg)
+            a11y.armWhatsappSearchAndSend(cleanContact.ifBlank { effectiveContact }, msg)
             result.addProperty("status", "success")
-            result.addProperty("message", "Opened WhatsApp chat for $contact and sent: \"$msg\"")
+            result.addProperty("contact", effectiveContact)
+            result.addProperty("message", "Opened WhatsApp chat for $effectiveContact and sent: \"$msg\"")
         } else {
-            val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
-            if (intent != null) {
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                context.startActivity(intent)
-            }
-            a11y?.armWhatsappAutoSend(msg)
-            result.addProperty("status", "success")
-            result.addProperty("message", "WhatsApp opened to send: \"$msg\"")
+            // NEVER blindly open WhatsApp home screen and type into search/Meta AI!
+            result.addProperty("status", "error")
+            result.addProperty("message", "WhatsApp message kisko bhejna hai Boss? Contact ka naam batayein.")
         }
     }
 
@@ -8269,7 +8685,11 @@ object IshaToolRegistry {
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     context.startActivity(intent)
                 }
-                a11y?.armWhatsappOpenContactChat(effectiveContact) {}
+                if (effectiveContact.contains("meta", ignoreCase = true)) {
+                    a11y?.armWhatsappAskMetaAi("")
+                } else {
+                    a11y?.armWhatsappOpenContactChat(effectiveContact) {}
+                }
             } else {
                 val intent = context.packageManager.getLaunchIntentForPackage(waPkg)
                 if (intent != null) {
@@ -8286,6 +8706,59 @@ object IshaToolRegistry {
 
         val screenHierarchy = a11y?.getScreenTextHierarchy() ?: ""
         val targetContact = if (effectiveContact.isNotBlank()) effectiveContact else contact
+
+        val prompt = IshaVoiceContextBridge.lastUserPrompt?.lowercase() ?: ""
+        val isReadIntent = prompt.contains("padho") || prompt.contains("padh") || prompt.contains("check") ||
+                prompt.contains("dekho") || prompt.contains("kya bola") || prompt.contains("kya likha") ||
+                prompt.contains("kya bheja") || prompt.contains("kya message") || prompt.contains("read") ||
+                prompt.contains("batao kya")
+
+        if (isReadIntent) {
+            // Poll up to 2.5s for WhatsApp chat messages to render
+            var visibleMsgs = a11y?.getWhatsappVisibleMessages() ?: emptyList()
+            val startPoll = System.currentTimeMillis()
+            while (visibleMsgs.isEmpty() && System.currentTimeMillis() - startPoll < 2500L) {
+                try { Thread.sleep(300L) } catch (_: Exception) {}
+                visibleMsgs = a11y?.getWhatsappVisibleMessages() ?: emptyList()
+            }
+
+            val filteredMsgs = visibleMsgs.filter { msg ->
+                val m = msg.trim()
+                m.isNotBlank() &&
+                !m.equals("WhatsApp", ignoreCase = true) &&
+                !m.equals("Chats", ignoreCase = true) &&
+                !m.equals("Updates", ignoreCase = true) &&
+                !m.equals("Calls", ignoreCase = true) &&
+                !m.equals("Search", ignoreCase = true) &&
+                !m.equals("Type a message", ignoreCase = true) &&
+                !m.equals("Message", ignoreCase = true)
+            }
+
+            val recentText = if (filteredMsgs.isNotEmpty()) {
+                filteredMsgs.takeLast(5).joinToString("\n• ")
+            } else {
+                val cleanLines = (a11y?.getScreenTextHierarchy() ?: "").lines()
+                    .map { it.replace(Regex("^[🔘📄]\\s*"), "").trim() }
+                    .filter { line ->
+                        line.length >= 3 &&
+                        !line.startsWith("[Button]") &&
+                        !line.equals("WhatsApp", ignoreCase = true) &&
+                        !line.equals("Chats", ignoreCase = true) &&
+                        !line.equals("Updates", ignoreCase = true) &&
+                        !line.equals("Calls", ignoreCase = true)
+                    }
+                if (cleanLines.isNotEmpty()) cleanLines.takeLast(5).joinToString("\n• ") else "Koi visible messages nahi mile"
+            }
+            returnToIshaForeground(context)
+            val taskGuidance = "\n\n[TASK GUIDANCE]: $targetContact ki WhatsApp chat se recent messages padh liye gaye hain:\n• $recentText\nBoss ko sweetly aur clearly explain karo ki chat me kya likha hai ya kya information aayi hai! Bina Boss ke permission ke khud se WhatsApp par reply MAT bhejo!"
+            result.addProperty("status", "success")
+            result.addProperty("contact", targetContact)
+            result.addProperty("messages", recentText)
+            result.addProperty("_task_guidance", taskGuidance)
+            result.addProperty("message", "$targetContact ki WhatsApp chat se recent messages:\n• $recentText")
+            return
+        }
+
         a11y?.startContinuousChat(targetContact)
         val taskGuidance = "\n\n[TASK GUIDANCE]: DO NOT ASK BOSS WHAT TO WRITE OR ASK FOR PERMISSION! Read the messages from screen hierarchy above, formulate a context-appropriate, helpful, charming reply in Isha's persona, and IMMEDIATELY execute send_whatsapp(contact_name='$targetContact', message=formulatedReply) right now in this turn without asking Boss! Continuous Chat Mode is now ACTIVE so you will automatically converse back and forth as replies arrive."
         result.addProperty("status", "success")

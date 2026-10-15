@@ -57,7 +57,7 @@ class GeminiChatService(private val context: Context) {
     private val client = OkHttpClient.Builder()
         .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
         .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
@@ -242,12 +242,12 @@ class GeminiChatService(private val context: Context) {
                 }
             }
         }
+        IshaVoiceContextBridge.lastUserPrompt = promptToSend
 
-        // ⚡ Autonomous Brain Router:
-        // Fast LLM (Groq / OpenRouter) is used ONLY for pure text turns where 0 tools & NO images are needed.
-        // If image is present or an action is requested, it MUST route to Gemini Flash!
+        // ⚡ Autonomous Dual Brain Router (OpenRouter / Groq + Google Gemini):
+        // 1. Fast LLM (OpenRouter / Groq) handles sub-second Fast Chat & Tool Calling (<1.5s total turn).
+        // 2. Google Gemini Flash is the multimodal vision engine AND resilient fallback.
         val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
-        // ⚡ O(1) check — tool turns are always at the tail of history
         val hasPendingToolTurn = history.lastOrNull()?.let {
             it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank()
         } ?: false
@@ -256,24 +256,34 @@ class GeminiChatService(private val context: Context) {
             hasImage = effectiveImageBytes != null,
             hasPendingToolTurn = hasPendingToolTurn
         )
-        val isPureConversation = (toolsForTurn == null)
-        val canUseFastLlm = hasFastLlmKey && effectiveImageBytes == null && !hasPendingToolTurn && isPureConversation
+
+        val canUseFastLlm = hasFastLlmKey && effectiveImageBytes == null
 
         if (canUseFastLlm) {
             try {
-                Log.i(TAG, "⚡ Routing to Fast LLM (Groq / OpenRouter) for sub-second instant response...")
+                Log.i(TAG, "⚡ Routing to Fast LLM (OpenRouter / Groq) with ${toolsForTurn?.size() ?: 0} Tools...")
+                val openAiTools = if (toolsForTurn != null && toolsForTurn.size() > 0) {
+                    IshaToolRegistry.convertGeminiDeclarationsToOpenAi(toolsForTurn)
+                } else {
+                    null
+                }
                 val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
-                openRouterClient.streamFastChat(
+                val completedText = openRouterClient.streamChatWithTools(
                     systemPrompt = sysPrompt,
                     history = history,
                     prompt = promptToSend,
-                    callback = callback
+                    tools = openAiTools,
+                    callback = callback,
+                    onExecuteTool = { toolName, toolArgs ->
+                        executeSingleToolForFastLlm(toolName, toolArgs, callback)
+                    }
                 )
+                IshaVoiceContextBridge.recordTextTurn(promptToSend, completedText)
                 return
             } catch (e: Exception) {
                 val isCanceled = e is CancellationException || (e is java.io.IOException && e.message?.contains("canceled", ignoreCase = true) == true)
                 if (isCanceled) throw e
-                Log.w(TAG, "Fast LLM attempt failed (${e.message}), autonomously falling back to Gemini Flash...")
+                Log.w(TAG, "Fast LLM attempt failed (${e.message}), autonomously falling back to Gemini Flash candidate models...")
             }
         }
 
@@ -424,17 +434,27 @@ class GeminiChatService(private val context: Context) {
     }
 
     // If all candidate models failed, fallback to OpenRouter ONLY IF no image was attached
-    // (OpenRouter is text-only; falling back with an image causes it to claim no image was sent)
+    // (OpenRouter is text/tool-only; falling back with an image causes it to claim no image was sent)
     if (effectiveImageBytes == null && Secrets.getActiveOpenRouterKey(context).isNotBlank()) {
         try {
             Log.w(TAG, "All candidate Gemini models failed ($lastErrorMsg), falling back to OpenRouter...")
+            val openAiTools = if (toolsForTurn != null && toolsForTurn.size() > 0) {
+                IshaToolRegistry.convertGeminiDeclarationsToOpenAi(toolsForTurn)
+            } else {
+                null
+            }
             val sysPrompt = AuraMemoryManager.buildSystemPrompt(context, isVoiceMode = false)
-            openRouterClient.streamFastChat(
+            val completedText = openRouterClient.streamChatWithTools(
                 systemPrompt = sysPrompt,
                 history = history,
                 prompt = promptToSend,
-                callback = callback
+                tools = openAiTools,
+                callback = callback,
+                onExecuteTool = { toolName, toolArgs ->
+                    executeSingleToolForFastLlm(toolName, toolArgs, callback)
+                }
             )
+            IshaVoiceContextBridge.recordTextTurn(promptToSend, completedText)
             return
         } catch (_: Exception) {}
     }
@@ -998,6 +1018,79 @@ class GeminiChatService(private val context: Context) {
                 }
             }.awaitAll()
         }
+    }
+
+    private suspend fun executeSingleToolForFastLlm(
+        toolName: String,
+        toolArgs: JsonObject,
+        callback: ChatStreamCallback
+    ): JsonObject {
+        Log.i(TAG, "⚡ Fast LLM Executing Native Tool: $toolName with args: $toolArgs")
+        withContext(Dispatchers.Main) {
+            callback.onToolStart(toolName = toolName, args = toolArgs.toString())
+        }
+
+        val toolResult = com.aura.assistant.execution.ExecutionEngine.executeTool(
+            context,
+            toolName,
+            toolArgs,
+            CoroutineScope(Dispatchers.IO)
+        )
+
+        val status = toolResult.get("status")?.asString ?: "success"
+        val rawMsg = toolResult.get("message")?.asString ?: status
+        val resultSummary = if ((status == "error" || status == "failed") &&
+            !rawMsg.startsWith("Failed", ignoreCase = true) &&
+            !rawMsg.startsWith("Error", ignoreCase = true)
+        ) {
+            "Failed: $rawMsg"
+        } else {
+            rawMsg
+        }
+
+        withContext(Dispatchers.Main) {
+            callback.onToolExecution(toolName = toolName, args = toolArgs.toString(), result = resultSummary)
+        }
+
+        // Asynchronously record to experience DB for self-learning
+        serviceScope.launch {
+            try {
+                val evidence = com.aura.assistant.execution.ExecutionVerifier.verify(context, toolName, toolArgs, toolResult)
+                val record = com.aura.assistant.memory.ExperienceRecord(
+                    id = java.util.UUID.randomUUID().toString(),
+                    taskId = "fast_llm_" + System.currentTimeMillis(),
+                    normalizedIntent = toolName,
+                    userInput = toolArgs.toString(),
+                    entities = toolArgs.toString(),
+                    deviceProfile = android.os.Build.MODEL,
+                    appPackage = context.packageName,
+                    screenContext = null,
+                    strategy = "fast_llm_tool_call",
+                    tool = toolName,
+                    arguments = toolArgs.toString(),
+                    executionStatus = if (evidence.verified) "SUCCESS" else "FAILED",
+                    verificationStatus = if (evidence.verified) "VERIFIED_SUCCESS" else "VERIFIED_FAILURE",
+                    failureReason = if (!evidence.verified) evidence.observedState else null,
+                    recoveryAction = null,
+                    latencyMs = 0L,
+                    userFeedback = null,
+                    timestamp = System.currentTimeMillis()
+                )
+                AuraExperienceDatabase.getInstance(context).recordExecution(record)
+            } catch (_: Exception) {}
+        }
+
+        val outputObj = if (toolResult.isJsonObject) toolResult.asJsonObject.deepCopy() else JsonObject()
+        val isFailure = status.equals("error", ignoreCase = true) || status.equals("failed", ignoreCase = true)
+        val guidance = if (isFailure) {
+            "CRITICAL: Tool '$toolName' failed with error: \"$rawMsg\". Inform Boss honestly in Hindi/Hinglish."
+        } else if (outputObj.has("_task_guidance") && outputObj.get("_task_guidance").asString.isNotBlank()) {
+            outputObj.get("_task_guidance").asString
+        } else {
+            "Tool '$toolName' finished successfully ($rawMsg). Give a short, sweet spoken Hindi/Hinglish confirmation to Boss."
+        }
+        outputObj.addProperty("_task_guidance", guidance)
+        return outputObj
     }
 
     private fun createHistoryContents(history: List<ChatMessage>): JsonArray {

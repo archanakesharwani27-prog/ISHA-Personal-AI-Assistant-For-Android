@@ -43,15 +43,17 @@ object IshaToolRouter {
         "decline_call",
         "send_sms",
         "send_whatsapp",
+        "send_whatsapp_media",
         "type_message",
         "type_text",
         "chat_on_whatsapp",
         "start_continuous_chat",
         "stop_continuous_chat",
-        "send_whatsapp_media",
+        "share_media",
         "query_contact",
         "get_contacts_list",
-        "remember_contact"
+        "remember_contact",
+        "read_screen_text"
     )
 
     val SCREEN_INTERACTIVE_TOOLS = setOf(
@@ -60,7 +62,8 @@ object IshaToolRouter {
         "screen_tap",
         "find_and_tap",
         "screen_scroll",
-        "take_screenshot"
+        "take_screenshot",
+        "share_media"
     )
 
     val TIME_PRODUCTIVITY_TOOLS = setOf(
@@ -149,7 +152,7 @@ object IshaToolRouter {
     )
 
     private val COMMS_PATTERN = Pattern.compile(
-        "\\b(call|dial|phone|whatsapp|message|msg|sms|bhejo|send|text|chat|kaat do|uthalo|contact|number|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues)\\b",
+        "\\b(call|dial|phone|whatsapp|whatsap|message|msg|sms|bhejo|bhej|send|share|text|chat|kaat do|uthalo|contact|number|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues|padho|padh|check|dekho|sunao|kya bola|kya likha|kya aaya|kya bheja|pucho|poocho)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -169,12 +172,12 @@ object IshaToolRouter {
     )
 
     private val WEB_PATTERN = Pattern.compile(
-        "\\b(search|google|dhoondo|pata karo|latest news|khabar|today news)\\b",
+        "\\b(search|google|dhoondo|pata karo|latest news|khabar|today news|weather|mausam|mosam|forecast|barish|rain|temperature|hawa)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
     private val SCREEN_INTERACTIVE_PATTERN = Pattern.compile(
-        "\\b(tap on|click kar|scroll down|scroll up|screenshot lo|button dabao)\\b",
+        "\\b(tap on|click kar|scroll down|scroll up|screenshot|screen shot|screen capture|button dabao)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -205,8 +208,8 @@ object IshaToolRouter {
 
         // 2. Direct Multimodal Screen / Camera Perception:
         // When an image is already attached (from camera or screenshot), Gemini's native vision
-        // answers directly in 0.5s when NO tool schema is attached!
-        if (hasImage && !SCREEN_INTERACTIVE_PATTERN.matcher(clean).find()) {
+        // answers directly in 0.5s when NO tool schema is attached, UNLESS an explicit action/comm intent is present!
+        if (hasImage && !SCREEN_INTERACTIVE_PATTERN.matcher(clean).find() && !COMMS_PATTERN.matcher(clean).find()) {
             return null // 0 tools -> Instant single-turn multimodal vision!
         }
 
@@ -267,7 +270,7 @@ object IshaToolRouter {
             CODE_AND_FILE_PATTERN.matcher(clean).find()
         ).count { it }
 
-        if (CHAINING_PATTERN.matcher(clean).find() || domainMatches > 1 || (clean.contains(",") && selectedNames.size > 2)) {
+        if (CHAINING_PATTERN.matcher(clean).find() || domainMatches > 2 || (clean.contains(",") && selectedNames.size > 2)) {
             return IshaToolRegistry.getGeminiToolDeclarations()
         }
 

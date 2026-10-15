@@ -538,7 +538,7 @@ private fun MainSettingsView(
             icon = Icons.Default.Face,
             iconTint = themePrimary,
             title = "AI Persona & Custom Instructions",
-            subtitle = "${personaConfig.archetype.title.substringBefore(" (")} • ${personaConfig.resolveSalutation(userProfile.name)}",
+            subtitle = "${personaConfig.archetype.title.substringBefore(" (")} • Boss",
             badgeText = null,
             onClick = { onNavigate(SettingsPage.PERSONA_STUDIO) }
         )
@@ -792,85 +792,36 @@ private fun PersonaStudioSubPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 1. Salutation Selector
+        // 1. Identity & Addressing Info
         Surface(
             color = ChatGptCard,
             shape = RoundedCornerShape(14.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, ChatGptBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "How Should ISHA Address You?",
-                    style = AuraTypography.titleMedium.copy(color = ChatGptTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = "Choose your title (Not everyone prefers 'Boss')",
-                    style = AuraTypography.bodySmall.copy(color = ChatGptTextMuted, fontSize = 11.sp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(themePrimary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    val titles = listOf(
-                        SalutationTitle.BOSS to "👑 Boss",
-                        SalutationTitle.DOST to "🤝 Dost",
-                        SalutationTitle.BHAI to "🤜 Bhai",
-                        SalutationTitle.SIR_MAAM to "🎓 Sir",
-                        SalutationTitle.NAME_ONLY to "👤 Name"
+                    Text(text = "👑", fontSize = 18.sp)
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Addressing: Boss (Ansh)",
+                        style = AuraTypography.titleMedium.copy(color = ChatGptTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     )
-                    titles.forEach { (sal, label) ->
-                        val isSelected = personaConfig.salutationTitle == sal
-                        Surface(
-                            color = if (isSelected) themePrimary else ChatGptBackground,
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isSelected) themePrimary else ChatGptBorder
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { onSalutationChange(sal, personaConfig.customTitle) }
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = AuraTypography.bodySmall.copy(
-                                        fontSize = 10.sp,
-                                        color = if (isSelected) Color.Black else ChatGptTextSecondary,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    ),
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                    // Custom Button
-                    val isCustom = personaConfig.salutationTitle == SalutationTitle.CUSTOM
-                    Surface(
-                        color = if (isCustom) themePrimary else ChatGptBackground,
-                        shape = RoundedCornerShape(20.dp),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (isCustom) themePrimary else ChatGptBorder
-                        ),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable(onClick = onOpenCustomSalutation)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Custom",
-                                tint = if (isCustom) Color.Black else ChatGptTextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "ISHA recognizes you as Boss and creator Ansh Kesharwani.",
+                        style = AuraTypography.bodySmall.copy(color = ChatGptTextMuted, fontSize = 11.sp)
+                    )
                 }
             }
         }

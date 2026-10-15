@@ -23,6 +23,9 @@ object IshaVoiceContextBridge {
     @Volatile
     var lastTargetContact: String? = null
 
+    @Volatile
+    var lastUserPrompt: String? = null
+
     /**
      * Records a completed turn from any modality (Voice, Text chat, Dynamic Island).
      */

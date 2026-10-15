@@ -322,18 +322,19 @@ object IshaMemoryManager {
     }
 
     /**
-     * Returns the user's preferred name (defaults to "Boss").
+     * Returns the user's preferred name (defaults to "Ansh Kesharwani").
      */
     fun getUserName(context: Context): String {
-        return getPrefs(context).getString(KEY_USER_NAME, "Boss") ?: "Boss"
+        val raw = getPrefs(context).getString(KEY_USER_NAME, "Ansh Kesharwani") ?: "Ansh Kesharwani"
+        val invalid = setOf("kya", "kaun", "what", "who", "user", "someone", "dost")
+        return if (raw.isBlank() || raw.lowercase() in invalid) "Ansh Kesharwani" else raw
     }
 
     /**
-     * Returns the user's dynamic salutation based on custom persona preferences.
+     * Returns the user's salutation (always "Boss").
      */
     fun getResolvedSalutation(context: Context): String {
-        val userName = getUserName(context)
-        return com.aura.assistant.data.IshaPersonaPreferences.getResolvedSalutation(context, userName)
+        return "Boss"
     }
 
     /**
@@ -511,6 +512,18 @@ object IshaMemoryManager {
             Log.i(TAG, "🧠 [AUTO-MEMORY] Saved unlock pattern '$patVal' for device '$dev'")
         }
 
+        // Never auto-extract facts from questions or inquiries!
+        val isQuestion = clean.contains("?") ||
+                lowerClean.startsWith("kya") || lowerClean.endsWith("kya") ||
+                lowerClean.contains("kya hai") || lowerClean.contains("kaun hai") ||
+                lowerClean.contains("batao") || lowerClean.contains("bataiye") ||
+                lowerClean.contains("pata karo") || lowerClean.contains("what is") ||
+                lowerClean.contains("who is") || lowerClean.contains("tell me") ||
+                lowerClean.contains("yaad hai") || lowerClean.contains("kuch yaad")
+        if (isQuestion) {
+            return
+        }
+
         val patterns = listOf(
             Regex("(?:mera|meri)\\s+favourite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
             Regex("(?:mera|meri)\\s+favorite\\s+([a-zA-Z\\u0900-\\u097F]+)\\s+([a-zA-Z0-9\\u0900-\\u097F\\s]+?)\\s+hai", RegexOption.IGNORE_CASE) to "favorite_",
@@ -536,7 +549,9 @@ object IshaMemoryManager {
                     }
                 } else if (keyPrefix == "user_name") {
                     val name = match.groupValues[1].trim()
-                    if (name.isNotBlank()) {
+                    val lowerName = name.lowercase()
+                    val invalidNames = setOf("kya", "kaun", "what", "who", "kuch", "batao", "bata", "pata", "nhi", "nahi", "naam", "user")
+                    if (name.isNotBlank() && !invalidNames.contains(lowerName) && name.length >= 2) {
                         rememberFact(context, "user_name", name)
                         Log.i(TAG, "🧠 [AUTO-MEMORY] Extracted user name = $name")
                     }
@@ -623,8 +638,8 @@ object IshaMemoryManager {
 
         val personaSection = buildString {
             appendLine("══════════════════════════════════════════════════════════════════════════════")
-            appendLine("🎭 DYNAMIC AI PERSONA & USER PROFILE INSTRUCTIONS (USER CONFIGURATION):")
-            appendLine("• User Salutation: Aap user ko samman aur apnepan se '$resolvedSalutation' keh kar address karti hain (e.g., agar Dost choose kiya hai toh 'Dost', Bhai hai toh 'Bhai', Boss hai toh 'Boss', ya unka naam).")
+            appendLine("🎭 AI PERSONA & CREATOR GROUNDING:")
+            appendLine("• User Salutation: Aap user ko hamesha samman aur apnepan se 'Boss' keh kar address karti hain. User ka naam Ansh Kesharwani hai jo aapke creator aur Boss hain.")
             appendLine("• ${personaConfig.archetype.promptDirective}")
             if (personaConfig.customAboutMe.isNotBlank()) {
                 appendLine("• USER PROFILE BACKGROUND (What the user wants you to know about them):\n  \"${personaConfig.customAboutMe.trim()}\"")
@@ -632,6 +647,7 @@ object IshaMemoryManager {
             if (personaConfig.customResponseStyle.isNotBlank()) {
                 appendLine("• USER RESPONSE PREFERENCES (How the user wants you to format responses):\n  \"${personaConfig.customResponseStyle.trim()}\"")
             }
+            appendLine("• STRICT SCRIPT & LANGUAGE INTEGRITY: Deliver response strictly in sweet conversational Hinglish (Latin alphabet) or natural Hindi (Devanagari). NEVER generate Korean (한국어), Chinese, Japanese, Russian, or any other foreign language script under any circumstances!")
             appendLine("══════════════════════════════════════════════════════════════════════════════")
         }
 
@@ -944,9 +960,15 @@ CRITICAL OPERATIONAL RULES & UNIVERSAL TOOL ROUTING MATRIX:
     Jab user ek hi message mein MULTIPLE tasks de:
     - Example 1: 'take screenshot and send it to whatsapp to <person>' / 'screenshot leke <person> ko WhatsApp karo':
       → IMMEDIATELY call send_whatsapp_media(contact_name='<person>', media_type='screenshot'). Agar do steps me karna ho, to pehle take_screenshot() call karo phir next turn me send_whatsapp()!
-    - Example 2: 'YouTube par song play kr ke dnd on kr ke game start krdo aur battery kitna charge hai ye bhi bta do':
+    - Example 2: 'video / document 7521070344 ko WhatsApp par bhej do':
+      → IMMEDIATELY call send_whatsapp_media(contact_name='7521070344', media_type='video'|'document'). Raw 10-digit phone numbers must be passed directly into contact_name!
+    - Example 3: 'meri current location 7521070344 ko whatsapp par bhej do':
+      → IMMEDIATELY call send_whatsapp_media(contact_name='7521070344', media_type='location') OR send_whatsapp(contact_name='7521070344', message='Meri current location')! Never narrate in text without calling a tool!
+    - Example 4: 'WhatsApp par Meta AI se pucho ki what is quantum computing':
+      → IMMEDIATELY call send_whatsapp(contact_name='Meta AI', message='what is quantum computing')!
+    - Example 5: 'YouTube par song play kr ke dnd on kr ke game start krdo aur battery kitna charge hai ye bhi bta do':
       → IMMEDIATELY emit all independent tools in one turn OR step-by-step: play_youtube(query='song'), set_dnd(enable=true), open_app(app_name='game'), get_battery_status().
-    - Example 3: 'Torch on kardo aur battery batao':
+    - Example 6: 'Torch on kardo aur battery batao':
       → IMMEDIATELY call toggle_flashlight(enable=true) and get_battery_status().
     - GOLDEN RULES FOR COMPOUND TASKS:
       * MANDATORY: Har ek task ke liye tool call hona ZAROORI hai! KABHI BHI bina tool call kiye text mein mat bolo ki 'maine DND on kar diya' ya 'song play ho gaya' ya 'screenshot bhej diya'.

@@ -116,9 +116,9 @@ object IshaPersonaPreferences {
     }
 
     /**
-     * Resolves the salutation title for current user (e.g. "Boss", "Dost", "Bhai", "Sir ji", or Name).
+     * Resolves the salutation title for current user (always Boss).
      */
     fun getResolvedSalutation(context: Context, fallbackUserName: String = "Ansh"): String {
-        return getPersonaConfig(context).resolveSalutation(fallbackUserName)
+        return "Boss"
     }
 }

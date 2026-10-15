@@ -627,8 +627,16 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             }
         }
 
-        // If user asks about the screen and hasn't manually attached an image, inject active screen context & visual capture (<50ms)
-        val isScreenRelated = attached == null && (
+        // Exclude explicit screenshot/capture tool actions or external app actions from auto screen capture
+        val isScreenshotAction = lowerPrompt.contains("screenshot") || lowerPrompt.contains("screen shot") || lowerPrompt.contains("screen capture")
+        val isExternalAppAction = lowerPrompt.contains("whatsapp") || lowerPrompt.contains("whatsap") ||
+                lowerPrompt.contains("call") || lowerPrompt.contains("dial") ||
+                lowerPrompt.contains("phone") || lowerPrompt.contains("youtube") ||
+                lowerPrompt.contains("instagram") || lowerPrompt.contains("telegram") ||
+                lowerPrompt.contains("meta ai") || lowerPrompt.contains("meta se")
+
+        // If user asks about understanding/reading the screen and hasn't manually attached an image, inject active screen context & visual capture (<50ms)
+        val isScreenRelated = !isScreenshotAction && !isExternalAppAction && attached == null && (
             lowerPrompt.contains("screen") ||
             lowerPrompt.contains("ye kya chal raha") ||
             lowerPrompt.contains("dekh kar") ||

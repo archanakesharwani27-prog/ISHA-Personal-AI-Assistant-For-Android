@@ -190,14 +190,7 @@ data class IshaPersonaConfig(
      * Resolves the human-readable salutation/addressing label.
      */
     fun resolveSalutation(userName: String = "Ansh"): String {
-        return when (salutationTitle) {
-            SalutationTitle.BOSS -> "Boss"
-            SalutationTitle.DOST -> "Dost"
-            SalutationTitle.BHAI -> "Bhai"
-            SalutationTitle.SIR_MAAM -> "Sir ji"
-            SalutationTitle.NAME_ONLY -> userName.ifBlank { "Dost" }
-            SalutationTitle.CUSTOM -> customTitle.trim().ifBlank { userName.ifBlank { "Dost" } }
-        }
+        return "Boss"
     }
 
     /**

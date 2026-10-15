@@ -159,10 +159,11 @@ open class IshaAccessibilityService : AccessibilityService() {
 
     // ── New action queue ───────────────────────────────────────────────────────
     private data class A11yStep(
-        val clickHint:  String? = null,    // Text/contentDescription to find & click
-        val typeText:   String? = null,    // Text to type into focused field
-        val verifyHint: String? = null,    // Optional: confirm this text is now visible (plan success marker)
-        val delayMs:    Long    = 600,
+        val clickHint:    String? = null,    // Text/contentDescription to find & click (supports '|' for fallbacks)
+        val typeText:     String? = null,    // Text to type into focused field
+        val verifyHint:   String? = null,    // Optional: confirm this text is now visible (plan success marker)
+        val globalAction: Int?    = null,    // Optional: performGlobalAction(action)
+        val delayMs:      Long    = 600,
     )
 
     @Volatile private var pendingPlan: List<A11yStep>? = null
@@ -336,8 +337,13 @@ open class IshaAccessibilityService : AccessibilityService() {
         val plan = pendingPlan ?: return
         if (planIndex >= plan.size) { onPlanFinished(true); return }
         val step = plan[planIndex]
-        val root = rootInActiveWindow
-        if (root == null) {
+
+        if (step.globalAction != null) {
+            performGlobalAction(step.globalAction)
+        }
+
+        val root = if (planTag.startsWith("whatsapp")) getWhatsappRoot() ?: rootInActiveWindow else rootInActiveWindow
+        if (root == null && step.clickHint != null) {
             if (stepRetryCount < 4) {
                 stepRetryCount++
                 stepHandler.postDelayed(stepRunnable, 500)
@@ -347,19 +353,24 @@ open class IshaAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (step.clickHint != null) {
-            val clicked = clickFirstMatch(root, listOf(step.clickHint.lowercase()))
+        if (step.clickHint != null && root != null) {
+            val hints = step.clickHint.split("|").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+            val clicked = clickFirstMatch(root, hints)
             if (!clicked) {
                 if (stepRetryCount < 4) {
                     stepRetryCount++
                     stepHandler.postDelayed(stepRunnable, 600)
                     return
                 }
+                Log.w(TAG, "Plan [$planTag] step $planIndex failed on clickHint '${step.clickHint}'. Aborting plan.")
+                onPlanFinished(false)
+                return
             }
         }
-        if (step.typeText != null) {
-            val focusedNode = findFocusedEditText(root)
+        if (step.typeText != null && root != null) {
+            val focusedNode = findFocusedEditText(root) ?: findNode(root, listOf("com.whatsapp:id/search_input", "com.whatsapp:id/search_src_text", "com.whatsapp:id/entry"))
             if (focusedNode != null) {
+                focusedNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                 typeIntoNode(focusedNode, step.typeText)
             } else {
                 if (stepRetryCount < 4) {
@@ -367,10 +378,13 @@ open class IshaAccessibilityService : AccessibilityService() {
                     stepHandler.postDelayed(stepRunnable, 600)
                     return
                 }
+                Log.w(TAG, "Plan [$planTag] step $planIndex failed to find focused edit text. Aborting plan.")
+                onPlanFinished(false)
+                return
             }
         }
 
-        if (step.verifyHint != null) {
+        if (step.verifyHint != null && root != null) {
             val verified = findNode(root, listOf(step.verifyHint.lowercase())) != null
             if (!verified) {
                 if (stepRetryCount < 4) {
@@ -389,7 +403,6 @@ open class IshaAccessibilityService : AccessibilityService() {
         scheduleNextStep(plan)
     }
 
-    /** Start a new plan with a tag for completion identification. */
     private fun startPlan(tag: String, steps: List<A11yStep>) {
         stepHandler.removeCallbacks(planTimeoutRunnable)
         stepHandler.removeCallbacks(stepRunnable)
@@ -406,25 +419,54 @@ open class IshaAccessibilityService : AccessibilityService() {
 
     fun armWhatsappAutoSendPreFilled() {
         pendingWhatsappSend = true
-        val sendHints = listOf(
-            "send", "com.whatsapp:id/send", "com.whatsapp.w4b:id/send",
-            "भेजें", "bhejo", "send message"
-        )
         val delays = listOf(800L, 1400L, 2200L, 3000L, 4200L)
         delays.forEachIndexed { index, delay ->
             stepHandler.postDelayed({
                 if (pendingWhatsappSend) {
                     val root = rootInActiveWindow
-                    if (root != null && clickFirstMatch(root, sendHints)) {
-                        pendingWhatsappSend = false
-                        Log.i(TAG, "WhatsApp Send clicked via timer at ${delay}ms")
-                    } else if (index >= 2 && pendingWhatsappSend) {
+                    if (root != null) {
+                        val sendBtn = findWhatsappMediaSendButton(root)
+                        if (sendBtn != null && clickNodeOrTap(sendBtn)) {
+                            pendingWhatsappSend = false
+                            Log.i(TAG, "WhatsApp Send clicked via timer at ${delay}ms")
+                            stepHandler.postDelayed({
+                                try {
+                                    com.aura.assistant.MainActivity.instance?.let { act ->
+                                        val returnIntent = act.packageManager.getLaunchIntentForPackage(act.packageName)?.apply {
+                                            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                        }
+                                        if (returnIntent != null) act.startActivity(returnIntent)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Return to foreground error: ${e.message}")
+                                }
+                            }, 1200L)
+                            return@postDelayed
+                        }
+                    }
+                    if (index >= 2 && pendingWhatsappSend) {
                         val pkg = root?.packageName?.toString() ?: ""
                         if (pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ || pkg.contains("whatsapp")) {
                             val dm = resources.displayMetrics
                             performTap(dm.widthPixels * 0.91f, dm.heightPixels * 0.94f)
                             pendingWhatsappSend = false
                             Log.i(TAG, "WhatsApp Send FAB tapped at bottom-right at ${delay}ms")
+                            stepHandler.postDelayed({
+                                try {
+                                    com.aura.assistant.MainActivity.instance?.let { act ->
+                                        val returnIntent = act.packageManager.getLaunchIntentForPackage(act.packageName)?.apply {
+                                            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                        }
+                                        if (returnIntent != null) act.startActivity(returnIntent)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Return to foreground error: ${e.message}")
+                                }
+                            }, 1200L)
                         }
                     }
                 }
@@ -434,14 +476,109 @@ open class IshaAccessibilityService : AccessibilityService() {
 
     fun armWhatsappSearchAndSend(contact: String, message: String) {
         pendingWhatsappSend = false
+        val cleanContact = contact.lowercase().trim()
+        val firstWord = cleanContact.split(" ").firstOrNull() ?: cleanContact
+
         startPlan("whatsapp_search_send", listOf(
-            A11yStep(clickHint = "search", delayMs = 1200),
-            A11yStep(typeText  = contact, delayMs = 800),
-            A11yStep(clickHint = contact.lowercase(), delayMs = 1000),
-            A11yStep(clickHint = "type a message", delayMs = 900),
+            A11yStep(clickHint = "com.whatsapp:id/search_fragment_holder|com.whatsapp:id/menuitem_search|search|ask meta ai", delayMs = 1200),
+            A11yStep(clickHint = "com.whatsapp:id/search_input|com.whatsapp:id/search_src_text", delayMs = 500),
+            A11yStep(typeText  = cleanContact, delayMs = 800),
+            A11yStep(clickHint = "com.whatsapp:id/contactpicker_row_name|conversations_row_contact_name|$firstWord|$cleanContact", delayMs = 1200),
+            A11yStep(clickHint = "com.whatsapp:id/entry|type a message|message", delayMs = 900),
             A11yStep(typeText  = message, delayMs = 800),
-            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent")
+            A11yStep(clickHint = "com.whatsapp:id/send", delayMs = 600, verifyHint = "message sent")
         ))
+    }
+
+    /**
+     * Explicit Meta AI interaction in WhatsApp when user specifically requests it.
+     */
+    fun armWhatsappAskMetaAi(query: String) {
+        pendingWhatsappSend = false
+        val isAlreadyInMeta = isWhatsappMetaAiChatOpen()
+
+        if (isAlreadyInMeta) {
+            startPlan("whatsapp_ask_meta_ai", listOf(
+                A11yStep(clickHint = "com.whatsapp:id/entry|type a message|ask meta ai|message|संदेश", delayMs = 600),
+                A11yStep(typeText = query, delayMs = 600),
+                A11yStep(clickHint = "com.whatsapp:id/send|send|भेजें", delayMs = 600)
+            ))
+            return
+        }
+
+        val steps = mutableListOf<A11yStep>()
+        if (isWhatsappChatOpen() && !isAlreadyInMeta) {
+            steps.add(A11yStep(globalAction = GLOBAL_ACTION_BACK, delayMs = 600))
+        }
+
+        // Tap the Ask Meta AI / Search bar on the home screen
+        steps.add(A11yStep(clickHint = "com.whatsapp:id/search_fragment_holder|com.whatsapp:id/search_input|ask meta ai or search", delayMs = 1000))
+        steps.add(A11yStep(clickHint = "com.whatsapp:id/search_input|com.whatsapp:id/search_src_text", delayMs = 600))
+        steps.add(A11yStep(typeText = query, delayMs = 800))
+        // Click the purple "ASK" button to submit to Meta AI!
+        steps.add(A11yStep(clickHint = "com.whatsapp:id/search_meta_ai_input_send_button|ask|पूछें", delayMs = 800))
+
+        startPlan("whatsapp_ask_meta_ai", steps)
+    }
+
+    /**
+     * Reads visible chat messages from active WhatsApp conversation.
+     */
+    fun getWhatsappVisibleMessages(): List<String> {
+        val root = getWhatsappRoot() ?: rootInActiveWindow ?: return emptyList()
+        val messages = mutableListOf<String>()
+
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val resId = node.viewIdResourceName ?: ""
+            if (resId.endsWith(":id/message_text") || resId.endsWith(":id/caption")) {
+                val t = node.text?.toString()?.trim()
+                if (!t.isNullOrBlank() && !messages.contains(t)) {
+                    messages.add(t)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+            }
+        }
+        traverse(root)
+
+        if (messages.isEmpty()) {
+            val textHierarchy = getScreenTextHierarchy()
+            val lines = textHierarchy.lines()
+                .map { it.replace(Regex("^[🔘📄]\\s*"), "").trim() }
+                .filter { line ->
+                    val lower = line.lowercase()
+                    line.length >= 2 &&
+                    !line.startsWith("[Button]") &&
+                    !lower.contains("end-to-end") &&
+                    !lower.contains("type a message") &&
+                    !lower.contains("search") &&
+                    lower != "today" && lower != "yesterday" && lower != "message"
+                }
+            return lines
+        }
+        return messages
+    }
+
+    /**
+     * Extracts the latest incoming message from Meta AI or a contact (ignoring the outgoing query and system UI).
+     */
+    fun extractLatestWhatsappIncomingMessage(query: String = ""): String? {
+        val msgs = getWhatsappVisibleMessages()
+        val normQuery = query.trim().lowercase()
+
+        val candidates = msgs.filter { msg ->
+            val norm = msg.trim().lowercase()
+            norm.length >= 2 &&
+            (normQuery.isBlank() || (norm != normQuery && !norm.contains(normQuery) && !normQuery.contains(norm))) &&
+            !norm.matches(Regex("""^\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)?$""")) &&
+            !norm.contains("messages to yourself") &&
+            !norm.contains("end-to-end encrypted") &&
+            !norm.contains("ask meta ai")
+        }
+
+        return candidates.lastOrNull()
     }
 
     fun armWhatsappAutoSend(message: String = "") {
@@ -450,23 +587,42 @@ open class IshaAccessibilityService : AccessibilityService() {
             pendingWhatsappSend = true
             return
         }
+        if (!isWhatsappChatOpen()) {
+            Log.w(TAG, "armWhatsappAutoSend: Not in active WhatsApp chat. Aborting to prevent Meta AI/search leak.")
+            return
+        }
         // Robust WhatsApp flow: focus message field → type text → click send
         startPlan("whatsapp_send", listOf(
-            A11yStep(clickHint = "type a message", delayMs = 1200),
-            A11yStep(clickHint = "message", delayMs = 1000),
-            A11yStep(typeText  = message, delayMs = 900),
-            A11yStep(clickHint = "send", delayMs = 600, verifyHint = "message sent")
+            A11yStep(clickHint = "com.whatsapp:id/entry", delayMs = 600),
+            A11yStep(typeText  = message, delayMs = 600),
+            A11yStep(clickHint = "com.whatsapp:id/send", delayMs = 600, verifyHint = "message sent")
         ))
     }
 
+    fun getWhatsappRoot(): AccessibilityNodeInfo? {
+        val active = rootInActiveWindow
+        val activePkg = active?.packageName?.toString() ?: ""
+        if (activePkg == PKG_WHATSAPP || activePkg == PKG_WA_BIZ || activePkg.contains("whatsapp")) {
+            return active
+        }
+        return try {
+            windows?.mapNotNull { it.root }?.firstOrNull { node ->
+                val p = node.packageName?.toString() ?: ""
+                p == PKG_WHATSAPP || p == PKG_WA_BIZ || p.contains("whatsapp")
+            } ?: active
+        } catch (_: Exception) {
+            active
+        }
+    }
+
     fun isWhatsappActive(): Boolean {
-        val root = rootInActiveWindow ?: return false
+        val root = getWhatsappRoot() ?: return false
         val pkg = root.packageName?.toString() ?: ""
         return pkg == PKG_WHATSAPP || pkg == PKG_WA_BIZ || pkg.contains("whatsapp")
     }
 
     fun isWhatsappChatOpen(): Boolean {
-        val root = rootInActiveWindow ?: return false
+        val root = getWhatsappRoot() ?: return false
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
 
@@ -474,11 +630,21 @@ open class IshaAccessibilityService : AccessibilityService() {
             "com.whatsapp:id/entry", "com.whatsapp.w4b:id/entry",
             "type a message", "message", "संदेश लिखें", "संदेश"
         )
-        return findNode(root, inputHints) != null || findFocusedEditText(root) != null
+        val node = findNode(root, inputHints) ?: return false
+        val resId = (node.viewIdResourceName ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase()
+        val text = (node.text?.toString() ?: "").lowercase()
+
+        // STRICT: Exclude search bars and Meta AI prompt inputs
+        if (resId.contains("search") || desc.contains("search") || text.contains("search") ||
+            resId.contains("meta") || desc.contains("meta") || text.contains("meta")) {
+            return false
+        }
+        return true
     }
 
     fun getWhatsappActiveContactTitle(): String? {
-        val root = rootInActiveWindow ?: return null
+        val root = getWhatsappRoot() ?: return null
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return null
 
@@ -491,9 +657,44 @@ open class IshaAccessibilityService : AccessibilityService() {
         val node = findNode(root, titleHints)
         if (node != null) {
             if (!node.text.isNullOrBlank()) {
-                return node.text.toString().trim()
+                val t = node.text.toString().trim()
+                if (!t.contains("meta", ignoreCase = true) && !t.equals("whatsapp", ignoreCase = true)) {
+                    return t
+                }
             }
             // If toolbar container, inspect direct children for contact title
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null && !child.text.isNullOrBlank()) {
+                    val childTxt = child.text.toString().trim()
+                    if (!childTxt.equals("WhatsApp", ignoreCase = true) &&
+                        !childTxt.contains("Meta", ignoreCase = true) &&
+                        childTxt.length < 40) {
+                        return childTxt
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    fun getWhatsappRawConversationTitle(): String? {
+        val root = getWhatsappRoot() ?: return null
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return null
+
+        val titleHints = listOf(
+            "com.whatsapp:id/conversation_contact_name",
+            "com.whatsapp:id/conversation_title",
+            "com.whatsapp.w4b:id/conversation_contact_name",
+            "com.whatsapp:id/toolbar"
+        )
+        val node = findNode(root, titleHints)
+        if (node != null) {
+            if (!node.text.isNullOrBlank()) {
+                val t = node.text.toString().trim()
+                if (!t.equals("whatsapp", ignoreCase = true)) return t
+            }
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null && !child.text.isNullOrBlank()) {
@@ -507,13 +708,26 @@ open class IshaAccessibilityService : AccessibilityService() {
         return null
     }
 
+    fun isWhatsappMetaAiChatOpen(): Boolean {
+        val root = getWhatsappRoot() ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
+
+        val title = getWhatsappRawConversationTitle()?.lowercase() ?: ""
+        if (title.contains("meta")) return true
+
+        val hasMetaFeedback = findNode(root, listOf("thumbs up", "thumbs down", "good response", "bad response", "copy")) != null
+        val hasEntry = findNode(root, listOf("com.whatsapp:id/entry", "ask meta ai")) != null
+        return hasMetaFeedback || (title.contains("meta") && hasEntry)
+    }
+
     /**
      * Instantly sends a message if WhatsApp is ALREADY open in the active chat.
      * Bypasses app launch, deep-links, and contact search entirely!
      * Executes robust multi-tier retries (350ms, 750ms, 1400ms) with relative FAB coordinate fallback.
      */
     fun armWhatsappInstantInChatSend(message: String): Boolean {
-        val root = rootInActiveWindow ?: return false
+        val root = getWhatsappRoot() ?: rootInActiveWindow ?: return false
         val pkg = root.packageName?.toString() ?: ""
         if (pkg != PKG_WHATSAPP && pkg != PKG_WA_BIZ && !pkg.contains("whatsapp")) return false
 
@@ -608,25 +822,246 @@ open class IshaAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun armWhatsappSendImage() {
-        val delays = listOf(800L, 1600L, 2600L, 3800L)
-        val imageSendHints = listOf("send", "com.whatsapp:id/send", "भेजें", "send photo", "send image")
+    fun armWhatsappSendImage(targetContact: String? = null) {
+        val delays = listOf(800L, 1600L, 2600L, 3800L, 5000L)
+        var contactSelected = false
+        var imageSent = false
+
         delays.forEachIndexed { index, delay ->
             stepHandler.postDelayed({
-                val root = rootInActiveWindow
-                if (root != null) {
-                    val clicked = clickFirstMatch(root, imageSendHints)
-                    if (clicked) {
-                        Log.i(TAG, "WhatsApp Image Send button clicked at ${delay}ms")
-                    } else if (index >= 2) {
-                        // Physical FAB tap fallback at bottom right (where WhatsApp send button sits)
-                        val dm = resources.displayMetrics
-                        performTap(dm.widthPixels * 0.90f, dm.heightPixels * 0.93f)
-                        Log.i(TAG, "WhatsApp Image Send FAB tap fallback at bottom-right executed")
+                if (imageSent) return@postDelayed
+                val root = getWhatsappRoot() ?: rootInActiveWindow ?: return@postDelayed
+
+                // If in MediaComposerActivity and keyboard is up for caption, drop keyboard on index 1
+                if (index == 1) {
+                    val hasCaption = findNode(root, listOf("com.whatsapp:id/caption", "add a caption", "caption")) != null
+                    if (hasCaption) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
                     }
+                }
+
+                // 1. If on WhatsApp's "Send to..." contact picker, select target contact specifically by name (never group subtitles)
+                if (!targetContact.isNullOrBlank() && !contactSelected) {
+                    val clicked = selectWhatsappContactInPicker(root, targetContact)
+                    if (clicked) {
+                        Log.i(TAG, "WhatsApp Send to... selected contact '$targetContact' at ${delay}ms")
+                        contactSelected = true
+                        return@postDelayed
+                    }
+                }
+
+                // 2. Click send button on either bottom sheet (contact picker) or image preview screen
+                // Note: MUST NEVER match voice note / mic button (which has "Release to send" in desc)
+                val sendNode = findWhatsappMediaSendButton(root)
+                if (sendNode != null) {
+                    val clicked = clickNodeOrTap(sendNode)
+                    if (clicked) {
+                        Log.i(TAG, "WhatsApp Image Send button clicked successfully at ${delay}ms")
+                        imageSent = true
+                        // Bring MainActivity back to foreground after dispatch
+                        stepHandler.postDelayed({
+                            try {
+                                com.aura.assistant.MainActivity.instance?.let { act ->
+                                    val returnIntent = act.packageManager.getLaunchIntentForPackage(act.packageName)?.apply {
+                                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    }
+                                    if (returnIntent != null) act.startActivity(returnIntent)
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Return to foreground error: ${e.message}")
+                            }
+                        }, 1200L)
+                        return@postDelayed
+                    }
+                } else if (index >= 2) {
+                    // Fallback coordinate tap for send button: bottom right (X=94%, Y=92%)
+                    val dm = resources.displayMetrics
+                    performTap(dm.widthPixels * 0.94f, dm.heightPixels * 0.92f)
+                    Log.i(TAG, "WhatsApp Image Send coordinate tap executed at ${delay}ms")
+                    imageSent = true
+                    stepHandler.postDelayed({
+                        try {
+                            com.aura.assistant.MainActivity.instance?.let { act ->
+                                val returnIntent = act.packageManager.getLaunchIntentForPackage(act.packageName)?.apply {
+                                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                            android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                }
+                                if (returnIntent != null) act.startActivity(returnIntent)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Return to foreground error: ${e.message}")
+                        }
+                    }, 1200L)
                 }
             }, delay)
         }
+    }
+
+    private fun findWhatsappMediaSendButton(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val resId = (node.viewIdResourceName ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+        val text = (node.text?.toString() ?: "").lowercase().trim()
+
+        // MUST strictly exclude voice note / mic / audio record buttons
+        val isVoiceOrMic = resId.contains("voice") || resId.contains("mic") || resId.contains("audio") ||
+                desc.contains("voice") || desc.contains("record") || desc.contains("hold to")
+
+        if (!isVoiceOrMic) {
+            // Direct ID match for WhatsApp send button: com.whatsapp:id/send
+            if (resId.endsWith(":id/send") || resId.endsWith(":id/send_button") || resId.endsWith(":id/fab")) {
+                if (node.isClickable || node.parent?.isClickable == true) return node
+            }
+            if (desc == "send" || desc == "भेजें" || text == "send" || text == "भेजें" || desc == "send photo" || desc == "send image") {
+                if (node.isClickable || node.parent?.isClickable == true) return node
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val match = findWhatsappMediaSendButton(node.getChild(i))
+            if (match != null) return match
+        }
+        return null
+    }
+
+    private fun selectWhatsappContactInPicker(root: AccessibilityNodeInfo, targetContact: String): Boolean {
+        val cleanTarget = targetContact.lowercase().trim()
+        if (cleanTarget.isBlank()) return false
+
+        val nameNodes = mutableListOf<AccessibilityNodeInfo>()
+        fun findContactNameNodes(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val resId = (node.viewIdResourceName ?: "").lowercase()
+            val text = (node.text?.toString() ?: "").lowercase().trim()
+            val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+
+            // In WhatsApp contact picker:
+            // - Contact title view: com.whatsapp:id/contactpicker_row_name, conversations_row_contact_name
+            // - Subtitle/members view: contactpicker_row_status (NEVER match this!)
+            val isExplicitName = resId.contains("contactpicker_row_name") ||
+                    resId.contains("conversations_row_contact_name") ||
+                    resId.contains("contact_name") ||
+                    resId.endsWith(":id/name")
+
+            if (isExplicitName && !resId.contains("status") && !resId.contains("desc") && !resId.contains("msg")) {
+                if (text.isNotBlank() || desc.isNotBlank()) {
+                    nameNodes.add(node)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                findContactNameNodes(node.getChild(i))
+            }
+        }
+        findContactNameNodes(root)
+
+        val digitsOnly = cleanTarget.replace(Regex("[^0-9]"), "")
+        if (digitsOnly.length >= 7) {
+            for (node in nameNodes) {
+                val nodeDigits = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").replace(Regex("[^0-9]"), "")
+                if (nodeDigits.isNotBlank() && (nodeDigits.endsWith(digitsOnly) || digitsOnly.endsWith(nodeDigits))) {
+                    Log.i(TAG, "🎯 [ContactPicker] Digit match: '$nodeDigits' for target '$digitsOnly'")
+                    if (clickNodeOrTap(node)) return true
+                }
+            }
+            val searchBtn = findNode(root, listOf("com.whatsapp:id/menuitem_search", "search", "खोजें"))
+            if (searchBtn != null && clickNodeOrTap(searchBtn)) {
+                stepHandler.postDelayed({
+                    val searchRoot = getWhatsappRoot() ?: rootInActiveWindow
+                    if (searchRoot != null) {
+                        val searchField = findFocusedEditText(searchRoot) ?: findNode(searchRoot, listOf("com.whatsapp:id/search_src_text", "com.whatsapp:id/search_input"))
+                        if (searchField != null) {
+                            searchField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                            typeIntoNode(searchField, digitsOnly)
+                            stepHandler.postDelayed({
+                                val resultRoot = getWhatsappRoot() ?: rootInActiveWindow
+                                if (resultRoot != null) {
+                                    val row = findNode(resultRoot, listOf("com.whatsapp:id/contactpicker_row_name", digitsOnly))
+                                    if (row != null) clickNodeOrTap(row)
+                                }
+                            }, 800L)
+                        }
+                    }
+                }, 600L)
+                return true
+            }
+        }
+
+        // Pass 1: Exact or prefix match on contact name (e.g. "Ansh Ghar", "Ansh Kesharwani" for "Ansh")
+        for (node in nameNodes) {
+            val text = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").lowercase().trim()
+            if (text.startsWith(cleanTarget)) {
+                Log.i(TAG, "🎯 [ContactPicker] Exact prefix match: '$text' for target '$cleanTarget'")
+                if (clickNodeOrTap(node)) return true
+            }
+        }
+
+        // Pass 2: Word match on contact name (e.g. "Kesharwani Ansh" or "Ghar Ansh")
+        for (node in nameNodes) {
+            val text = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").lowercase().trim()
+            val words = text.split(" ", "_", "-", "(", ")")
+            if (words.any { it == cleanTarget || it.startsWith(cleanTarget) }) {
+                Log.i(TAG, "🎯 [ContactPicker] Word match: '$text' for target '$cleanTarget'")
+                if (clickNodeOrTap(node)) return true
+            }
+        }
+
+        // Pass 3: Check RadioButton row nodes directly (in WhatsApp, each row is a RadioButton whose contentDescription is the contact name, while group rows have commas with member names)
+        val rowNodes = mutableListOf<AccessibilityNodeInfo>()
+        fun findRowNodes(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val cls = (node.className?.toString() ?: "")
+            val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+            if (cls.contains("RadioButton") || node.isCheckable) {
+                // If it contains commas, it is a group member list like "Family🥰🥰, Anmol Didi, Ansh Kesharwani, Mom, Yash Home, You" -> NEVER MATCH!
+                if (!desc.contains(",") && desc.isNotBlank()) {
+                    rowNodes.add(node)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                findRowNodes(node.getChild(i))
+            }
+        }
+        findRowNodes(root)
+
+        for (node in rowNodes) {
+            val desc = (node.contentDescription?.toString() ?: "").lowercase().trim()
+            val words = desc.split(" ", "_", "-", "(", ")")
+            if (desc.startsWith(cleanTarget) || words.any { it == cleanTarget || it.startsWith(cleanTarget) }) {
+                Log.i(TAG, "🎯 [ContactPicker] Row match: '$desc' for target '$cleanTarget'")
+                if (clickNodeOrTap(node)) return true
+            }
+        }
+
+        // Pass 4: Fallback search if no contact_name ID found (filter out group member lists with commas)
+        val allTextNodes = mutableListOf<AccessibilityNodeInfo>()
+        fun findNonGroupTextNodes(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val resId = (node.viewIdResourceName ?: "").lowercase()
+            val text = (node.text?.toString() ?: "").lowercase().trim()
+            val isSubtitleOrMemberList = resId.contains("status") || resId.contains("msg") ||
+                    resId.contains("desc") || text.contains(",") || text.contains(":") ||
+                    text.contains("typing") || text.contains("online")
+            if (!isSubtitleOrMemberList && text.isNotBlank()) {
+                if (text.startsWith(cleanTarget) || text.split(" ").contains(cleanTarget)) {
+                    allTextNodes.add(node)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                findNonGroupTextNodes(node.getChild(i))
+            }
+        }
+        findNonGroupTextNodes(root)
+
+        for (node in allTextNodes) {
+            val text = (node.text?.toString() ?: "").lowercase().trim()
+            Log.i(TAG, "🎯 [ContactPicker] Non-group fallback match: '$text'")
+            if (clickNodeOrTap(node)) return true
+        }
+
+        return false
     }
 
     // ── Continuous WhatsApp Chat Mode Methods ───────────────────────────────────
