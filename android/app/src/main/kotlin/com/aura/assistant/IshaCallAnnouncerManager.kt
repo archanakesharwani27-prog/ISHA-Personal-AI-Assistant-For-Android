@@ -26,6 +26,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import com.aura.assistant.ai.IshaCallerLookupEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -173,7 +177,22 @@ object IshaCallAnnouncerManager {
             }
         }
 
-        // 4. Truly unknown number (never return raw digits)
+        // 4. Check IshaCallerLookupEngine cached profile (e.g. from prior lookup or TRAI 140/160 series)
+        IshaCallerLookupEngine.getCached(candidate)?.let { lookup ->
+            val tag = when {
+                lookup.isSpam -> "Spam (${lookup.spamCategory ?: "Telemarketer"})"
+                !lookup.displayName.isNullOrBlank() -> lookup.displayName
+                !lookup.businessName.isNullOrBlank() -> lookup.businessName
+                else -> null
+            }
+            if (tag != null) {
+                val res = Pair(tag, false)
+                contactNameCache[candidate] = res
+                return res
+            }
+        }
+
+        // 5. Truly unknown number (never return raw digits)
         val unknown = Pair("Unknown Caller", false)
         contactNameCache[candidate] = unknown
         return unknown
@@ -289,6 +308,27 @@ object IshaCallAnnouncerManager {
 
         // 2. Announce Caller Name via TTS (pre-ringing) and activate Mic strictly after announcement
         announceCallerWithPrompt(context, resolvedName, isOldNumber)
+
+        // 3. If unknown caller, asynchronously analyze spam/business in background for instant profile resolution
+        if (resolvedName == "Unknown Caller" && currentCallerNumber.isNotBlank()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val identity = IshaCallerLookupEngine.identifyCaller(context, currentCallerNumber)
+                    val discoveredTag = when {
+                        identity.isSpam -> "Spam (${identity.spamCategory ?: "Telemarketer"})"
+                        !identity.displayName.isNullOrBlank() -> identity.displayName
+                        !identity.businessName.isNullOrBlank() -> identity.businessName
+                        else -> null
+                    }
+                    if (discoveredTag != null) {
+                        contactNameCache[currentCallerNumber] = Pair(discoveredTag, false)
+                        Log.i(TAG, "Caller identification upgraded: $discoveredTag for $currentCallerNumber")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Background caller lookup error: ${e.message}")
+                }
+            }
+        }
     }
 
     /**

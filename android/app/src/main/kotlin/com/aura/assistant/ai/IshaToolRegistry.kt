@@ -3518,26 +3518,7 @@ object IshaToolRegistry {
                 }
 
                 "identify_caller" -> {
-                    val number = args.get("phone_number")?.asString ?: ""
-                    if (number.isBlank()) {
-                        result.addProperty("status", "error")
-                        result.addProperty("message", "No phone number provided")
-                    } else {
-                        // Check local contacts first
-                        val cleanNumber = number.replace("[^0-9+]".toRegex(), "")
-                        val contactName = lookupLocalContact(context, cleanNumber)
-                        if (contactName != null) {
-                            result.addProperty("status", "found")
-                            result.addProperty("name", contactName)
-                            result.addProperty("source", "contacts")
-                            result.addProperty("message", "This number belongs to $contactName in your contacts")
-                        } else {
-                            // Not in contacts — report as unknown
-                            result.addProperty("status", "unknown")
-                            result.addProperty("number", cleanNumber)
-                            result.addProperty("message", "This number ($cleanNumber) is not in your contacts. It may be a spam or unknown caller. I'd recommend not answering calls from unknown numbers.")
-                        }
-                    }
+                    executeIdentifyCaller(context, args, result)
                 }
 
                 "get_battery_status" -> {
@@ -7884,6 +7865,55 @@ object IshaToolRegistry {
                 }
             }
         }
+    }
+
+    private suspend fun executeIdentifyCaller(context: Context, args: JsonObject, result: JsonObject) {
+        val number = args.get("phone_number")?.asString ?: ""
+        if (number.isBlank()) {
+            result.addProperty("status", "error")
+            result.addProperty("message", "No phone number provided")
+            return
+        }
+        val identity = IshaCallerLookupEngine.identifyCaller(context, number)
+        result.addProperty("status", "success")
+        result.addProperty("number", identity.formattedDisplay)
+        result.addProperty("clean_number", identity.cleanDigits)
+        result.addProperty("source", identity.source)
+        result.addProperty("is_spam", identity.isSpam)
+        result.addProperty("spam_risk", identity.spamRisk)
+        if (identity.spamCategory != null) {
+            result.addProperty("spam_category", identity.spamCategory)
+        }
+        if (identity.businessName != null) {
+            result.addProperty("business_name", identity.businessName)
+        }
+        if (identity.displayName != null) {
+            result.addProperty("name", identity.displayName)
+        }
+        if (identity.operatorAndCircle != null) {
+            result.addProperty("operator_and_circle", identity.operatorAndCircle)
+        }
+        result.addProperty("details", identity.details)
+        result.addProperty("recommendation", identity.recommendation)
+
+        val summaryMsg = buildString {
+            if (identity.isSpam) {
+                append("⚠️ SPAM ALERT: ${identity.formattedDisplay} is reported as ${identity.spamCategory ?: "Spam"} (Risk: ${identity.spamRisk}). ")
+                if (identity.operatorAndCircle != null) append("Network: ${identity.operatorAndCircle}. ")
+                append(identity.details).append(" ")
+                append("Recommendation: ${identity.recommendation}")
+            } else if (identity.displayName != null) {
+                append("Caller Identified: ${identity.displayName} (${identity.formattedDisplay}). ")
+                if (identity.operatorAndCircle != null) append("Network: ${identity.operatorAndCircle}. ")
+                append(identity.details).append(" ")
+                append(identity.recommendation)
+            } else {
+                append("Number Profile: ${identity.formattedDisplay} (${identity.operatorAndCircle ?: "Indian Network"}). ")
+                append(identity.details).append(" ")
+                append(identity.recommendation)
+            }
+        }
+        result.addProperty("message", summaryMsg)
     }
 
     private suspend fun executeCrossAppWorkflow(context: Context, args: JsonObject, result: JsonObject) {
