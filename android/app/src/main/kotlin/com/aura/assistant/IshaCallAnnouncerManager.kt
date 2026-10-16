@@ -366,22 +366,31 @@ object IshaCallAnnouncerManager {
 
         val speechText = when {
             isOldNumber -> {
-                "Incoming call from $resolvedName, purana number, identified by Isha."
+                "$resolvedName, purana number."
             }
-            resolvedName.startsWith("Spam", ignoreCase = true) -> {
+            resolvedName.startsWith("Spam", ignoreCase = true) || resolvedName.contains("Telemarket", ignoreCase = true) -> {
                 val carrier = IshaCallerLookupEngine.inferCarrierAndCircle(currentCallerNumber)
-                "Boss, suspected $resolvedName, SIM $carrier se. Say answer or decline."
+                if (carrier.isNotBlank() && !carrier.contains("National", ignoreCase = true)) {
+                    "Suspected $resolvedName, SIM $carrier se."
+                } else {
+                    "Suspected $resolvedName."
+                }
             }
             resolvedName.isNotBlank() && resolvedName != "Unknown Caller" -> {
-                "Incoming call from $resolvedName, identified by Isha."
+                val carrier = IshaCallerLookupEngine.inferCarrierAndCircle(currentCallerNumber)
+                if (carrier.isNotBlank() && !carrier.contains("National", ignoreCase = true) && currentCallerNumber.isNotBlank()) {
+                    "$resolvedName, SIM $carrier se."
+                } else {
+                    resolvedName
+                }
             }
             else -> {
                 val instantProfile = IshaCallerLookupEngine.getInstantProfile(currentCallerNumber)
                 val carrierInfo = instantProfile?.operatorAndCircle
                 if (carrierInfo != null && !carrierInfo.contains("National", ignoreCase = true)) {
-                    "Boss, incoming unknown call, SIM $carrierInfo se hai. Say answer or decline."
+                    "Unknown call, SIM $carrierInfo se."
                 } else {
-                    "Incoming call from an unknown number, identified by Isha. Say answer or decline."
+                    "Unknown call."
                 }
             }
         }

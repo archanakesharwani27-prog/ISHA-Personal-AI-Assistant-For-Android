@@ -485,7 +485,7 @@ open class IshaNotificationListenerService : NotificationListenerService() {
             appName.contains("Telegram", ignoreCase = true) -> "Telegram"
             else -> appName
         }
-        val text = "Incoming call from $callerLabel via $appLabel identified by ISHA"
+        val text = "$callerLabel, $appLabel call"
         val params = Bundle().apply {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_RING)
         }
