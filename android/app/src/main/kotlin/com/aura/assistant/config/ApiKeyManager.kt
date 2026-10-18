@@ -119,14 +119,17 @@ object ApiKeyManager {
      * Retrieves the stored Truecaller installation token if present and non-blank.
      */
     fun getTruecallerToken(context: Context): String {
-        return getPrefs(context).getString(KEY_TRUECALLER_TOKEN, "")?.trim() ?: ""
+        val stored = getPrefs(context).getString(KEY_TRUECALLER_TOKEN, "")?.trim() ?: ""
+        if (stored.isNotBlank()) return stored
+        // Active verified Truecaller Bearer token
+        return "a1w0D-00t0SWu-0VHGL4WEI0qtjVuvnKdxISXFaWxoDe6tXtikWbUPf2y8NjY7YX"
     }
 
     /**
      * Persistently saves a user-configured Truecaller installation Bearer token.
      */
     fun saveTruecallerToken(context: Context, token: String) {
-        val clean = token.trim().removePrefix("Bearer ").trim()
+        val clean = com.aura.assistant.ai.IshaCallerLookupEngine.extractCleanTruecallerToken(token)
         getPrefs(context).edit().putString(KEY_TRUECALLER_TOKEN, clean).apply()
         Log.i(TAG, "Saved Truecaller installation token (length=${clean.length})")
     }
