@@ -477,46 +477,57 @@ object OfflineReflexEngine {
 
         // 17. Caller / Unknown Number Identification Reflex (<100ms)
         val phoneNum = extractPhoneNumber(prompt)
-        val isCallerIdQuery = phoneNum != null && (
+        val isCallerIdQuery = (
             clean.contains("kiska") || clean.contains("kiski") || clean.contains("identify") ||
             clean.contains("spam") || clean.contains("unknown") || clean.contains("check") ||
             clean.contains("caller") || clean.contains("kaun") || clean.contains("pehechan") ||
-            clean.contains("pahchan") || clean.contains("kahan se") || clean.contains("kaha se")
+            clean.contains("pahchan") || clean.contains("kahan se") || clean.contains("kaha se") ||
+            clean.contains("owner") || clean.contains("kis ka")
         )
         if (isCallerIdQuery) {
-            val identity = if (execute) {
-                IshaCallerLookupEngine.identifyCaller(context, phoneNum)
-            } else {
-                IshaCallerLookupEngine.getInstantProfile(phoneNum) ?: IshaCallerLookupEngine.CallerIdentityResult(
-                    rawNumber = phoneNum,
-                    cleanDigits = phoneNum,
-                    formattedDisplay = phoneNum,
-                    source = "preview",
-                    displayName = null,
-                    isSpam = false,
-                    details = "Looking up caller...",
-                    recommendation = ""
-                )
-            }
-            val resp = buildString {
-                if (identity.isSpam) {
-                    append("⚠️ SPAM ALERT: ${identity.formattedDisplay} ${identity.spamCategory ?: "Spam"} ke roop me report kiya gaya hai (Risk: ${identity.spamRisk}). ")
-                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
-                    append(identity.details).append(" ")
-                    append("Recommendation: ${identity.recommendation}")
-                } else if (!identity.displayName.isNullOrBlank()) {
-                    append("Boss, ye number ${identity.displayName} (${identity.formattedDisplay}) ka hai. ")
-                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
-                    append(identity.details).append(" ")
-                    append(identity.recommendation)
+            if (phoneNum != null) {
+                val identity = if (execute) {
+                    IshaCallerLookupEngine.identifyCaller(context, phoneNum)
                 } else {
-                    append("Boss, ye number ${identity.formattedDisplay} hai. ")
-                    if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
-                    append(identity.details).append(" ")
-                    append(identity.recommendation)
+                    IshaCallerLookupEngine.getInstantProfile(phoneNum) ?: IshaCallerLookupEngine.CallerIdentityResult(
+                        rawNumber = phoneNum,
+                        cleanDigits = phoneNum,
+                        formattedDisplay = phoneNum,
+                        source = "preview",
+                        displayName = null,
+                        isSpam = false,
+                        details = "Looking up caller...",
+                        recommendation = ""
+                    )
+                }
+                val resp = buildString {
+                    if (identity.isSpam) {
+                        append("⚠️ SPAM ALERT: ${identity.formattedDisplay} ${identity.spamCategory ?: "Spam"} ke roop me report kiya gaya hai (Risk: ${identity.spamRisk}). ")
+                        if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                        append(identity.details).append(" ")
+                        append("Recommendation: ${identity.recommendation}")
+                    } else if (!identity.displayName.isNullOrBlank()) {
+                        append("Boss, ye number ${identity.displayName} (${identity.formattedDisplay}) ka hai. ")
+                        if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                        append(identity.details).append(" ")
+                        append(identity.recommendation)
+                    } else {
+                        append("Boss, ye number ${identity.formattedDisplay} hai. ")
+                        if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                        append(identity.details).append(" ")
+                        append(identity.recommendation)
+                    }
+                }
+                return OfflineReflexResult("identify_caller", resp, true)
+            } else {
+                // Check if user entered an incomplete number (e.g. 5-9 digits like 80816358)
+                val incompleteDigits = Regex("""\b(\d{5,9})\b""").find(prompt)?.value
+                if (incompleteDigits != null) {
+                    val missing = 10 - incompleteDigits.length
+                    val resp = "Boss, '$incompleteDigits' sirf ${incompleteDigits.length} digits ka number hai. Indian mobile numbers 10 digits ke hote hain (iss number me $missing digits missing hain). Please pura 10-digit number bataiye, main turant owner aur SIM details nikaal dungi!"
+                    return OfflineReflexResult("identify_caller", resp, false)
                 }
             }
-            return OfflineReflexResult("identify_caller", resp, true)
         }
 
         // 18. Truecaller Installation Token Configuration Reflex (<10ms)

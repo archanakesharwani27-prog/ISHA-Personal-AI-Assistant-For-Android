@@ -553,11 +553,12 @@ object IshaCallerLookupEngine {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
+            val body = response.body?.string()
+            response.close()
+            if (!response.isSuccessful || body.isNullOrBlank()) {
                 Log.w(TAG, "Truecaller API response code: ${response.code}, falling back to web endpoint")
                 return lookupTruecallerWeb(clean, carrierCircle, rawToken)
             }
-            val body = response.body?.string() ?: return lookupTruecallerWeb(clean, carrierCircle, rawToken)
             val json = JsonParser.parseString(body).asJsonObject
             val dataArray = json.getAsJsonArray("data")
             if (dataArray == null || dataArray.size() == 0) return null
@@ -648,8 +649,9 @@ object IshaCallerLookupEngine {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return null
-            val html = response.body?.string() ?: return null
+            val html = response.body?.string()
+            response.close()
+            if (!response.isSuccessful || html.isNullOrBlank()) return null
 
             // Truecaller web renders name in <h1> or profile name tags
             val h1Match = Regex("""<h1[^>]*>([^<]+)</h1>""", RegexOption.IGNORE_CASE).find(html)
@@ -695,8 +697,9 @@ object IshaCallerLookupEngine {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return null
-            val html = response.body?.string() ?: return null
+            val html = response.body?.string()
+            response.close()
+            if (!response.isSuccessful || html.isNullOrBlank()) return null
 
             // Tellows caller name: <span id="caller_name"> or <div class="caller_name"> or regex
             val nameMatch = Regex("""id=['"]caller_name['"][^>]*>([^<]+)<""", RegexOption.IGNORE_CASE).find(html)

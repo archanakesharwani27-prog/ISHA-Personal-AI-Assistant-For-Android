@@ -205,6 +205,17 @@ object IshaToolRegistry {
             )
         ))
 
+        // 1b. Caller Identification & Number Lookup
+        toolsArray.add(createFunction(
+            name = "identify_caller",
+            desc = "Identify an unknown phone number, caller, spammer, telemarketer, or business using Truecaller database, Tellows spam registry, and Indian Telecom Circle lookup. ALWAYS call when the user asks 'ye number kiska hai', 'identify this number', 'spam check karo', 'ye call kiski thi', 'is this number spam'.",
+            params = mapOf("phone_number" to "string"),
+            required = listOf("phone_number"),
+            paramDescriptions = mapOf(
+                "phone_number" to "The phone number or digits to identify (e.g. '8081635899', '+919721829880')"
+            )
+        ))
+
         // 2. SMS
         toolsArray.add(createFunction(
             name = "send_sms",
@@ -5661,6 +5672,7 @@ object IshaToolRegistry {
 
             // Calls
             lower in listOf("call", "phone_call", "dial", "dial_number", "make_phone_call", "call_contact", "make_call") -> "make_call"
+            lower in listOf("identify_caller", "caller_id", "lookup_caller", "check_number", "identify_number", "who_called", "caller_lookup") -> "identify_caller"
 
             // SMS
             lower in listOf("sms", "send_text", "send_sms_message", "text_sms", "send_sms") -> "send_sms"
