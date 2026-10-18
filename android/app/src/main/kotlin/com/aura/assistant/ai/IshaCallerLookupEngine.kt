@@ -508,11 +508,38 @@ object IshaCallerLookupEngine {
     }
 
     /**
+     * Unwraps raw token, URL-encoded tc_user cookie (%7B%22token%22...), or raw JSON to extract clean Bearer JWT.
+     */
+    fun extractCleanTruecallerToken(rawInput: String): String {
+        var token = rawInput.trim()
+        if (token.startsWith("Bearer ", ignoreCase = true)) {
+            token = token.substring(7).trim()
+        }
+        if (token.startsWith("tc_user=", ignoreCase = true)) {
+            token = token.substring(8).trim()
+        }
+        try {
+            if (token.contains("%7B", ignoreCase = true) || token.contains("%22")) {
+                token = java.net.URLDecoder.decode(token, "UTF-8")
+            }
+            if (token.startsWith("{") && token.contains("token")) {
+                val json = JsonParser.parseString(token).asJsonObject
+                val extracted = json.get("token")?.asString
+                if (!extracted.isNullOrBlank()) {
+                    return extracted.trim()
+                }
+            }
+        } catch (_: Exception) {}
+        return token
+    }
+
+    /**
      * Queries Truecaller Non-EU Search API with the user's Bearer token.
      * Returns exact Truecaller profile: name, badges, spamScore, spamType, addresses.
      */
-    private fun lookupTruecaller(clean: String, carrierCircle: String, token: String): CallerIdentityResult? {
-        if (token.isBlank()) return null
+    private fun lookupTruecaller(clean: String, carrierCircle: String, rawToken: String): CallerIdentityResult? {
+        if (rawToken.isBlank()) return null
+        val token = extractCleanTruecallerToken(rawToken)
         val queryNumber = if (clean.startsWith("+")) clean else "+91$clean"
         try {
             val url = "https://search5-noneu.truecaller.com/v2/search?q=${URLEncoder.encode(queryNumber, "UTF-8")}&countryCode=IN&type=4&locAddr=&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
@@ -527,10 +554,10 @@ object IshaCallerLookupEngine {
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
-                Log.w(TAG, "Truecaller API response code: ${response.code}")
-                return null
+                Log.w(TAG, "Truecaller API response code: ${response.code}, falling back to web endpoint")
+                return lookupTruecallerWeb(clean, carrierCircle, rawToken)
             }
-            val body = response.body?.string() ?: return null
+            val body = response.body?.string() ?: return lookupTruecallerWeb(clean, carrierCircle, rawToken)
             val json = JsonParser.parseString(body).asJsonObject
             val dataArray = json.getAsJsonArray("data")
             if (dataArray == null || dataArray.size() == 0) return null
@@ -593,6 +620,63 @@ object IshaCallerLookupEngine {
             )
         } catch (e: Exception) {
             Log.w(TAG, "Truecaller lookup exception: ${e.message}")
+            return lookupTruecallerWeb(clean, carrierCircle, rawToken)
+        }
+    }
+
+    /**
+     * Fallback web scraper for Truecaller Web using the user's tc_user cookie.
+     * Queries https://www.truecaller.com/search/in/{number} with Cookie header.
+     */
+    private fun lookupTruecallerWeb(clean: String, carrierCircle: String, rawInput: String): CallerIdentityResult? {
+        try {
+            val cookieValue = if (rawInput.startsWith("tc_user=", ignoreCase = true)) {
+                rawInput
+            } else if (rawInput.contains("%7B") || rawInput.contains("{")) {
+                "tc_user=$rawInput"
+            } else {
+                "tc_user=%7B%22token%22%3A%22${rawInput.trim()}%22%7D"
+            }
+
+            val url = "https://www.truecaller.com/search/in/$clean"
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Cookie", cookieValue)
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            val html = response.body?.string() ?: return null
+
+            // Truecaller web renders name in <h1> or profile name tags
+            val h1Match = Regex("""<h1[^>]*>([^<]+)</h1>""", RegexOption.IGNORE_CASE).find(html)
+            val extractedName = h1Match?.groupValues?.get(1)?.trim()?.takeIf {
+                it.isNotBlank() && !it.contains("Truecaller", ignoreCase = true) && !it.contains("Search", ignoreCase = true) && it.length > 2
+            }
+
+            if (extractedName.isNullOrBlank()) return null
+
+            val isSpam = html.contains("Spam", ignoreCase = true) && (html.contains("spam score", ignoreCase = true) || html.contains("reported as spam", ignoreCase = true))
+            val formatted = formatNumberDisplay(clean)
+
+            return CallerIdentityResult(
+                rawNumber = clean,
+                cleanDigits = clean,
+                formattedDisplay = formatted,
+                source = "truecaller_web",
+                displayName = extractedName,
+                isSpam = isSpam,
+                spamCategory = if (isSpam) "Spam / Telemarketing" else null,
+                spamRisk = if (isSpam) "Moderate" else "None",
+                operatorAndCircle = carrierCircle,
+                details = "Identified via Truecaller Web as '$extractedName' ($carrierCircle).",
+                recommendation = if (isSpam) "Spam call detected — recommend rejecting." else "Identified contact: $extractedName."
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Truecaller Web lookup exception: ${e.message}")
             return null
         }
     }

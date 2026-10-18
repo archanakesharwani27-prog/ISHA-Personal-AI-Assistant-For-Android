@@ -521,14 +521,15 @@ object OfflineReflexEngine {
 
         // 18. Truecaller Installation Token Configuration Reflex (<10ms)
         if (clean.contains("truecaller") && (clean.contains("token") || clean.contains("key") || clean.contains("save") || clean.contains("set"))) {
-            val tokenMatch = Regex("""\b(?:token|key|save|hai|set|to)\s*[:=]?\s*([a-zA-Z0-9_\-\.]{15,})\b""", RegexOption.IGNORE_CASE).find(prompt)
+            val tokenMatch = Regex("""\b(?:token|key|save|hai|set|to)\s*[:=]?\s*([^\s]{15,})""", RegexOption.IGNORE_CASE).find(prompt)
                 ?: Regex("""\b(a1i[a-zA-Z0-9_\-\.]{15,})\b""").find(prompt)
+                ?: Regex("""\b(eyJ[a-zA-Z0-9_\-\.]{15,})\b""").find(prompt)
             if (tokenMatch != null) {
-                val token = tokenMatch.groupValues[1]
+                val rawToken = tokenMatch.groupValues[1].trim().trimEnd('.', ',', ';')
                 if (execute) {
-                    com.aura.assistant.config.ApiKeyManager.saveTruecallerToken(context, token)
+                    com.aura.assistant.config.ApiKeyManager.saveTruecallerToken(context, rawToken)
                 }
-                return OfflineReflexResult("set_truecaller_token", "Boss, aapka Truecaller token successfully save ho gaya hai! Ab se main sabhi unknown calls aur numbers ko Truecaller ke 350-crore database se direct unke asli naam ke saath pehchanungi.", true)
+                return OfflineReflexResult("set_truecaller_token", "Boss, aapka Truecaller token successfully save ho gaya hai! Ab se main sabhi unknown calls aur numbers ko Truecaller database se direct unke asli naam ke saath pehchanungi.", true)
             }
         }
 
