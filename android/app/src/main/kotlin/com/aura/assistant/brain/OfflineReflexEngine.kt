@@ -512,10 +512,16 @@ object OfflineReflexEngine {
                         append(identity.details).append(" ")
                         append(identity.recommendation)
                     } else {
-                        append("Boss, ye number ${identity.formattedDisplay} hai. ")
-                        if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
-                        append(identity.details).append(" ")
-                        append(identity.recommendation)
+                        val isNonMobile = !phoneNum.first().let { it in '6'..'9' }
+                        if (isNonMobile) {
+                            append("Boss, ${identity.formattedDisplay} koi standard Indian mobile number nahi hai. ")
+                            if (identity.operatorAndCircle != null) append("Line type: ${identity.operatorAndCircle}. ")
+                            append("Ye fixed landline, international call ya automated VoIP spoofing ho sakti hai. Kisi unknown source se OTP ya details share na karein.")
+                        } else {
+                            append("Boss, ${identity.formattedDisplay} ek personal unlisted mobile number hai. ")
+                            if (identity.operatorAndCircle != null) append("SIM: ${identity.operatorAndCircle}. ")
+                            append("Ye kisi company, bank ya spam list me registered nahi hai, aur public web par iska personal naam indexed nahi hai. Agar koi parichit call kar raha ho to utha sakte hain.")
+                        }
                     }
                 }
                 return OfflineReflexResult("identify_caller", resp, true)
