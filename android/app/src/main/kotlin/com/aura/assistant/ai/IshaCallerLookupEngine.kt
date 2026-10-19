@@ -297,19 +297,65 @@ object IshaCallerLookupEngine {
         val prefix4 = clean.take(4)
         val prefix2 = clean.take(2)
 
+        // Non-mobile detection: Indian mobile numbers strictly start with 6, 7, 8, or 9
+        if (!clean.first().let { it in '6'..'9' }) {
+            return when {
+                clean.startsWith("44") || clean.startsWith("044") -> 
+                    "Landline / International • Chennai (STD 044) ya UK (+44) / Virtual VoIP"
+                clean.startsWith("11") || clean.startsWith("011") -> 
+                    "Fixed-Line • Delhi NCR (STD 011)"
+                clean.startsWith("22") || clean.startsWith("022") -> 
+                    "Fixed-Line • Mumbai (STD 022)"
+                clean.startsWith("33") || clean.startsWith("033") -> 
+                    "Fixed-Line • Kolkata (STD 033)"
+                clean.startsWith("80") && clean.length == 10 && clean.startsWith("802") -> 
+                    "Fixed-Line • Bangalore (STD 080)"
+                else -> "Non-Mobile / International or Virtual VoIP Line"
+            }
+        }
+
         val circle = when {
+            // UP East (Lucknow, Kanpur, Varanasi, Allahabad/Prayagraj, Gorakhpur)
+            prefix4 in listOf(
+                "9839", "9838", "9807", "9721", "8564", "8565", "8081", "9415", "9450", "9451", 
+                "9452", "9453", "9454", "9455", "9935", "9936", "9792", "9793", "9794", "9795", 
+                "8004", "8005", "7388", "7318", "7398", "7376", "7309", "9140", "6388", "6389", 
+                "6392", "6393", "6394", "8400", "8423", "8765", "8853", "8858", "9125", "9161", 
+                "9198", "9559", "9565", "9598", "9621", "9628", "9651", "9695", "9696", "7275", 
+                "7052", "7054", "7080", "7081", "7084"
+            ) -> "Uttar Pradesh (East)"
+            // UP West & Uttarakhand
+            prefix4 in listOf(
+                "9837", "9412", "9897", "9927", "9410", "9411", "9719", "9756", "9758", "9759", 
+                "9760", "9761", "8449", "7500", "7533", "7534", "7535", "8057", "8126", "8171", 
+                "8191", "8192", "8193", "8272", "8273", "8650", "8755", "8791", "8954", "8958", 
+                "8979", "9012", "9027", "9045", "9058", "9536", "9548", "9557", "9627", "9634", 
+                "9639", "9675", "9690", "7055", "7060"
+            ) -> "Uttar Pradesh (West)"
             // Delhi NCR
-            prefix4 in listOf("9810", "9811", "9818", "9891", "9910", "9958", "9971", "9999", "9871", "9873", "8800", "8826", "7042", "7011") -> "Delhi NCR"
+            prefix4 in listOf(
+                "9810", "9811", "9818", "9891", "9910", "9958", "9971", "9999", "9871", "9873", 
+                "8800", "8826", "7042", "7011", "9211", "9212", "9310", "9311", "9312", "9313", 
+                "9540", "9560", "9582", "9650", "9654", "9711", "9716", "9717", "9718", "8130", 
+                "8447", "8527", "8586", "8587", "8588", "8750", "8860", "8882"
+            ) -> "Delhi NCR"
             // Mumbai
-            prefix4 in listOf("9820", "9821", "9833", "9869", "9892", "9920", "9930", "9969", "9987", "9819", "9867", "9320", "7045") -> "Mumbai"
-            // UP East
-            prefix4 in listOf("9839", "9415", "9450", "9451", "9452", "9935", "9936", "9838", "9792", "8004", "8005", "7388", "7318", "9140", "6388") -> "Uttar Pradesh (East)"
-            // UP West
-            prefix4 in listOf("9837", "9412", "9897", "9927", "9410", "9411", "9719", "9759", "9760", "8449", "7500", "7535") -> "Uttar Pradesh (West)"
+            prefix4 in listOf(
+                "9820", "9821", "9833", "9869", "9892", "9920", "9930", "9969", "9987", "9819", 
+                "9867", "9320", "7045", "8080", "8082", "8097", "8108", "8286", "8291", "8422", 
+                "8424", "8425", "8433", "8451", "8452", "8454", "8652", "8655", "8879", "9004", 
+                "9029", "9167", "9619", "9702", "9768", "9769"
+            ) -> "Mumbai"
+            // Bihar & Jharkhand
+            prefix4 in listOf(
+                "9835", "9934", "9939", "9431", "9430", "9771", "9709", "8877", "7070", "6200", 
+                "6201", "6202", "6203", "6204", "6205", "6206", "6207", "8292", "8294", "8298", 
+                "8409", "8434", "8521", "8544", "8757", "8873", "9006", "9122", "9123", "9135", 
+                "9155", "9162", "9199", "9504", "9507", "9523", "9525", "9534", "9570", "9572", 
+                "9576", "9608", "9631", "9661", "9708", "9931", "9955", "7250", "7260", "7277"
+            ) -> "Bihar & Jharkhand"
             // Maharashtra & Goa
             prefix4 in listOf("9822", "9823", "9850", "9860", "9890", "9922", "9923", "9960", "9970", "9975", "7030", "9422", "9423") -> "Maharashtra & Goa"
-            // Bihar & Jharkhand
-            prefix4 in listOf("9835", "9934", "9939", "9431", "9430", "9771", "9709", "8877", "7070", "6200", "6201") -> "Bihar & Jharkhand"
             // Kolkata & West Bengal
             prefix4 in listOf("9830", "9831", "9832", "9836", "9903", "9433", "9434", "7003", "7001") -> "Kolkata & West Bengal"
             // Karnataka & Bangalore
@@ -330,11 +376,18 @@ object IshaCallerLookupEngine {
         }
 
         val operator = when {
-            prefix2 in listOf("62", "63", "70", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89") && prefix4.startsWith("6") -> "Jio"
-            prefix4.startsWith("700") || prefix4.startsWith("701") || prefix4.startsWith("702") -> "Jio"
+            // Airtel specific prefixes
+            prefix4 in listOf("8564", "8565", "9810", "9811", "9818", "9891", "9910", "9958", "9971", "9999", "9839", "9838", "9792") -> "Airtel"
+            // Vi (Vodafone Idea) specific prefixes
+            prefix4 in listOf("9807", "9721", "9820", "9821", "9833", "9890", "9892", "9920", "9930", "9935", "9936", "9822", "9823") -> "Vi (Vodafone Idea)"
+            // BSNL
+            prefix4.startsWith("941") || prefix4.startsWith("942") || prefix4.startsWith("943") || prefix4.startsWith("944") || prefix4.startsWith("945") -> "BSNL"
+            // Jio
+            prefix2 in listOf("62", "63", "70", "79") && prefix4.startsWith("6") -> "Reliance Jio"
+            prefix4.startsWith("700") || prefix4.startsWith("701") || prefix4.startsWith("702") -> "Reliance Jio"
+            prefix4.startsWith("8081") || prefix4 in listOf("8004", "8005", "7388", "7318", "9140", "6388") -> "Reliance Jio / Airtel"
             prefix4.startsWith("981") || prefix4.startsWith("989") || prefix4.startsWith("991") || prefix4.startsWith("995") || prefix4.startsWith("997") -> "Airtel"
             prefix4.startsWith("982") || prefix4.startsWith("983") || prefix4.startsWith("992") || prefix4.startsWith("993") -> "Vi / Airtel"
-            prefix4.startsWith("941") || prefix4.startsWith("942") || prefix4.startsWith("943") || prefix4.startsWith("944") || prefix4.startsWith("945") -> "BSNL"
             else -> "Cellular Network"
         }
 

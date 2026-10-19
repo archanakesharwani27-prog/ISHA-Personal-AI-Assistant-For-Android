@@ -246,6 +246,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- ── ADB Command & Test Injection Receiver ──────────────────────── -->
+        <receiver
+            android:name=".IshaAdbReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.aura.assistant.ADB_INJECT" />
+                <action android:name="com.isha.assistant.ADB_INJECT" />
+            </intent-filter>
+        </receiver>
+
         <!--
           Accessibility service: Powers WhatsApp auto-send, Gmail compose,
           Instagram DM, Facebook post — full UI injection without the user
