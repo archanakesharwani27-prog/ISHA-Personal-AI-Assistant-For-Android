@@ -2,6 +2,7 @@ package com.aura.assistant
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -152,6 +153,16 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
                 )
+            }
+            try {
+                val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                if (km != null && km.isKeyguardLocked) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        km.requestDismissKeyguard(this, null)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "requestDismissKeyguard error: ${e.message}")
             }
             if (!viewModel.isVoiceModeActive.value) {
                 Log.i(TAG, "Starting Gemini Live Voice duplex mode directly")

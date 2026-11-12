@@ -42,11 +42,11 @@ class HeyIshaDetector(
         private const val F_MIN       = 0f      // Minimum frequency (Hz)
         private const val F_MAX       = 8_000f  // Nyquist for 16 kHz
 
-        // ── Detection thresholds (calibrated) ───────────────────────────────────
-        const val MIN_SCORE             = 0.70f  // Minimum per-frame score to start counting
-        const val HIGH_CONFIDENCE_SCORE = 0.88f  // High-confidence threshold (requires at least 2 frames)
-        const val CONFIRM_FRAMES        = 4      // Consecutive frames needed at MIN_SCORE (~320ms)
-        const val HIGH_CONF_FRAMES      = 2      // Consecutive frames needed even for high confidence
+        // ── Detection thresholds (calibrated for multi-phrase variants e.g. "Hey Isha", "Hello Isha", "Ok Isha", "Isha suno") ──
+        const val MIN_SCORE             = 0.52f  // Minimum per-frame score to start counting
+        const val HIGH_CONFIDENCE_SCORE = 0.78f  // High-confidence threshold
+        const val CONFIRM_FRAMES        = 2      // Consecutive frames needed at MIN_SCORE (~160ms)
+        const val HIGH_CONF_FRAMES      = 1      // Consecutive frames needed for high confidence (~80ms)
     }
 
     // ── ONNX Runtime session ─────────────────────────────────────────────────────

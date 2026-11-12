@@ -89,14 +89,12 @@ class WakeWordService : Service(), SensorEventListener {
         private const val COOLDOWN_MS     = 5_000L  // 5.0s cooldown after trigger to prevent echo
 
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
-        // Anti-false-positive calibration:
-        // Sustained two-word phrase ("Hey Isha") detection: Requires 4 consecutive frames (>= 0.75f)
-        // OR very high confidence (>= 0.90f) sustained for at least 3 consecutive frames (~240ms).
-        // Single isolated frame spikes (from horns, vehicle revs, doors, or single words) are NEVER allowed to trigger!
-        private const val MIN_SCORE              = 0.75f  // Keyword score threshold
-        private const val HIGH_CONFIDENCE_SCORE  = 0.90f  // High-confidence threshold (requires at least 3 frames)
-        private const val CONFIRM_FRAMES         = 4      // 4 consecutive frames (~320ms) required for standard score
-        private const val HIGH_CONF_FRAMES       = 3      // 3 consecutive frames required (~240ms) to reject single noise spikes
+        // Anti-false-positive calibration (calibrated for natural 160ms "I-sha" phoneme cluster):
+        // Responsive activation for multi-phrase variants ("Hey Isha", "Hello Isha", "Isha suno", "Ok Isha", "Okay Isha").
+        private const val MIN_SCORE              = 0.52f  // Keyword score threshold
+        private const val HIGH_CONFIDENCE_SCORE  = 0.78f  // High-confidence threshold
+        private const val CONFIRM_FRAMES         = 2      // 2 consecutive frames (~160ms) required for standard score
+        private const val HIGH_CONF_FRAMES       = 1      // 1 frame required for high confidence (~80ms)
 
         // AURA Calibrated Double Quick-Shake Config
         private const val SHAKE_THRESHOLD       = 3.25f // Calibrated shake peak (3.25g)
@@ -591,7 +589,7 @@ class WakeWordService : Service(), SensorEventListener {
                     heyIshaConsecutive = 0
                 }
 
-                val triggered = score >= HeyIshaDetector.HIGH_CONFIDENCE_SCORE ||
+                val triggered = (score >= HeyIshaDetector.HIGH_CONFIDENCE_SCORE && heyIshaConsecutive >= HeyIshaDetector.HIGH_CONF_FRAMES) ||
                                 heyIshaConsecutive >= HeyIshaDetector.CONFIRM_FRAMES
                 if (triggered && (now - lastTriggerTime > COOLDOWN_MS)) {
                     heyIshaConsecutive = 0
@@ -647,7 +645,7 @@ class WakeWordService : Service(), SensorEventListener {
                 else                                                                                        -> "wakeword/hey_mira.onnx"
             }
             val phraseName = if (hasIsha) "Hey Isha" else if (hasAura) "Hey Aura" else "Hey ISHA"
-            val threshold = if (hasIsha) 0.75f else 0.45f
+            val threshold = if (hasIsha) 0.50f else 0.45f
             models.add(WakeWordModel(name = phraseName, modelPath = phrasePath, threshold = threshold))
 
             val engine = WakeWordEngine(
@@ -827,8 +825,10 @@ class WakeWordService : Service(), SensorEventListener {
         // Acquire wake lock to immediately power on display and keep it bright for voice interaction
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
             val isScreenOff = powerManager?.isInteractive == false
-            val wakeLockDuration = if (isScreenOff) 10000L else 3000L
+            val isLocked = keyguardManager?.isKeyguardLocked == true
+            val wakeLockDuration = if (isScreenOff || isLocked) 10000L else 3000L
             val wakeLock = powerManager?.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                         PowerManager.ACQUIRE_CAUSES_WAKEUP or
@@ -836,7 +836,7 @@ class WakeWordService : Service(), SensorEventListener {
                 "isha:VoiceWakeLock"
             )
             wakeLock?.acquire(wakeLockDuration)
-            Log.i(TAG, "Screen wake lock acquired ($wakeLockDuration ms, isScreenOff=$isScreenOff)")
+            Log.i(TAG, "Screen wake lock acquired ($wakeLockDuration ms, isScreenOff=$isScreenOff, isLocked=$isLocked)")
         } catch (e: Exception) {
             Log.w(TAG, "WakeLock acquisition failed: ${e.message}")
         }
@@ -846,12 +846,14 @@ class WakeWordService : Service(), SensorEventListener {
 
         // 2. Engage Gemini Live voice duplex directly
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         val isScreenOff = powerManager?.isInteractive == false
+        val isLocked = keyguardManager?.isKeyguardLocked == true
         val act = MainActivity.instance
         if (act != null) {
             act.startVoiceModeDirectly()
-            // If screen was off, also launch intent to ensure activity is frontmost and turns screen on over keyguard
-            if (isScreenOff) {
+            // If screen was off or device is locked, also launch intent to ensure activity is frontmost and turns screen on over keyguard
+            if (isScreenOff || isLocked) {
                 try {
                     val voiceIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -862,7 +864,7 @@ class WakeWordService : Service(), SensorEventListener {
                     }
                     startActivity(voiceIntent)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to bring MainActivity to front on dark screen: ${e.message}")
+                    Log.w(TAG, "Failed to bring MainActivity to front on dark/locked screen: ${e.message}")
                 }
             }
         } else {
