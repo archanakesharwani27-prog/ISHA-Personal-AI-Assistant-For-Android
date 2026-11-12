@@ -176,11 +176,16 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
         liveClient.setVoiceLanguage(_voiceLanguage.value)
 
-        // Smart Inactivity Auto-Sleep (Gemini / ChatGPT style)
+        // Smart Inactivity Auto-Sleep (Multi-Tier Silence Auto-Shutdown)
         liveClient.onInactivityTimeout = {
-            viewModelScope.launch(Dispatchers.Main) {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
                 Log.i(TAG, "Live Voice auto-sleep triggered due to inactivity. Stopping voice mode to save battery.")
                 stopVoiceMode()
+            } else {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Log.i(TAG, "Live Voice auto-sleep triggered due to inactivity. Stopping voice mode to save battery.")
+                    stopVoiceMode()
+                }
             }
         }
 
@@ -915,6 +920,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         _isVoiceModeActive.value = false
         liveClient.disconnect()
         IshaDynamicIsland.hide()
+        com.aura.assistant.AuraDynamicIsland.hide()
         val app = getApplication<Application>()
         try {
             val resumeIntent = Intent(app, WakeWordService::class.java).apply {

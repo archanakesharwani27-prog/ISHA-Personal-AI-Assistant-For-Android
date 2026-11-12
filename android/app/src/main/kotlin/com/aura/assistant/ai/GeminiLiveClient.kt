@@ -19,6 +19,8 @@ import com.aura.assistant.config.Secrets
 import com.aura.assistant.config.IshaGatewayConfig
 import com.aura.assistant.vision.ScreenFrameSampler
 import android.os.PowerManager
+import android.os.Handler
+import android.os.Looper
 import com.aura.assistant.IshaDynamicIsland
 import com.aura.assistant.AuraDynamicIsland
 import com.google.gson.Gson
@@ -106,14 +108,18 @@ class GeminiLiveClient(private val context: Context) {
         private const val FALLBACK_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
         const val FROZEN_VOICE_NAME = "Aoede" // 🔒 FROZEN: Sweet natural female persona
 
-        // ── Smart Inactivity Auto-Sleep Timeouts (Gemini Live / ChatGPT style) ──────
-        private const val INACTIVITY_TIMEOUT_FOREGROUND_MS = 180_000L // 3 minutes idle in foreground
-        private const val INACTIVITY_TIMEOUT_BACKGROUND_MS = 90_000L  // 1.5 minutes idle in background / screen-off
+        // ── Smart Inactivity Auto-Sleep Timeouts (Multi-Tier Silence Auto-Shutdown) ──
+        private const val INITIAL_SILENCE_TIMEOUT_MS = 9_000L    // 9s: session start without spoken command
+        private const val FOLLOWUP_SILENCE_TIMEOUT_MS = 12_000L  // 12s: after Isha finishes speaking / turn completes
+        private const val BACKGROUND_SILENCE_TIMEOUT_MS = 7_000L // 7s: in background or screen dark/locked
     }
 
     // ── Smart Inactivity Auto-Sleep State ──────────────────────────────────────
     @Volatile private var lastActivityTimestamp = System.currentTimeMillis()
+    @Volatile private var hasUserSpokenInSession = false
     var onInactivityTimeout: (() -> Unit)? = null
+
+    fun hasUserSpoken(): Boolean = hasUserSpokenInSession
 
     private fun isBackgroundOrScreenOff(): Boolean {
         return try {
@@ -509,6 +515,9 @@ class GeminiLiveClient(private val context: Context) {
     }
 
     private fun connectInternal() {
+        if (!isAutoReconnecting) {
+            hasUserSpokenInSession = false
+        }
         refreshActivityTimestamp()
         ensureAudioPlaybackReady()
         _liveState.value = AuraLiveState.CONNECTING
@@ -831,6 +840,8 @@ class GeminiLiveClient(private val context: Context) {
                                     playbackEndTime = 0L
                                     isBargeInActive = true
                                     bargeInConsecutiveFrames = 0
+                                    hasUserSpokenInSession = true
+                                    refreshActivityTimestamp()
                                     _liveState.value = AuraLiveState.LISTENING
 
                                     val partialUser = currentUserTurnAccumulator.toString().trim()
@@ -875,6 +886,7 @@ class GeminiLiveClient(private val context: Context) {
                         // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
                         val isUserSpeaking = (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
                         if (isUserSpeaking) {
+                            hasUserSpokenInSession = true
                             refreshActivityTimestamp()
                             if (!hasSpokenInTurn) {
                                 hasSpokenInTurn = true
@@ -930,14 +942,23 @@ class GeminiLiveClient(private val context: Context) {
 
                             val now = System.currentTimeMillis()
 
-                            // ── Smart Inactivity Auto-Sleep Check (Gemini Live / ChatGPT style) ──
+                            // ── Multi-Tier Silence Auto-Shutdown (Gemini Live / ChatGPT style) ──
                             val isBgOrScreenOff = isBackgroundOrScreenOff()
-                            val maxIdleDuration = if (isBgOrScreenOff) INACTIVITY_TIMEOUT_BACKGROUND_MS else INACTIVITY_TIMEOUT_FOREGROUND_MS
-                            if (now - lastActivityTimestamp > maxIdleDuration) {
-                                Log.i(TAG, "Inactivity timeout reached (${now - lastActivityTimestamp}ms idle, backgroundOrScreenOff=$isBgOrScreenOff). Auto-sleeping voice session.")
-                                scope.launch(Dispatchers.Main) {
+                            val maxIdleDuration = when {
+                                isBgOrScreenOff -> BACKGROUND_SILENCE_TIMEOUT_MS
+                                !hasUserSpokenInSession -> INITIAL_SILENCE_TIMEOUT_MS
+                                else -> FOLLOWUP_SILENCE_TIMEOUT_MS
+                            }
+
+                            val currentState = _liveState.value
+                            val isWaitingForUserInput = currentState == AuraLiveState.LISTENING || currentState == AuraLiveState.CONNECTED
+
+                            if (isWaitingForUserInput && (now - lastActivityTimestamp > maxIdleDuration)) {
+                                Log.i(TAG, "Inactivity timeout reached (${now - lastActivityTimestamp}ms idle > ${maxIdleDuration}ms, bgOrScreenOff=$isBgOrScreenOff, hasUserSpoken=$hasUserSpokenInSession). Auto-sleeping voice session.")
+                                Handler(Looper.getMainLooper()).post {
                                     onInactivityTimeout?.invoke()
                                 }
+                                stopMicRecording()
                                 break
                             }
 
@@ -975,6 +996,8 @@ class GeminiLiveClient(private val context: Context) {
      */
     fun sendTextMessage(text: String) {
         if (text.isBlank()) return
+        hasUserSpokenInSession = true
+        refreshActivityTimestamp()
         currentUserTurnAccumulator.append(text).append(" ")
         if (_liveState.value == AuraLiveState.LISTENING || _liveState.value == AuraLiveState.CONNECTED) {
             sendTextMessageInternal(text)
@@ -1239,6 +1262,8 @@ class GeminiLiveClient(private val context: Context) {
                     val inTx = serverContent.getAsJsonObject("inputTranscription")
                     val tx = inTx.get("text")?.asString ?: ""
                     if (tx.isNotBlank()) {
+                        hasUserSpokenInSession = true
+                        refreshActivityTimestamp()
                         clearAssistantStreamer()
                         _transcriptFlow.value = tx
                         currentUserTurnAccumulator.append(tx).append(" ")
@@ -1425,6 +1450,7 @@ class GeminiLiveClient(private val context: Context) {
             isAutoReconnecting = false
             reconnectJob?.cancel()
             reconnectJob = null
+            hasUserSpokenInSession = false
             stopMicRecording()
             flushAudioPlayback()
             pendingTextMessages.clear()

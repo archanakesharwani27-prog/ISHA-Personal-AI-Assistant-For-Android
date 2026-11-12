@@ -89,12 +89,14 @@ class WakeWordService : Service(), SensorEventListener {
         private const val COOLDOWN_MS     = 5_000L  // 5.0s cooldown after trigger to prevent echo
 
         // ── Google/Alexa-style N-Consecutive-Frames Confirmation ──────────────
-        // Anti-false-positive calibration (calibrated for natural 160ms "I-sha" phoneme cluster):
-        // Responsive activation for multi-phrase variants ("Hey Isha", "Hello Isha", "Isha suno", "Ok Isha", "Okay Isha").
-        private const val MIN_SCORE              = 0.52f  // Keyword score threshold
-        private const val HIGH_CONFIDENCE_SCORE  = 0.78f  // High-confidence threshold
-        private const val CONFIRM_FRAMES         = 2      // 2 consecutive frames (~160ms) required for standard score
-        private const val HIGH_CONF_FRAMES       = 1      // 1 frame required for high confidence (~80ms)
+        // Anti-false-positive calibration (calibrated for sustained phoneme cluster):
+        // Rejects room noise, casual chatter, claps, doors, and TV dialogue.
+        // A single frame (80ms) can NEVER trigger the wake word under any circumstance!
+        private const val MIN_SCORE              = 0.68f  // Keyword score threshold (~240ms sustained)
+        private const val HIGH_CONFIDENCE_SCORE  = 0.86f  // High-confidence threshold (minimum 2 frames / ~160ms required)
+        private const val CONFIRM_FRAMES         = 3      // 3 consecutive frames (~240ms) required for standard score
+        private const val HIGH_CONF_FRAMES       = 2      // 2 consecutive frames required (~160ms) to reject single noise spikes
+        private const val MIN_RMS_ENERGY         = 0.015  // Speech energy floor to reject ambient room noise
 
         // AURA Calibrated Double Quick-Shake Config
         private const val SHAKE_THRESHOLD       = 3.25f // Calibrated shake peak (3.25g)
@@ -576,15 +578,16 @@ class WakeWordService : Service(), SensorEventListener {
                 val score = detector.process(buf.copyOf(read))
                 if (score < 0f) continue  // Not enough samples yet
 
+                val rms = HeyIshaDetector.calculateRms(buf, read)
                 val now = System.currentTimeMillis()
-                if (score >= HeyIshaDetector.MIN_SCORE) {
+                if (score >= HeyIshaDetector.MIN_SCORE && rms >= HeyIshaDetector.MIN_RMS_ENERGY) {
                     heyIshaConsecutive++
                     if (score >= 0.10f) {
-                        Log.d(TAG, "HeyIsha score=$score consecutive=$heyIshaConsecutive")
+                        Log.d(TAG, "HeyIsha score=$score consecutive=$heyIshaConsecutive rms=$rms")
                     }
                 } else {
                     if (heyIshaConsecutive > 0) {
-                        Log.d(TAG, "HeyIsha streak reset (score=$score)")
+                        Log.d(TAG, "HeyIsha streak reset (score=$score, rms=$rms)")
                     }
                     heyIshaConsecutive = 0
                 }
@@ -594,7 +597,7 @@ class WakeWordService : Service(), SensorEventListener {
                 if (triggered && (now - lastTriggerTime > COOLDOWN_MS)) {
                     heyIshaConsecutive = 0
                     lastTriggerTime = now
-                    Log.i(TAG, "Hey Isha CONFIRMED! score=$score — triggering")
+                    Log.i(TAG, "Hey Isha CONFIRMED! score=$score (rms=$rms) — triggering")
                     detector.reset()
                     handler.post {
                         stopHeyIshaDetector()
@@ -616,6 +619,47 @@ class WakeWordService : Service(), SensorEventListener {
         heyIshaDetector?.close(); heyIshaDetector = null
         IshaDiagnostics.updateWake { it.copy(inferenceRunning = false) }
         Log.i(TAG, "HeyIshaDetector stopped")
+    }
+
+    // Engine reflection fields for real-time RMS speech energy check
+    private var engineProcessorsField: java.lang.reflect.Field? = null
+    private var modelAudioProcField: java.lang.reflect.Field? = null
+    private var rawBufferField: java.lang.reflect.Field? = null
+
+    private fun calculateEngineRms(engine: WakeWordEngine): Double {
+        return try {
+            if (engineProcessorsField == null) {
+                engineProcessorsField = engine.javaClass.getDeclaredField("modelProcessors").apply { isAccessible = true }
+            }
+            val processors = engineProcessorsField?.get(engine) as? Map<*, *>
+            val firstProcessor = processors?.values?.firstOrNull() ?: return 1.0
+            if (modelAudioProcField == null) {
+                modelAudioProcField = firstProcessor.javaClass.getDeclaredField("audioProcessor").apply { isAccessible = true }
+            }
+            val audioProcessor = modelAudioProcField?.get(firstProcessor) ?: return 1.0
+            if (rawBufferField == null) {
+                rawBufferField = audioProcessor.javaClass.getDeclaredField("rawDataBuffer").apply { isAccessible = true }
+            }
+            val rawDataBuffer = rawBufferField?.get(audioProcessor) as? java.util.ArrayDeque<*> ?: return 1.0
+
+            val array = try {
+                rawDataBuffer.toArray()
+            } catch (_: Exception) {
+                null
+            } ?: return 1.0
+
+            if (array.isEmpty()) return 1.0
+            val samplesToTake = minOf(array.size, 1280)
+            var sumSq = 0.0
+            val startIdx = array.size - samplesToTake
+            for (i in startIdx until array.size) {
+                val s = (array[i] as? Float)?.toDouble() ?: 0.0
+                sumSq += s * s
+            }
+            if (samplesToTake > 0) sqrt(sumSq / samplesToTake) else 1.0
+        } catch (_: Exception) {
+            1.0 // Gracefully pass energy check if reflection is not supported on this runtime
+        }
     }
 
     /**
@@ -645,7 +689,7 @@ class WakeWordService : Service(), SensorEventListener {
                 else                                                                                        -> "wakeword/hey_mira.onnx"
             }
             val phraseName = if (hasIsha) "Hey Isha" else if (hasAura) "Hey Aura" else "Hey ISHA"
-            val threshold = if (hasIsha) 0.50f else 0.45f
+            val threshold = if (hasIsha) 0.62f else 0.58f
             models.add(WakeWordModel(name = phraseName, modelPath = phrasePath, threshold = threshold))
 
             val engine = WakeWordEngine(
@@ -664,12 +708,13 @@ class WakeWordService : Service(), SensorEventListener {
                     .onEach { scoreItem ->
                         val score = scoreItem.score
                         val now   = System.currentTimeMillis()
+                        val rms   = calculateEngineRms(engine)
 
                         if (score >= 0.15f) {
-                            Log.d(TAG, "KWS score=$score for ${scoreItem.model.name}")
+                            Log.d(TAG, "KWS score=$score for ${scoreItem.model.name} (rms=$rms)")
                         }
 
-                        if (score >= MIN_SCORE) {
+                        if (score >= MIN_SCORE && rms >= MIN_RMS_ENERGY) {
                             consecutiveFramesAboveThreshold++
                         } else {
                             consecutiveFramesAboveThreshold = 0
@@ -680,7 +725,7 @@ class WakeWordService : Service(), SensorEventListener {
                         if (isTriggered && (now - lastTriggerTime > COOLDOWN_MS)) {
                             consecutiveFramesAboveThreshold = 0
                             lastTriggerTime = now
-                            Log.i(TAG, "Wake word CONFIRMED! '${scoreItem.model.name}' (score=$score)")
+                            Log.i(TAG, "Wake word CONFIRMED! '${scoreItem.model.name}' (score=$score, rms=$rms)")
                             handler.post {
                                 pauseWakeEngine()
                                 onTriggerDetected("wake", score, scoreItem.model.name)

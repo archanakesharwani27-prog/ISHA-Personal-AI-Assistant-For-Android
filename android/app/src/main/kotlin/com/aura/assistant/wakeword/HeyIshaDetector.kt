@@ -42,11 +42,25 @@ class HeyIshaDetector(
         private const val F_MIN       = 0f      // Minimum frequency (Hz)
         private const val F_MAX       = 8_000f  // Nyquist for 16 kHz
 
-        // ── Detection thresholds (calibrated for multi-phrase variants e.g. "Hey Isha", "Hello Isha", "Ok Isha", "Isha suno") ──
-        const val MIN_SCORE             = 0.52f  // Minimum per-frame score to start counting
-        const val HIGH_CONFIDENCE_SCORE = 0.78f  // High-confidence threshold
-        const val CONFIRM_FRAMES        = 2      // Consecutive frames needed at MIN_SCORE (~160ms)
-        const val HIGH_CONF_FRAMES      = 1      // Consecutive frames needed for high confidence (~80ms)
+        // ── Detection thresholds (calibrated for noise rejection & anti-false positive) ──
+        // Single 80ms acoustic spikes (doors, coughs, claps, TV, casual talk) are strictly rejected!
+        const val MIN_SCORE             = 0.68f  // Minimum per-frame score to start counting (~240ms sustained)
+        const val HIGH_CONFIDENCE_SCORE = 0.86f  // High-confidence threshold (minimum 2 frames / ~160ms required)
+        const val CONFIRM_FRAMES        = 3      // Consecutive frames needed at MIN_SCORE (~240ms)
+        const val HIGH_CONF_FRAMES      = 2      // Consecutive frames needed for high confidence (~160ms)
+        const val MIN_RMS_ENERGY        = 0.015f // Minimum audio RMS energy above ambient floor
+
+        /**
+         * Computes normalized RMS energy [0.0..1.0] from 16-bit PCM short buffer.
+         */
+        fun calculateRms(pcm: ShortArray, length: Int = pcm.size): Float {
+            if (length <= 0) return 0f
+            var sum = 0.0
+            for (i in 0 until length) {
+                sum += (pcm[i].toLong() * pcm[i].toLong())
+            }
+            return (sqrt(sum / length) / 32768.0).toFloat()
+        }
     }
 
     // ── ONNX Runtime session ─────────────────────────────────────────────────────
