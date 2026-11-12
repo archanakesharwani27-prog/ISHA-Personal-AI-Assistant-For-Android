@@ -198,12 +198,18 @@ class OpenRouterClient(private val context: Context) {
             val role = when (msg.role) {
                 MessageRole.USER -> "user"
                 MessageRole.ASSISTANT -> "assistant"
-                MessageRole.TOOL -> "system"
+                MessageRole.TOOL -> "assistant"
             }
             if (msg.text.isNotBlank()) {
+                val formattedContent = if (msg.role == MessageRole.TOOL) {
+                    val toolTag = if (!msg.toolName.isNullOrBlank()) "[Tool Result: ${msg.toolName}] " else "[Tool Result] "
+                    "$toolTag${msg.text}"
+                } else {
+                    msg.text
+                }
                 messagesArray.add(JsonObject().apply {
                     addProperty("role", role)
-                    addProperty("content", msg.text)
+                    addProperty("content", formattedContent)
                 })
             }
         }
@@ -312,8 +318,18 @@ class OpenRouterClient(private val context: Context) {
                         if (content.isNotBlank()) {
                             val lowerContent = content.lowercase()
                             val lowerPrompt = prompt.lowercase()
-                            val isActionIntent = lowerPrompt.contains("bhej") || lowerPrompt.contains("send") || lowerPrompt.contains("share") || lowerPrompt.contains("play") || lowerPrompt.contains("torch")
-                            val isFakeActionText = lowerContent.contains("kar rahi hoon") || lowerContent.contains("bhej rahi") || lowerContent.contains("send kar rahi") || lowerContent.contains("fetch kar rahi") || lowerContent.contains("maps.google.com/?q=23.")
+                            val isActionIntent = lowerPrompt.contains("bhej") || lowerPrompt.contains("send") || lowerPrompt.contains("share") ||
+                                    lowerPrompt.contains("play") || lowerPrompt.contains("torch") || lowerPrompt.contains("type") ||
+                                    lowerPrompt.contains("call") || lowerPrompt.contains("alarm") || lowerPrompt.contains("timer") ||
+                                    lowerPrompt.contains("set") || lowerPrompt.contains("turn") || lowerPrompt.contains("karo")
+                            val isFakeActionText = lowerContent.contains("kar rahi hoon") || lowerContent.contains("bhej rahi") ||
+                                    lowerContent.contains("send kar rahi") || lowerContent.contains("fetch kar rahi") ||
+                                    lowerContent.contains("maps.google.com/?q=23.") ||
+                                    lowerContent.contains("bhej diya") || lowerContent.contains("send ho gaya") || lowerContent.contains("send kar diya") ||
+                                    lowerContent.contains("type kar diya") || lowerContent.contains("likh diya") || lowerContent.contains("call mila di") ||
+                                    lowerContent.contains("call kar di") || lowerContent.contains("laga diya") || lowerContent.contains("set kar diya") ||
+                                    lowerContent.contains("on kar diya") || lowerContent.contains("off kar diya") || lowerContent.contains("kar diya hai") ||
+                                    lowerContent.contains("kar diya boss") || lowerContent.contains("ho gaya boss")
                             if (isActionIntent && isFakeActionText) {
                                 Log.w(TAG, "Fast LLM hallucinated action without tool execution: $content")
                                 throw IllegalStateException("Fast LLM hallucinated action narrative without calling tool")
@@ -432,12 +448,18 @@ class OpenRouterClient(private val context: Context) {
             val role = when (msg.role) {
                 MessageRole.USER -> "user"
                 MessageRole.ASSISTANT -> "assistant"
-                MessageRole.TOOL -> "system"
+                MessageRole.TOOL -> "assistant"
             }
             if (msg.text.isNotBlank()) {
+                val formattedContent = if (msg.role == MessageRole.TOOL) {
+                    val toolTag = if (!msg.toolName.isNullOrBlank()) "[Tool Result: ${msg.toolName}] " else "[Tool Result] "
+                    "$toolTag${msg.text}"
+                } else {
+                    msg.text
+                }
                 messagesArray.add(JsonObject().apply {
                     addProperty("role", role)
-                    addProperty("content", msg.text)
+                    addProperty("content", formattedContent)
                 })
             }
         }

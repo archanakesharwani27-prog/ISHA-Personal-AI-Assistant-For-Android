@@ -188,34 +188,38 @@ object IshaToolRouter {
         Pattern.CASE_INSENSITIVE
     )
 
+    private val FOLLOW_UP_PATTERN = Pattern.compile(
+        "\\b(kya kya|kya hai|kya bacha|aur kya|aur batao|aur dikhao|sab dikhao|list dikhao|kitna hai|kitne hai|kaun kaun|kaunsa|kaun sa|isse|isse bhi|isko|unko|inhe|inko|use|ise|iska|uska|unka|unse|wahi|wohi|phir|fir|bhi|delete karo|hatao|band karo|cancel karo|remove karo|clear karo|check karo|dekh kar|padho|batao|konsa|kon sa|kisko|kise)\\b",
+        Pattern.CASE_INSENSITIVE
+    )
+
     /**
      * Determines the optimal, minimal set of tool declarations for a given prompt.
      *
      * @param prompt User prompt text.
      * @param hasImage Whether an image or screen capture is directly attached.
      * @param hasPendingToolTurn Whether the previous conversation turn was a tool execution.
+     * @param recentTools Tools executed in recent turns, used for anaphoric/follow-up routing.
+     * @param recentUserPrompts Recent user prompts, used to maintain topic continuity.
      * @return Minimal tool declarations JSON array, or NULL if zero tools needed.
      */
     fun routeToolsForPrompt(
         prompt: String,
         hasImage: Boolean = false,
-        hasPendingToolTurn: Boolean = false
+        hasPendingToolTurn: Boolean = false,
+        recentTools: List<String> = emptyList(),
+        recentUserPrompts: List<String> = emptyList()
     ): JsonArray? {
         val clean = prompt.trim()
 
-        // 1. If previous turn was a tool execution, provide full tool set so chained steps can finish
-        if (hasPendingToolTurn) {
-            return IshaToolRegistry.getGeminiToolDeclarations()
-        }
-
-        // 2. Direct Multimodal Screen / Camera Perception:
+        // 1. Direct Multimodal Screen / Camera Perception:
         // When an image is already attached (from camera or screenshot), Gemini's native vision
         // answers directly in 0.5s when NO tool schema is attached, UNLESS an explicit action/comm intent is present!
         if (hasImage && !SCREEN_INTERACTIVE_PATTERN.matcher(clean).find() && !COMMS_PATTERN.matcher(clean).find()) {
             return null // 0 tools -> Instant single-turn multimodal vision!
         }
 
-        // 3. Domain Intent Matching
+        // 2. Domain Intent Matching
         val selectedNames = mutableSetOf<String>()
 
         if (MEDIA_PATTERN.matcher(clean).find()) {
@@ -247,6 +251,50 @@ object IshaToolRouter {
         }
         if (CODE_AND_FILE_PATTERN.matcher(clean).find()) {
             selectedNames.addAll(CODE_AND_FILE_TOOLS)
+        }
+
+        // 3. Contextual Continuity & Follow-Up Resolution (Anaphora / Ellipsis):
+        // When current prompt is anaphoric/follow-up ("kya kya hai", "aur kya", "isko band karo") OR previous turn had tools:
+        val isFollowUp = FOLLOW_UP_PATTERN.matcher(clean).find()
+
+        if (selectedNames.isEmpty() && (hasPendingToolTurn || isFollowUp)) {
+            // A. Inherit tools from recent executed tools
+            for (t in recentTools) {
+                when {
+                    MEDIA_TOOLS.contains(t) -> selectedNames.addAll(MEDIA_TOOLS)
+                    HARDWARE_TOOLS.contains(t) -> selectedNames.addAll(HARDWARE_TOOLS)
+                    COMMS_TOOLS.contains(t) -> selectedNames.addAll(COMMS_TOOLS)
+                    TIME_PRODUCTIVITY_TOOLS.contains(t) -> selectedNames.addAll(TIME_PRODUCTIVITY_TOOLS)
+                    SYSTEM_DIAGNOSTICS_TOOLS.contains(t) -> selectedNames.addAll(SYSTEM_DIAGNOSTICS_TOOLS)
+                    APPS_NAV_TOOLS.contains(t) -> selectedNames.addAll(APPS_NAV_TOOLS)
+                    WEB_TOOLS.contains(t) -> selectedNames.addAll(WEB_TOOLS)
+                    SCREEN_INTERACTIVE_TOOLS.contains(t) -> selectedNames.addAll(SCREEN_INTERACTIVE_TOOLS)
+                    CODE_AND_FILE_TOOLS.contains(t) -> selectedNames.addAll(CODE_AND_FILE_TOOLS)
+                }
+            }
+
+            // B. Check recent user prompts for domain context if recentTools didn't capture it
+            if (selectedNames.isEmpty()) {
+                for (prevPrompt in recentUserPrompts.reversed()) {
+                    val prevClean = prevPrompt.trim()
+                    if (TIME_PATTERN.matcher(prevClean).find()) selectedNames.addAll(TIME_PRODUCTIVITY_TOOLS)
+                    if (HARDWARE_PATTERN.matcher(prevClean).find()) selectedNames.addAll(HARDWARE_TOOLS)
+                    if (COMMS_PATTERN.matcher(prevClean).find()) selectedNames.addAll(COMMS_TOOLS)
+                    if (MEDIA_PATTERN.matcher(prevClean).find()) selectedNames.addAll(MEDIA_TOOLS)
+                    if (DIAGNOSTICS_PATTERN.matcher(prevClean).find()) selectedNames.addAll(SYSTEM_DIAGNOSTICS_TOOLS)
+                    if (APPS_NAV_PATTERN.matcher(prevClean).find()) selectedNames.addAll(APPS_NAV_TOOLS)
+                    if (WEB_PATTERN.matcher(prevClean).find()) selectedNames.addAll(WEB_TOOLS)
+                    if (selectedNames.isNotEmpty()) break
+                }
+            }
+
+            // C. If still empty but it's an explicit follow-up question, attach core essential bundle
+            if (selectedNames.isEmpty() && isFollowUp) {
+                selectedNames.addAll(TIME_PRODUCTIVITY_TOOLS)
+                selectedNames.addAll(HARDWARE_TOOLS)
+                selectedNames.addAll(COMMS_TOOLS)
+                selectedNames.addAll(SYSTEM_DIAGNOSTICS_TOOLS)
+            }
         }
 
         // 4. Pure Conversation / Greetings / Logic / QA:

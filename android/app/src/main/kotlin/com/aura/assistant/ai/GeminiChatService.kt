@@ -248,13 +248,17 @@ class GeminiChatService(private val context: Context) {
         // 1. Fast LLM (OpenRouter / Groq) handles sub-second Fast Chat & Tool Calling (<1.5s total turn).
         // 2. Google Gemini Flash is the multimodal vision engine AND resilient fallback.
         val hasFastLlmKey = Secrets.getActiveGroqKey(context).isNotBlank() || Secrets.getActiveOpenRouterKey(context).isNotBlank()
-        val hasPendingToolTurn = history.lastOrNull()?.let {
+        val recentToolNames = history.takeLast(8).mapNotNull { it.toolName }.filter { it.isNotBlank() }
+        val recentUserPrompts = history.takeLast(8).filter { it.role == MessageRole.USER }.map { it.text }
+        val hasPendingToolTurn = history.takeLast(4).any {
             it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank()
-        } ?: false
+        }
         val toolsForTurn = IshaToolRouter.routeToolsForPrompt(
             prompt = promptToSend,
             hasImage = effectiveImageBytes != null,
-            hasPendingToolTurn = hasPendingToolTurn
+            hasPendingToolTurn = hasPendingToolTurn,
+            recentTools = recentToolNames,
+            recentUserPrompts = recentUserPrompts
         )
 
         val canUseFastLlm = hasFastLlmKey && effectiveImageBytes == null
@@ -784,14 +788,18 @@ class GeminiChatService(private val context: Context) {
         // 3. Systematic Domain-Based Intent Tool Pruning (IshaToolRouter):
         // Pure conversation ("Hi", "Hello", "Kaise ho") & direct screen perception ➔ 0 tools (<1KB payload, <1s TTFT)!
         // Specific domains (Media, Hardware, Social, Calls) ➔ Only that domain's 2-5 tools.
-        // ⚡ O(1) check — tool turns are always at the tail of history
-        val hasPendingToolTurn = history.lastOrNull()?.let {
+        // ⚡ History-aware tool checking — preserves tools across multi-turn follow-ups
+        val recentToolNames = history.takeLast(8).mapNotNull { it.toolName }.filter { it.isNotBlank() }
+        val recentUserPrompts = history.takeLast(8).filter { it.role == MessageRole.USER }.map { it.text }
+        val hasPendingToolTurn = history.takeLast(4).any {
             it.role == MessageRole.TOOL || !it.toolName.isNullOrBlank()
-        } ?: false
+        }
         val routedDeclarations = IshaToolRouter.routeToolsForPrompt(
             prompt = newPrompt,
             hasImage = (imageBytes != null && imageBytes.isNotEmpty()),
-            hasPendingToolTurn = hasPendingToolTurn
+            hasPendingToolTurn = hasPendingToolTurn,
+            recentTools = recentToolNames,
+            recentUserPrompts = recentUserPrompts
         )
 
         if (routedDeclarations != null && routedDeclarations.size() > 0) {
