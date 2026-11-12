@@ -467,17 +467,6 @@ object IshaToolRegistry {
             required = emptyList()
         ))
 
-        // 14. Identify unknown caller (Truecaller-style lookup)
-        toolsArray.add(createFunction(
-            name = "identify_caller",
-            desc = "Look up information about an unknown phone number — identify if it is spam, business, or a known contact.",
-            params = mapOf("phone_number" to "string"),
-            required = listOf("phone_number"),
-            paramDescriptions = mapOf(
-                "phone_number" to "The phone number digits to identify"
-            )
-        ))
-
         // 15. Real Hardware Battery Status
         toolsArray.add(createFunction(
             name = "get_battery_status",
