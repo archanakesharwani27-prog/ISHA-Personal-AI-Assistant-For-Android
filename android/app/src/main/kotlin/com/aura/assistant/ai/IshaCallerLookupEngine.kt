@@ -133,6 +133,16 @@ object IshaCallerLookupEngine {
         // 5. Telecom Circle & Operator static inference (India NNP)
         val carrierCircle = inferCarrierAndCircle(clean)
 
+        // 5b. RapidAPI Cloud Caller ID Lookup (Eyecon / Truecaller RapidAPI Proxy)
+        val rapidApiKey = ApiKeyManager.getRapidApiKey(context)
+        if (rapidApiKey.isNotBlank()) {
+            val rapidResult = lookupRapidApiCallerId(clean, carrierCircle, rapidApiKey)
+            if (rapidResult != null && !rapidResult.displayName.isNullOrBlank()) {
+                lookupCache[clean] = rapidResult
+                return@withContext rapidResult
+            }
+        }
+
         // 6. Direct Truecaller API Lookup (if user provided free Truecaller installation token)
         val tcToken = ApiKeyManager.getTruecallerToken(context)
         if (tcToken.isNotBlank()) {
@@ -584,6 +594,113 @@ object IshaCallerLookupEngine {
             }
         } catch (_: Exception) {}
         return token
+    }
+
+    /**
+     * Queries RapidAPI Cloud Caller ID (Eyecon / Truecaller Proxy) using the user's RapidAPI key.
+     * Endpoints checked:
+     * 1. Eyecon Caller ID & Social Search:
+     *    GET https://caller-id-social-search-eyecon.p.rapidapi.com/lookup?phone=+91<clean>
+     * 2. Truecaller API2:
+     *    GET https://truecaller-api2.p.rapidapi.com/search?phone=<clean>&country=IN
+     */
+    private fun lookupRapidApiCallerId(clean: String, carrierCircle: String, apiKey: String): CallerIdentityResult? {
+        if (apiKey.isBlank()) return null
+        val formatted = formatNumberDisplay(clean)
+
+        // Tier 1: Eyecon Caller ID on RapidAPI
+        try {
+            val queryPhone = if (clean.startsWith("+")) clean else "+91$clean"
+            val url = "https://caller-id-social-search-eyecon.p.rapidapi.com/lookup?phone=${URLEncoder.encode(queryPhone, "UTF-8")}"
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("X-RapidAPI-Key", apiKey)
+                .header("X-RapidAPI-Host", "caller-id-social-search-eyecon.p.rapidapi.com")
+                .header("Accept", "application/json")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string()
+            response.close()
+
+            if (response.isSuccessful && !body.isNullOrBlank()) {
+                val json = JsonParser.parseString(body)
+                val resolvedName = when {
+                    json.isJsonObject -> {
+                        val obj = json.asJsonObject
+                        obj.get("name")?.asString?.takeIf { it.isNotBlank() }
+                            ?: obj.get("fullName")?.asString?.takeIf { it.isNotBlank() }
+                            ?: obj.get("displayName")?.asString?.takeIf { it.isNotBlank() }
+                            ?: obj.getAsJsonArray("names")?.firstOrNull()?.asString?.takeIf { it.isNotBlank() }
+                    }
+                    json.isJsonArray -> {
+                        val first = json.asJsonArray.firstOrNull()
+                        if (first != null && first.isJsonObject) {
+                            first.asJsonObject.get("name")?.asString?.takeIf { it.isNotBlank() }
+                        } else null
+                    }
+                    else -> null
+                }
+
+                if (!resolvedName.isNullOrBlank()) {
+                    return CallerIdentityResult(
+                        rawNumber = clean,
+                        cleanDigits = clean,
+                        formattedDisplay = formatted,
+                        source = "rapidapi_eyecon",
+                        displayName = resolvedName,
+                        isSpam = false,
+                        spamRisk = "None",
+                        operatorAndCircle = carrierCircle,
+                        details = "Identified as '$resolvedName' via Cloud Caller ID ($carrierCircle).",
+                        recommendation = "Personal contact identified online."
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Eyecon RapidAPI lookup exception: ${e.message}")
+        }
+
+        // Tier 2: Truecaller API2 Proxy on RapidAPI
+        try {
+            val url = "https://truecaller-api2.p.rapidapi.com/search?phone=${URLEncoder.encode(clean, "UTF-8")}&country=IN"
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("X-RapidAPI-Key", apiKey)
+                .header("X-RapidAPI-Host", "truecaller-api2.p.rapidapi.com")
+                .header("Accept", "application/json")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string()
+            response.close()
+
+            if (response.isSuccessful && !body.isNullOrBlank()) {
+                val json = JsonParser.parseString(body).asJsonObject
+                val name = json.get("name")?.asString?.takeIf { it.isNotBlank() }
+                    ?: json.getAsJsonObject("data")?.get("name")?.asString?.takeIf { it.isNotBlank() }
+                if (!name.isNullOrBlank()) {
+                    return CallerIdentityResult(
+                        rawNumber = clean,
+                        cleanDigits = clean,
+                        formattedDisplay = formatted,
+                        source = "rapidapi_truecaller",
+                        displayName = name,
+                        isSpam = false,
+                        spamRisk = "None",
+                        operatorAndCircle = carrierCircle,
+                        details = "Identified as '$name' via Cloud Caller ID ($carrierCircle).",
+                        recommendation = "Verified caller identity."
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Truecaller RapidAPI lookup exception: ${e.message}")
+        }
+
+        return null
     }
 
     /**

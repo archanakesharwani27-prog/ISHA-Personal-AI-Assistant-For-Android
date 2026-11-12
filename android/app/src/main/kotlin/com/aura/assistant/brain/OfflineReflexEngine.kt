@@ -550,6 +550,19 @@ object OfflineReflexEngine {
             }
         }
 
+        // 18b. RapidAPI Caller ID Key Configuration Reflex (<10ms)
+        if (clean.contains("rapidapi") && (clean.contains("key") || clean.contains("token") || clean.contains("save") || clean.contains("set"))) {
+            val keyMatch = Regex("""\b(?:key|token|save|hai|set|to)\s*[:=]?\s*([a-zA-Z0-9_\-]{20,})""", RegexOption.IGNORE_CASE).find(prompt)
+                ?: Regex("""\b([a-zA-Z0-9_\-]{30,65})\b""").find(prompt)
+            if (keyMatch != null) {
+                val rawKey = keyMatch.groupValues[1].trim().trimEnd('.', ',', ';')
+                if (execute) {
+                    com.aura.assistant.config.ApiKeyManager.saveRapidApiKey(context, rawKey)
+                }
+                return OfflineReflexResult("set_rapidapi_key", "Boss, aapki RapidAPI Caller ID key successfully save ho gayi hai! Ab se main sabhi unknown callers ke exact real names fetch kar sakungi.", true)
+            }
+        }
+
         // 19. Contact Memory Reflex (Save & Update Phone Numbers with Versioning)
         val hasContactIntent = !isCallerIdQuery && (clean.contains("number") || clean.contains("no") || clean.contains("phone") || clean.contains("mobile") || clean.contains("contact")) &&
                 (clean.contains("save") || clean.contains("update") || clean.contains("yaad") || clean.contains("rakh") || clean.contains("store") || clean.contains("likh") || (clean.contains("ka hai") && !clean.contains("kiska")) || (clean.contains("ki hai") && !clean.contains("kiski")))

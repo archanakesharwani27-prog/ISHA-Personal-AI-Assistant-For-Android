@@ -22,6 +22,7 @@ object ApiKeyManager {
     private const val KEY_USER_API_KEY = "user_gemini_api_key"
     private const val KEY_OPENROUTER_API_KEY = "user_openrouter_api_key"
     private const val KEY_TRUECALLER_TOKEN = "user_truecaller_token"
+    private const val KEY_RAPIDAPI_KEY = "user_rapidapi_key"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -144,6 +145,34 @@ object ApiKeyManager {
 
     fun hasTruecallerToken(context: Context): Boolean {
         return getTruecallerToken(context).isNotBlank()
+    }
+
+    /**
+     * Retrieves the stored RapidAPI Key if present and non-blank.
+     */
+    fun getRapidApiKey(context: Context): String {
+        return getPrefs(context).getString(KEY_RAPIDAPI_KEY, "")?.trim() ?: ""
+    }
+
+    /**
+     * Persistently saves a user-configured RapidAPI key.
+     */
+    fun saveRapidApiKey(context: Context, key: String) {
+        val clean = key.trim()
+        getPrefs(context).edit().putString(KEY_RAPIDAPI_KEY, clean).apply()
+        Log.i(TAG, "Saved RapidAPI key (length=${clean.length})")
+    }
+
+    /**
+     * Clears the stored RapidAPI key.
+     */
+    fun clearRapidApiKey(context: Context) {
+        getPrefs(context).edit().remove(KEY_RAPIDAPI_KEY).apply()
+        Log.i(TAG, "Cleared user RapidAPI key")
+    }
+
+    fun hasRapidApiKey(context: Context): Boolean {
+        return getRapidApiKey(context).isNotBlank()
     }
 
 
