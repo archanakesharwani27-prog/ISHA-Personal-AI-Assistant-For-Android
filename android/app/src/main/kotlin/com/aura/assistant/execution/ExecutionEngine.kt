@@ -140,13 +140,16 @@ object ExecutionEngine {
                     )
                 }
             } else {
-                executionResult.copy(durationMs = System.currentTimeMillis() - startTime)
+                executionResult.copy(
+                    evidence = evidence,
+                    durationMs = System.currentTimeMillis() - startTime
+                )
             }
 
             if (verifiedResult.status == ToolStatus.SUCCESS) {
                 // ── Stage 9: COMMIT & Stage 10: LEARN ───────────────────
-                Log.i(TAG, "Tool '${tool.name}' successfully executed and observed in ${verifiedResult.durationMs}ms")
-                recordLearning(context, tool, arguments, verifiedResult, true)
+                Log.i(TAG, "Tool '${tool.name}' successfully executed and observed in ${verifiedResult.durationMs}ms (verified: ${evidence.verified})")
+                recordLearning(context, tool, arguments, verifiedResult, evidence.verified)
                 return verifiedResult
             }
 
@@ -241,12 +244,38 @@ object ExecutionEngine {
         )
 
         val output = JsonObject()
+        val isVerified = toolResult.evidence?.verified == true
+        val observedState = toolResult.evidence?.observedState
+
         when (toolResult.status) {
             ToolStatus.SUCCESS -> {
-                output.addProperty("status", "success")
-                output.addProperty("message", toolResult.message)
-                toolResult.data?.entrySet()?.forEach { (k, v) ->
-                    if (!output.has(k)) output.add(k, v)
+                if (isVerified) {
+                    output.addProperty("status", "success")
+                    output.addProperty("message", toolResult.message)
+                    toolResult.data?.entrySet()?.forEach { (k, v) ->
+                        if (!output.has(k)) output.add(k, v)
+                    }
+                    if (!output.has("_task_guidance")) {
+                        val stateInfo = if (!observedState.isNullOrBlank()) " ($observedState)" else ""
+                        output.addProperty(
+                            "_task_guidance",
+                            "Tool '$toolName' finished and physically verified$stateInfo. Give a short, sweet spoken Hindi/Hinglish confirmation to Boss."
+                        )
+                    }
+                } else {
+                    // Action dispatched or in-progress, but physical evidence is NOT yet verified
+                    output.addProperty("status", "in_progress")
+                    output.addProperty("message", toolResult.message)
+                    toolResult.data?.entrySet()?.forEach { (k, v) ->
+                        if (!output.has(k)) output.add(k, v)
+                    }
+                    val guidanceMsg = if (!observedState.isNullOrBlank()) observedState else "action in progress"
+                    output.addProperty(
+                        "_task_guidance",
+                        "CRITICAL VERIFICATION NOTICE: Tool '$toolName' is in progress but NOT yet physically verified ($guidanceMsg). " +
+                                "DO NOT say 'Done', 'Ho gaya', 'Play kar diya', ya 'Bhej diya'! " +
+                                "Acknowledge the ongoing action honestly in natural Hindi/Hinglish (e.g. '$toolName open karke play kar rahi hoon...' ya 'process chal rahi hai...')."
+                    )
                 }
             }
             ToolStatus.NEEDS_CONFIRMATION -> {

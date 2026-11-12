@@ -3675,9 +3675,16 @@ object IshaToolRegistry {
                         }
                     } else {
                         val success = playMediaInApp(context, if (effectiveUrl.isNotBlank()) effectiveUrl else query, "youtube")
+                        val a11y = IshaAccessibilityService.instance
+                        val isPlaying = a11y?.youTubePlaybackVerified == true
                         result.addProperty("status", if (success) "success" else "error")
                         result.addProperty("query", query)
-                        result.addProperty("message", "YouTube par \"$query\" play kiya ja raha hai Boss! 🎵")
+                        result.addProperty("playback_verified", isPlaying)
+                        result.addProperty("message", if (isPlaying) {
+                            "YouTube par \"$query\" play kar diya hai Boss! 🎵"
+                        } else {
+                            "YouTube par \"$query\" play kiya ja raha hai Boss! 🎵"
+                        })
                     }
                 }
 
@@ -6852,6 +6859,9 @@ object IshaToolRegistry {
                     setPackage(packageName)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
+                if (!isDirectUrl) {
+                    IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
+                }
                 try {
                     context.startActivity(intent)
                 } catch (_: Exception) {
@@ -6861,7 +6871,20 @@ object IshaToolRegistry {
                     context.startActivity(fallback)
                 }
                 if (!isDirectUrl) {
-                    IshaAccessibilityService.instance?.armYouTubeAutoPlayFirstResult(trimmedQuery)
+                    val a11y = IshaAccessibilityService.instance
+                    if (a11y != null) {
+                        val startTime = System.currentTimeMillis()
+                        // Await up to 3500ms for accessibility to click the video card and verify playback
+                        while (System.currentTimeMillis() - startTime < 3500L) {
+                            if (a11y.youTubePlaybackVerified) {
+                                Log.i(TAG, "playMediaInApp: YouTube playback verified active after ${System.currentTimeMillis() - startTime}ms")
+                                break
+                            }
+                            try { Thread.sleep(250L) } catch (_: Exception) {}
+                        }
+                    } else {
+                        try { Thread.sleep(600L) } catch (_: Exception) {}
+                    }
                 }
                 return true
             }

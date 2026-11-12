@@ -136,6 +136,10 @@ open class IshaAccessibilityService : AccessibilityService() {
     // ── Hands-Free Mobile Agent Pending States (Panda-Style Engine) ───────────
     @Volatile var pendingYouTubeAutoPlay = false
     @Volatile var pendingYouTubeQuery = ""
+    @Volatile var youTubePlaybackVerified = false
+    @Volatile var lastYouTubeTapTime = 0L
+    @Volatile var youTubeTapAttempts = 0
+    @Volatile var lastYouTubeA11yProcessTime = 0L
     @Volatile var pendingHotspotToggle: Boolean? = null
     @Volatile var pendingNavigationMode: String? = null
     @Volatile var pendingWifiToggle: Boolean? = null
@@ -231,12 +235,19 @@ open class IshaAccessibilityService : AccessibilityService() {
             if (clickFirstMatch(root, UNINSTALL_HINTS)) pendingAutoUninstall = false
         }
         if (pkg == PKG_YOUTUBE) {
-            // Auto skip ads if skip button is visible on YouTube
-            performYoutubeSkipAd()
-            if (pendingYouTubeAutoPlay) {
-                if (clickYouTubeFirstVideo(root, pendingYouTubeQuery)) {
-                    pendingYouTubeAutoPlay = false
-                    Log.i(TAG, "YouTube first video clicked successfully via onAccessibilityEvent!")
+            val now = System.currentTimeMillis()
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || (now - lastYouTubeA11yProcessTime >= 1200L)) {
+                lastYouTubeA11yProcessTime = now
+                // Auto skip ads if skip button is visible on YouTube
+                performYoutubeSkipAd()
+                if (pendingYouTubeAutoPlay) {
+                    if (isYouTubePlaybackActive(root)) {
+                        pendingYouTubeAutoPlay = false
+                        youTubePlaybackVerified = true
+                        Log.i(TAG, "YouTube playback verified active via onAccessibilityEvent!")
+                    } else {
+                        clickYouTubeFirstVideo(root, pendingYouTubeQuery)
+                    }
                 }
             }
         }
@@ -1774,74 +1785,290 @@ Reply kar naturally jaise Isha WhatsApp pe karti hai. Sirf message text output k
     fun armYouTubeAutoPlay(query: String) {
         pendingYouTubeAutoPlay = true
         pendingYouTubeQuery = query
+        youTubePlaybackVerified = false
+        lastYouTubeTapTime = 0L
+        youTubeTapAttempts = 0
 
         // Staggered attempts: YouTube network loading can take 1 to 5 seconds
-        val delays = listOf(1000L, 1800L, 2800L, 4000L, 5500L)
+        val delays = listOf(800L, 1600L, 2500L, 3800L, 5200L, 6500L)
         delays.forEachIndexed { index, delay ->
             val isFinal = (index == delays.size - 1)
             stepHandler.postDelayed({
                 if (pendingYouTubeAutoPlay) {
                     val root = rootInActiveWindow
                     if (root != null) {
-                        // From attempt 2 (2800ms) onwards, enable top-result fallback click so fuzzy/mispronounced songs auto-play without 5.5s delay
-                        if (clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal || index >= 2)) {
+                        if (isYouTubePlaybackActive(root)) {
                             pendingYouTubeAutoPlay = false
-                            Log.i(TAG, "YouTube video auto-play clicked at ${delay}ms")
+                            youTubePlaybackVerified = true
+                            Log.i(TAG, "YouTube video playback verified active at ${delay}ms")
+                        } else {
+                            clickYouTubeFirstVideo(root, pendingYouTubeQuery, isFinal || index >= 3)
                         }
+                    }
+                    if (isFinal) {
+                        // After final delay, verify one last time and clean up
+                        stepHandler.postDelayed({
+                            val finalRoot = rootInActiveWindow
+                            if (finalRoot != null && isYouTubePlaybackActive(finalRoot)) {
+                                youTubePlaybackVerified = true
+                            }
+                            pendingYouTubeAutoPlay = false
+                        }, 1200L)
                     }
                 }
             }, delay)
         }
     }
 
-    fun clickYouTubeFirstVideo(root: AccessibilityNodeInfo, query: String = "", isFinalAttempt: Boolean = false): Boolean {
+    fun isYouTubePlaybackActive(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg.isNotBlank() && !pkg.contains("youtube")) return false
+        return checkYouTubePlaybackRecursive(root)
+    }
+
+    private fun checkYouTubePlaybackRecursive(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val resId = (node.viewIdResourceName ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase()
+        val text = (node.text?.toString() ?: "").lowercase()
+
+        // 1. YouTube Active Player Controls & Overlays (excluding layout containers like watch_while_layout / player_container which exist on search screen)
+        if (resId.contains("pause_button") ||
+            resId.contains("play_pause_button") ||
+            resId.contains("player_control") ||
+            resId.contains("controls_overlay") ||
+            resId.contains("skip_ad_button") ||
+            resId.contains("ad_skip_button")) {
+            return true
+        }
+
+        // 2. Playback control descriptions
+        if (desc == "pause video" || desc.contains("pause video") ||
+            desc == "pause" || desc.contains("video pause") ||
+            desc.contains("collapse player") || desc.contains("shrink player") ||
+            desc.contains("video player") || desc.contains("seek bar") ||
+            desc.contains("playback controls") ||
+            desc.contains("रोकें") || desc.contains("वीडियो रोकें")) {
+            return true
+        }
+
+        // 3. Playback control text
+        if (text == "pause" || text == "pause video" || text == "रोकें") {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (checkYouTubePlaybackRecursive(child)) return true
+        }
+        return false
+    }
+
+    /**
+     * Identifies non-video UI elements to strictly exclude from video card targeting:
+     * e.g. "Did you mean", search edit boxes, filter buttons, and navigation toolbars.
+     */
+    private fun isExcludedYouTubeNode(node: AccessibilityNodeInfo): Boolean {
+        val resId = (node.viewIdResourceName ?: "").lowercase()
+        val text = (node.text?.toString() ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase()
+        val cls = (node.className?.toString() ?: "").lowercase()
+
+        // 1. Resource ID exclusions
+        if (resId.contains("did_you_mean") ||
+            resId.contains("clarification") ||
+            resId.contains("correction") ||
+            resId.contains("search_edit_text") ||
+            resId.contains("search_box") ||
+            resId.contains("search_query") ||
+            resId.contains("search_bar") ||
+            resId.contains("filter") ||
+            resId.contains("chip") ||
+            resId.contains("voice_search") ||
+            resId.contains("toolbar") ||
+            resId.contains("action_bar") ||
+            resId.contains("pivot_bar") ||
+            resId.contains("bottom_bar") ||
+            resId.contains("navigation_bar") ||
+            resId.contains("header") ||
+            resId.contains("avatar") ||
+            resId.contains("channel_avatar")) {
+            return true
+        }
+
+        // 2. Class exclusions (search inputs)
+        if (cls.contains("edittext")) return true
+
+        // 3. Text & description exclusions
+        val combined = "$text $desc".trim()
+        if (combined.contains("did you mean") ||
+            combined.contains("showing results for") ||
+            combined.contains("search instead for") ||
+            combined.contains("kya aapka matlab") ||
+            combined.startsWith("search") ||
+            combined == "filter" || combined == "filters" ||
+            combined.contains("filter results") ||
+            combined == "all" || combined == "shorts" || combined == "videos" ||
+            combined == "unwatched" || combined == "watched" ||
+            combined.contains("voice search") ||
+            combined.contains("clear query") ||
+            combined.contains("clear search") ||
+            combined.contains("navigate up") ||
+            combined.contains("more options") ||
+            combined.contains("cast button") ||
+            combined.contains("notifications")) {
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Traverses the accessibility node tree to find the genuine first video card in search results.
+     * Excludes "did_you_mean", filter chips, search input boxes, and prioritizes nodes with
+     * "play video", views, duration metadata, or video card buttons.
+     */
+    private fun findGenuineYouTubeVideoCard(
+        root: AccessibilityNodeInfo?,
+        minTop: Float,
+        maxBottom: Float
+    ): AccessibilityNodeInfo? {
+        if (root == null) return null
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
         val dm = resources.displayMetrics
-        val minTop = dm.heightPixels * 0.10f // Below top search bar
-        val maxBottom = dm.heightPixels * 0.85f
+        val minWidth = dm.widthPixels * 0.45f
+        val minHeight = 110 // Minimum height of a video item on screen
 
-        // Strategy 1: Find node whose text or description contains query words
-        val words = query.lowercase().split(" ").filter { it.length > 2 }
-        if (words.isNotEmpty()) {
-            val titleNode = findVideoTitleNode(root, words, minTop, maxBottom)
-            if (titleNode != null) {
-                var clickTarget: AccessibilityNodeInfo? = titleNode
-                while (clickTarget != null && !clickTarget.isClickable) clickTarget = clickTarget.parent
-                val clicked = clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                if (clicked) return true
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            // If this node is an excluded UI element (did_you_mean, search box, filter chip, toolbar), SKIP it and its children!
+            if (isExcludedYouTubeNode(node)) {
+                return
+            }
 
-                val rect = android.graphics.Rect()
-                titleNode.getBoundsInScreen(rect)
-                if (!rect.isEmpty && rect.top >= minTop) return performTap(rect.exactCenterX(), rect.exactCenterY())
+            val rect = android.graphics.Rect()
+            node.getBoundsInScreen(rect)
+
+            // Bounds checks: Must be below search header and within reasonable screen area
+            if (rect.top >= minTop && rect.top <= maxBottom && rect.height() >= minHeight && rect.width() >= minWidth) {
+                val desc = (node.contentDescription?.toString() ?: "").lowercase()
+                val resId = (node.viewIdResourceName ?: "").lowercase()
+                val cls = (node.className?.toString() ?: "")
+
+                val hasPlayVideo = desc.contains("play video") || desc.contains("चलाएं") || desc.contains("video play")
+                val hasViews = desc.contains("views") || desc.contains("view") || desc.contains("बार देखा गया") || desc.contains("अवलोकन")
+                val hasDuration = desc.contains("minute") || desc.contains("second") || desc.contains("hour") ||
+                                  desc.contains("मिनट") || desc.contains("सेकंड") || desc.contains("घंटे") ||
+                                  Regex("""\b\d+:\d{2}\b""").containsMatchIn(desc)
+                val hasVideoResId = resId.contains("video_title") || resId.contains("compact_video_item") ||
+                                    resId.contains("thumbnail") || resId.contains("media_item") || resId.contains("video_card")
+                val isCardMatch = (node.isClickable || cls.contains("Button") || cls.contains("ViewGroup")) &&
+                    (hasPlayVideo || hasViews || hasDuration || hasVideoResId || desc.length >= 25)
+
+                if (isCardMatch || hasPlayVideo || hasViews || hasDuration) {
+                    candidates.add(node)
+                }
+            }
+
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
             }
         }
 
-        // Strategy 2: Find first video card node with duration / views description
-        val videoCard = findFirstVideoCardNode(root, minTop, maxBottom)
-        if (videoCard != null) {
-            var clickTarget: AccessibilityNodeInfo? = videoCard
-            while (clickTarget != null && !clickTarget.isClickable) clickTarget = clickTarget.parent
-            val clicked = clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-            if (clicked) return true
+        traverse(root)
 
+        if (candidates.isEmpty()) return null
+
+        // Sort candidates:
+        // Prioritize by smallest rect.top (topmost video on screen), and if top is very close (+-30px), prioritize Button or node with larger area
+        candidates.sortWith(Comparator { a, b ->
+            val rectA = android.graphics.Rect().also { a.getBoundsInScreen(it) }
+            val rectB = android.graphics.Rect().also { b.getBoundsInScreen(it) }
+            val topDiff = rectA.top - rectB.top
+            if (Math.abs(topDiff) > 30) {
+                topDiff
+            } else {
+                val scoreA = (if (a.isClickable) 10 else 0) + (if (a.className?.contains("Button") == true) 10 else 0) + (rectA.width() * rectA.height()) / 10000
+                val scoreB = (if (b.isClickable) 10 else 0) + (if (b.className?.contains("Button") == true) 10 else 0) + (rectB.width() * rectB.height()) / 10000
+                scoreB - scoreA
+            }
+        })
+
+        return candidates.firstOrNull()
+    }
+
+    fun clickYouTubeFirstVideo(root: AccessibilityNodeInfo, query: String = "", isFinalAttempt: Boolean = false): Boolean {
+        val dm = resources.displayMetrics
+        val minTop = dm.heightPixels * 0.12f // Below top search bar, chips and did_you_mean banner
+        val maxBottom = dm.heightPixels * 0.88f
+
+        val now = System.currentTimeMillis()
+        if (now - lastYouTubeTapTime < 1000L) {
+            // Throttle taps to prevent double-clicks during layout transitions
+            return false
+        }
+
+        // Step 2: Find the genuine first video card (excluding did_you_mean, search box, filters, chips)
+        val videoCard = findGenuineYouTubeVideoCard(root, minTop, maxBottom)
+        if (videoCard != null) {
             val rect = android.graphics.Rect()
             videoCard.getBoundsInScreen(rect)
-            if (!rect.isEmpty && rect.top >= minTop) return performTap(rect.exactCenterX(), rect.exactCenterY())
+
+            // Attempt AccessibilityNodeInfo ACTION_CLICK on the card or nearest clickable ancestor
+            var clickTarget: AccessibilityNodeInfo? = videoCard
+            while (clickTarget != null && !clickTarget.isClickable && clickTarget.parent != null) {
+                clickTarget = clickTarget.parent
+            }
+            val clicked = clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+
+            // Staggered fallback: If ACTION_CLICK failed or as fallback gesture, dispatch coordinate tap to card center
+            if (!clicked && !rect.isEmpty && rect.top >= minTop) {
+                performTap(rect.exactCenterX(), rect.exactCenterY())
+            }
+
+            lastYouTubeTapTime = now
+            youTubeTapAttempts++
+            Log.i(TAG, "clickYouTubeFirstVideo: Tapped video card (bounds=$rect, actionClick=$clicked, attempt=$youTubeTapAttempts)")
+
+            // Schedule immediate post-tap verification check
+            stepHandler.postDelayed({
+                val currentRoot = rootInActiveWindow
+                if (currentRoot != null && isYouTubePlaybackActive(currentRoot)) {
+                    pendingYouTubeAutoPlay = false
+                    youTubePlaybackVerified = true
+                    Log.i(TAG, "clickYouTubeFirstVideo: Video playback verified post-tap!")
+                }
+            }, 800L)
+
+            return true
         }
 
-        // Strategy 3: Find any clickable item in the search results area
+        // Step 3: Secondary fallback: Find first clickable result that is NOT an excluded search/filter element
         val clickableItem = findFirstClickableResult(root, minTop, maxBottom)
         if (clickableItem != null) {
-            val clicked = clickableItem.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            if (clicked) return true
             val rect = android.graphics.Rect()
             clickableItem.getBoundsInScreen(rect)
-            if (!rect.isEmpty) return performTap(rect.exactCenterX(), rect.exactCenterY())
+            val clicked = clickableItem.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (!clicked && !rect.isEmpty) {
+                performTap(rect.exactCenterX(), rect.exactCenterY())
+            }
+            lastYouTubeTapTime = now
+            youTubeTapAttempts++
+            Log.i(TAG, "clickYouTubeFirstVideo: Tapped fallback clickable item (bounds=$rect, clicked=$clicked)")
+            return true
         }
 
-        // Strategy 4: Coordinate tap ONLY on final fallback attempt (after several seconds have elapsed)
+        // Step 4: Final attempt coordinate tap on primary video card position (around Y=35-40% screen height)
         if (isFinalAttempt) {
-            return performTap(dm.widthPixels / 2f, dm.heightPixels * 0.35f)
+            lastYouTubeTapTime = now
+            youTubeTapAttempts++
+            val tapX = dm.widthPixels / 2f
+            val tapY = dm.heightPixels * 0.35f
+            Log.i(TAG, "clickYouTubeFirstVideo: Performing final attempt coordinate tap at ($tapX, $tapY)")
+            return performTap(tapX, tapY)
         }
+
         return false
     }
 
@@ -1851,63 +2078,18 @@ Reply kar naturally jaise Isha WhatsApp pe karti hai. Sirf message text output k
         maxBottom: Float
     ): AccessibilityNodeInfo? {
         if (node == null) return null
+        if (isExcludedYouTubeNode(node)) return null
         val rect = android.graphics.Rect()
         node.getBoundsInScreen(rect)
-        if (rect.top >= minTop && rect.bottom <= maxBottom && rect.height() > 60 && node.isClickable) {
+        val dm = resources.displayMetrics
+        if (rect.top >= minTop && rect.bottom <= maxBottom && rect.height() >= 100 && rect.width() >= dm.widthPixels * 0.45f && node.isClickable) {
             val text = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").trim()
-            if (text.isNotBlank() && !text.contains("search", ignoreCase = true) && !text.contains("filter", ignoreCase = true)) {
+            if (text.isNotBlank() && !isExcludedYouTubeNode(node)) {
                 return node
             }
         }
         for (i in 0 until node.childCount) {
             val found = findFirstClickableResult(node.getChild(i), minTop, maxBottom)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    private fun findVideoTitleNode(
-        node: AccessibilityNodeInfo?,
-        words: List<String>,
-        minTop: Float,
-        maxBottom: Float
-    ): AccessibilityNodeInfo? {
-        if (node == null) return null
-        val text = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").lowercase()
-        val rect = android.graphics.Rect()
-        node.getBoundsInScreen(rect)
-        if (rect.top >= minTop && rect.bottom <= maxBottom && words.any { text.contains(it) }) {
-            return node
-        }
-        for (i in 0 until node.childCount) {
-            val found = findVideoTitleNode(node.getChild(i), words, minTop, maxBottom)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    private fun findFirstVideoCardNode(
-        node: AccessibilityNodeInfo?,
-        minTop: Float,
-        maxBottom: Float
-    ): AccessibilityNodeInfo? {
-        if (node == null) return null
-        val resId = (node.viewIdResourceName ?: "").lowercase()
-        val desc = (node.contentDescription?.toString() ?: "").lowercase()
-        val rect = android.graphics.Rect()
-        node.getBoundsInScreen(rect)
-        if (rect.top >= minTop && rect.bottom <= maxBottom && rect.height() > 40) {
-            if (resId.contains("video_title") || resId.contains("compact_video_item") ||
-                resId.contains("thumbnail") || resId.contains("details") || resId.contains("media_item")) {
-                return node
-            }
-            if (desc.contains("minute") || desc.contains("second") || desc.contains("views") ||
-                desc.contains("play video") || desc.contains("channel") || desc.length > 25) {
-                return node
-            }
-        }
-        for (i in 0 until node.childCount) {
-            val found = findFirstVideoCardNode(node.getChild(i), minTop, maxBottom)
             if (found != null) return found
         }
         return null
