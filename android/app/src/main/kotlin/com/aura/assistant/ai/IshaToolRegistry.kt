@@ -1147,6 +1147,14 @@ object IshaToolRegistry {
             required = emptyList()
         ))
 
+        // 59b. Dedicated JARVIS Tactical Status Briefing
+        toolsArray.add(createFunction(
+            name = "jarvis_status_briefing",
+            desc = "Instant Iron Man JARVIS tactical HUD status report (<50ms). Gathers battery %, charging state, free/total storage, Wi-Fi SSID, mobile data, Bluetooth, Hotspot, volume & brightness levels, DND state, unread notification count & top snippets, and active media playing. Returns structured telemetry and pre-formatted HUD tactical summary: 'All systems operational, Boss. Power at 85%, 44GB free storage, Wi-Fi connected to [SSID], [N] unread notifications.' ALWAYS call when Boss asks 'status report', 'briefing do', 'diagnostics run karo', 'phone ka status batao', 'system briefing', 'jarvis status', 'sitrep'.",
+            params = emptyMap(),
+            required = emptyList()
+        ))
+
         // 60. Clear / Dismiss Notifications
         toolsArray.add(createFunction(
             name = "clear_notifications",
@@ -5192,6 +5200,10 @@ object IshaToolRegistry {
                     }
                 }
 
+                "jarvis_status_briefing" -> {
+                    executeJarvisStatusBriefing(context, result)
+                }
+
                 "check_device_health" -> {
                     try {
                         // 1. Battery
@@ -5700,6 +5712,7 @@ object IshaToolRegistry {
             lower in listOf("read_screen", "read_screen_text", "screen_text", "get_screen_text") -> "read_screen_text"
 
             // Health & System
+            lower in listOf("status_report", "jarvis_status", "jarvis_status_briefing", "system_status", "system_briefing", "tactical_briefing", "sitrep", "hud_briefing", "jarvis_briefing", "phone_status") -> "jarvis_status_briefing"
             lower in listOf("device_health", "phone_health", "system_health", "device_info", "check_health", "check_device_health") -> "check_device_health"
             lower in listOf("briefing", "daily_briefing", "morning_briefing", "get_briefing", "get_daily_briefing") -> "get_daily_briefing"
             lower in listOf("dnd", "do_not_disturb", "toggle_dnd", "set_dnd") -> "set_dnd"
@@ -7459,6 +7472,13 @@ object IshaToolRegistry {
                 }
             }
 
+            // JARVIS Tactical Status Briefing domain boost
+            if (clean.contains("status") || clean.contains("briefing") || clean.contains("sitrep") || clean.contains("tactical") || clean.contains("diagnostics") || (clean.contains("phone") && clean.contains("status"))) {
+                if (name == "jarvis_status_briefing") {
+                    score += 2.2f
+                }
+            }
+
             // Device Health domain boost
             if (clean.contains("health") || clean.contains("device health") || clean.contains("phone health") || clean.contains("system health")) {
                 if (name == "check_device_health") {
@@ -8832,6 +8852,161 @@ object IshaToolRegistry {
         a11y?.stopContinuousChat()
         result.addProperty("status", "success")
         result.addProperty("message", "Boss, WhatsApp continuous chat mode stop kar diya gaya hai! ⏹️")
+    }
+
+    private fun executeJarvisStatusBriefing(context: Context, result: JsonObject) {
+        val startMs = System.currentTimeMillis()
+        try {
+            // 1. Battery & Power State
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            val batteryPct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            val isCharging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val status = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS) ?: 0
+                status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+            } else {
+                val bIntent = context.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val status = bIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+            }
+            val batteryStatusStr = if (isCharging) "Charging" else "Discharging"
+
+            // 2. Storage Free & Total
+            val stat = android.os.StatFs(Environment.getDataDirectory().path)
+            val totalBytes = stat.blockCountLong * stat.blockSizeLong
+            val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
+            val usedBytes = totalBytes - freeBytes
+
+            val totalStorageGb = String.format(Locale.US, "%.1f", totalBytes / (1024.0 * 1024.0 * 1024.0))
+            val freeStorageGb = String.format(Locale.US, "%.1f", freeBytes / (1024.0 * 1024.0 * 1024.0))
+            val usedStorageGb = String.format(Locale.US, "%.1f", usedBytes / (1024.0 * 1024.0 * 1024.0))
+
+            // 3. Network & Radios: Wi-Fi, Mobile Data, Bluetooth, Hotspot
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val isWifiEnabled = try { wm?.isWifiEnabled == true } catch (_: SecurityException) { false }
+            val wifiInfo = try { wm?.connectionInfo } catch (_: SecurityException) { null }
+            val rawSsid = wifiInfo?.ssid?.replace("\"", "") ?: ""
+            val wifiSsid = if (isWifiEnabled && rawSsid.isNotBlank() && rawSsid != "<unknown ssid>") rawSsid else if (isWifiEnabled) "Disconnected" else "Off"
+
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val isMobileDataActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val activeNet = cm?.activeNetwork
+                val caps = cm?.getNetworkCapabilities(activeNet)
+                caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true
+            } else {
+                @Suppress("DEPRECATION")
+                val netInfo = cm?.activeNetworkInfo
+                @Suppress("DEPRECATION")
+                netInfo?.type == android.net.ConnectivityManager.TYPE_MOBILE && netInfo?.isConnected == true
+            }
+
+            var isBluetoothOn = false
+            try {
+                val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+                val btAdapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                isBluetoothOn = btAdapter?.isEnabled == true
+            } catch (_: Exception) {}
+
+            val isHotspotOn = try {
+                val method = wm?.javaClass?.getMethod("isWifiApEnabled")
+                method?.invoke(wm) as? Boolean ?: false
+            } catch (_: Exception) { false }
+
+            // 4. Volume & Screen Brightness
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val musicVol = am?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
+            val maxMusicVol = am?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
+            val volumePercent = if (maxMusicVol > 0) ((musicVol * 100.0f) / maxMusicVol).toInt().coerceIn(0, 100) else 0
+
+            val rawBrightness = try {
+                Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+            } catch (_: Exception) { 128 }
+            val brightnessPercent = ((rawBrightness * 100.0f) / 255).toInt().coerceIn(0, 100)
+
+            // 5. DND State
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            val isDnd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm != null) {
+                val filter = nm.currentInterruptionFilter
+                filter != android.app.NotificationManager.INTERRUPTION_FILTER_ALL && filter != android.app.NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+            } else false
+
+            // 6. Unread Notifications Count & Top Snippets
+            val notifsList = try {
+                com.aura.assistant.IshaNotificationListenerService.getActiveNotificationsList()
+            } catch (_: Exception) { emptyList<Map<String, Any>>() }
+            val notifsCount = notifsList.size
+            val topSnippets = notifsList.take(3).map { notif ->
+                val app = notif["appName"] as? String ?: "App"
+                val title = notif["title"] as? String ?: ""
+                val text = notif["text"] as? String ?: ""
+                if (title.isNotBlank() && text.isNotBlank()) "[$app] $title: $text".take(90)
+                else if (title.isNotBlank()) "[$app] $title".take(90)
+                else "[$app] $text".take(90)
+            }
+
+            // 7. Active Media Playing
+            val isMusicActive = am?.isMusicActive == true
+            var activeMedia = "None"
+            if (isMusicActive) {
+                val mediaNotif = notifsList.firstOrNull { notif ->
+                    val pkg = (notif["package"] as? String)?.lowercase() ?: ""
+                    pkg.contains("youtube") || pkg.contains("spotify") || pkg.contains("music") ||
+                    pkg.contains("jiobeats") || pkg.contains("wynk") || pkg.contains("gaana") ||
+                    pkg.contains("amazon.mp3") || pkg.contains("soundcloud") || pkg.contains("podcast")
+                }
+                if (mediaNotif != null) {
+                    val app = mediaNotif["appName"] as? String ?: "Media"
+                    val title = mediaNotif["title"] as? String ?: ""
+                    activeMedia = if (title.isNotBlank()) "$app ($title)" else "$app (Playing)"
+                } else {
+                    val a11y = com.aura.assistant.IshaAccessibilityService.instance
+                    if (a11y?.isYouTubeInForeground() == true || a11y?.youTubePlaybackVerified == true) {
+                        activeMedia = "YouTube (Playing)"
+                    } else {
+                        activeMedia = "Active Audio Stream"
+                    }
+                }
+            }
+
+            val elapsedMs = System.currentTimeMillis() - startMs
+
+            // Formulate pre-formatted HUD tactical summary
+            val wifiSummary = if (isWifiEnabled && wifiSsid != "Disconnected" && wifiSsid != "Off") "Wi-Fi connected to $wifiSsid" else if (isWifiEnabled) "Wi-Fi enabled" else if (isMobileDataActive) "Mobile data active" else "Network disconnected"
+            val hudSummary = "All systems operational, Boss. Power at $batteryPct%${if (isCharging) " (Charging)" else ""}, ${freeStorageGb}GB free storage, $wifiSummary, $notifsCount unread notifications."
+
+            result.addProperty("status", "success")
+            result.addProperty("elapsed_ms", elapsedMs)
+            result.addProperty("battery_percent", batteryPct)
+            result.addProperty("is_charging", isCharging)
+            result.addProperty("battery_status", batteryStatusStr)
+            result.addProperty("storage_free_gb", freeStorageGb)
+            result.addProperty("storage_total_gb", totalStorageGb)
+            result.addProperty("storage_used_gb", usedStorageGb)
+            result.addProperty("wifi_enabled", isWifiEnabled)
+            result.addProperty("wifi_ssid", wifiSsid)
+            result.addProperty("mobile_data_active", isMobileDataActive)
+            result.addProperty("bluetooth_enabled", isBluetoothOn)
+            result.addProperty("hotspot_active", isHotspotOn)
+            result.addProperty("volume_percent", volumePercent)
+            result.addProperty("brightness_percent", brightnessPercent)
+            result.addProperty("dnd_enabled", isDnd)
+            result.addProperty("unread_notifications_count", notifsCount)
+
+            val topSnippetsArray = JsonArray()
+            topSnippets.forEach { topSnippetsArray.add(it) }
+            result.add("top_notifications", topSnippetsArray)
+
+            result.addProperty("media_playing", activeMedia)
+            result.addProperty("hud_summary", hudSummary)
+            result.addProperty("message", hudSummary)
+            result.addProperty(
+                "_task_guidance",
+                "Present the status report sharply like Iron Man JARVIS: '$hudSummary'. If Boss asks for specifics, refer to the details (volume $volumePercent%, brightness $brightnessPercent%, bluetooth ${if (isBluetoothOn) "on" else "off"}, media: $activeMedia)."
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in executeJarvisStatusBriefing", e)
+            result.addProperty("status", "error")
+            result.addProperty("error", e.message ?: "Failed to generate JARVIS status briefing")
+        }
     }
 }
 

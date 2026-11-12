@@ -35,7 +35,8 @@ object IshaToolRouter {
         "set_dnd",
         "lock_device",
         "unlock_device",
-        "open_system_settings"
+        "open_system_settings",
+        "press_system_key"
     )
 
     val COMMS_TOOLS = setOf(
@@ -44,6 +45,9 @@ object IshaToolRouter {
         "decline_call",
         "identify_caller",
         "send_sms",
+        "read_recent_sms",
+        "read_notifications",
+        "clear_notifications",
         "send_whatsapp",
         "send_whatsapp_media",
         "type_message",
@@ -66,7 +70,8 @@ object IshaToolRouter {
         "screen_scroll",
         "take_screenshot",
         "share_media",
-        "unlock_device"
+        "unlock_device",
+        "press_system_key"
     )
 
     val TIME_PRODUCTIVITY_TOOLS = setOf(
@@ -79,10 +84,13 @@ object IshaToolRouter {
     )
 
     val SYSTEM_DIAGNOSTICS_TOOLS = setOf(
+        "jarvis_status_briefing",
         "get_battery_status",
         "get_storage_space",
         "check_device_health",
         "check_internet_speed",
+        "read_notifications",
+        "clear_notifications",
         "search_files",
         "delete_file",
         "empty_recycle_bin",
@@ -91,6 +99,7 @@ object IshaToolRouter {
 
     val APPS_NAV_TOOLS = setOf(
         "open_app",
+        "open_camera",
         "navigate_maps",
         "google_maps",
         "get_location"
@@ -139,8 +148,29 @@ object IshaToolRouter {
         "unlock_device",
         "lock_device",
         "open_system_settings",
-        "screen_tap"
+        "screen_tap",
+        // JARVIS Duplex Audio Core Additions
+        "jarvis_status_briefing",
+        "take_screenshot",
+        "get_screen_context",
+        "find_and_tap",
+        "screen_scroll",
+        "press_system_key",
+        "media_control",
+        "set_dnd",
+        "open_camera",
+        "read_notifications",
+        "check_device_health",
+        "clear_notifications",
+        "read_recent_sms"
     )
+
+    /**
+     * Checks if a tool is supported in Gemini Live Duplex Audio session.
+     */
+    fun isToolSupportedInLiveVoice(toolName: String): Boolean {
+        return toolName in LIVE_VOICE_CORE_TOOLS
+    }
 
     // ── 3. Regex Patterns for Instant Intent Classification (<1ms) ───────────────
 
@@ -165,7 +195,7 @@ object IshaToolRouter {
     )
 
     private val COMMS_PATTERN = Pattern.compile(
-        "\\b(call|dial|phone|whatsapp|whatsap|message|msg|sms|bhejo|bhej|send|share|text|chat|kaat do|uthalo|contact|number|kiska|caller|spam|unknown|identify|pehechan|pahchan|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues|padho|padh|check|dekho|sunao|kya bola|kya likha|kya aaya|kya bheja|pucho|poocho)\\b",
+        "\\b(call|dial|phone|whatsapp|whatsap|message|msg|sms|recent sms|bhejo|bhej|send|share|text|chat|kaat do|uthalo|contact|number|kiska|caller|spam|unknown|identify|pehechan|pahchan|reply|jawab|baat|baatein|bolo|likho|kaho|kah do|unhe|usse|continuous|continue|continues|padho|padh|check|dekho|sunao|kya bola|kya likha|kya aaya|kya bheja|pucho|poocho|notification|notifications|clear notification|clear notifications|hata do|saaf kardo)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -175,12 +205,12 @@ object IshaToolRouter {
     )
 
     private val DIAGNOSTICS_PATTERN = Pattern.compile(
-        "\\b(battery|percentage|charge|charging|storage|space|ram|clean|recycle|files|internet speed|update|version|naya update)\\b",
+        "\\b(battery|percentage|charge|charging|storage|space|ram|clean|recycle|files|internet speed|update|version|naya update|status report|briefing|hud|jarvis|diagnostics|device health|system report|phone status)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
     private val APPS_NAV_PATTERN = Pattern.compile(
-        "\\b(open|kholo|launch|map|maps|rasta|location|kahan hai|direction)\\b",
+        "\\b(open|kholo|launch|map|maps|rasta|location|kahan hai|direction|camera|photo khicho|selfie)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -190,7 +220,7 @@ object IshaToolRouter {
     )
 
     private val SCREEN_INTERACTIVE_PATTERN = Pattern.compile(
-        "\\b(tap|tap on|click|click kar|touch|scroll|scroll down|scroll up|swipe|screenshot|screen shot|screen capture|button dabao|dabao|daba do)\\b",
+        "\\b(tap|tap on|click|click kar|touch|scroll|scroll down|scroll up|swipe|screenshot|screen shot|screen capture|button dabao|dabao|daba do|back jao|go back|home screen|home jao|recent apps|recents|notification bar|notifications|piche jao)\\b",
         Pattern.CASE_INSENSITIVE
     )
 

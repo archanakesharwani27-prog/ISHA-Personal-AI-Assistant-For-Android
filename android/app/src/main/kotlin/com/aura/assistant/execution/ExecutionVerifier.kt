@@ -128,16 +128,21 @@ object ExecutionVerifier {
                 }
 
                 // Action / Physical Execution Tools (Deep Physical Verification)
+                "jarvis_status_briefing" -> verifyJarvisStatusBriefing(executionResult)
                 "play_youtube" -> verifyYouTube(context, arguments, executionResult)
                 "play_media" -> verifyMedia(context, arguments, executionResult)
+                "media_control" -> verifyMediaControl(context, arguments, executionResult)
                 "open_app" -> verifyAppOpen(context, arguments, executionResult)
                 "send_whatsapp", "send_whatsapp_media" -> verifySendWhatsapp(context, arguments, executionResult)
                 "type_message", "type_text" -> verifyTypeText(context, arguments, executionResult)
                 "chat_on_whatsapp", "start_continuous_chat" -> verifyChatOnWhatsapp(context, arguments, executionResult)
                 "unlock_device" -> verifyUnlockDevice(context, executionResult)
                 "make_call", "accept_call", "decline_call" -> verifyCallAction(context, toolName, executionResult)
-                "screen_tap", "find_and_tap", "screen_scroll", "autonomous_ui_action", "dismiss_screen_popups" ->
+                "screen_tap", "find_and_tap", "autonomous_ui_action", "dismiss_screen_popups" ->
                     verifyUiAction(context, toolName, executionResult)
+                "screen_scroll" -> verifyScreenScroll(arguments, executionResult)
+                "take_screenshot" -> verifyTakeScreenshot(executionResult)
+                "press_system_key" -> verifyPressSystemKey(context, arguments, executionResult)
 
                 "play_siren" -> {
                     val targetDevice = executionResult?.get("target_device")?.asString ?: arguments.get("target_device")?.asString
@@ -173,14 +178,14 @@ object ExecutionVerifier {
                     )
                 }
 
-                "press_system_key", "delete_whatsapp_media", "send_sms", "identify_caller",
+                "clear_notifications", "delete_whatsapp_media", "send_sms", "identify_caller",
                 "open_system_settings", "set_navigation_mode", "manage_app_storage",
                 "install_store_app", "toggle_dark_mode", "show_recent_media",
                 "empty_recycle_bin", "set_timer", "create_alarm", "navigate_maps",
                 "open_camera", "add_calendar_event", "send_email", "emergency_sos",
                 "create_quick_note", "remember_fact", "teach_command_rule", "perform_app_action",
-                "search_files", "delete_file", "take_screenshot", "share_media",
-                "media_control", "whatsapp_post_status", "whatsapp_trigger_backup",
+                "search_files", "delete_file", "share_media",
+                "whatsapp_post_status", "whatsapp_trigger_backup",
                 "whatsapp_open_settings", "instagram_like_post", "instagram_comment_post",
                 "instagram_send_dm", "instagram_post_story", "instagram_navigate",
                 "telegram_action", "youtube_interact", "food_delivery_control", "ride_booking_control",
@@ -689,6 +694,122 @@ object ExecutionVerifier {
             verified = status == "success" || status == null,
             observedState = "Screen action dispatched via AccessibilityService",
             method = "a11y_dispatch_contract"
+        )
+    }
+
+    private fun verifyJarvisStatusBriefing(executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString
+                ?: executionResult.get("error")?.asString
+                ?: "JARVIS status briefing failed"
+            return VerificationEvidence(verified = false, observedState = msg, method = "jarvis_briefing_error")
+        }
+        val summary = executionResult?.get("summary")?.asString
+            ?: executionResult?.get("briefing")?.asString
+            ?: executionResult?.get("message")?.asString
+            ?: executionResult?.get("data")?.toString()
+        val isSuccess = status == null || status == "success" || !summary.isNullOrBlank()
+        return VerificationEvidence(
+            verified = isSuccess,
+            observedState = summary ?: if (isSuccess) "JARVIS tactical HUD briefing gathered and verified" else "Briefing generation failed",
+            method = "jarvis_briefing_contract"
+        )
+    }
+
+    private fun verifyPressSystemKey(context: Context, args: JsonObject, executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString ?: "System key action failed"
+            return VerificationEvidence(verified = false, observedState = msg, method = "system_key_error")
+        }
+        val key = args.get("key")?.asString ?: executionResult?.get("key")?.asString ?: "key"
+        val a11y = IshaAccessibilityService.instance
+        if (key.equals("lock", ignoreCase = true)) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val isLocked = km?.isKeyguardLocked == true || pm?.isInteractive == false
+            return VerificationEvidence(
+                verified = isLocked || status == "success",
+                observedState = if (isLocked) "Device screen locked successfully" else "System lock key dispatched",
+                method = "system_key_lock_check"
+            )
+        }
+        val isSuccess = status == null || status == "success" || status == "fallback" || (a11y != null)
+        return VerificationEvidence(
+            verified = isSuccess,
+            observedState = if (isSuccess) "System key '$key' successfully dispatched via accessibility global action" else "Failed to dispatch system key '$key'",
+            method = "system_key_contract"
+        )
+    }
+
+    private fun verifyScreenScroll(args: JsonObject, executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString ?: "Screen scroll failed"
+            return VerificationEvidence(verified = false, observedState = msg, method = "scroll_error")
+        }
+        val a11y = IshaAccessibilityService.instance
+        if (a11y == null) {
+            return VerificationEvidence(
+                verified = false,
+                observedState = "Accessibility service unavailable for touchless scroll",
+                method = "a11y_unavailable"
+            )
+        }
+        val direction = args.get("direction")?.asString ?: "down"
+        val isSuccess = status == null || status == "success"
+        return VerificationEvidence(
+            verified = isSuccess,
+            observedState = if (isSuccess) "Screen successfully scrolled $direction hands-free" else "Scroll action failed",
+            method = "touchless_scroll_contract"
+        )
+    }
+
+    private fun verifyTakeScreenshot(executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString ?: "Screenshot capture failed"
+            return VerificationEvidence(verified = false, observedState = msg, method = "screenshot_error")
+        }
+        val filePath = executionResult?.get("file_path")?.asString ?: executionResult?.get("path")?.asString
+        val uri = executionResult?.get("uri")?.asString
+        val hasEvidence = !filePath.isNullOrBlank() || !uri.isNullOrBlank()
+        val isSuccess = status == "success" || hasEvidence || status == "fallback"
+        val stateMsg = if (hasEvidence) {
+            "Screenshot captured and saved successfully: ${filePath ?: uri}"
+        } else if (isSuccess) {
+            "Screenshot captured successfully via accessibility service"
+        } else {
+            "Screenshot capture dispatched via system fallback"
+        }
+        return VerificationEvidence(
+            verified = isSuccess,
+            observedState = stateMsg,
+            method = "screenshot_file_evidence"
+        )
+    }
+
+    private fun verifyMediaControl(context: Context, args: JsonObject, executionResult: JsonObject?): VerificationEvidence {
+        val status = executionResult?.get("status")?.asString
+        if (status == "error") {
+            val msg = executionResult.get("message")?.asString ?: "Media control failed"
+            return VerificationEvidence(verified = false, observedState = msg, method = "media_control_error")
+        }
+        val action = (args.get("action")?.asString ?: executionResult?.get("action")?.asString ?: "control").lowercase()
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val isMusicActive = am?.isMusicActive == true
+        val stateMsg = when {
+            action.contains("pause") || action.contains("stop") ->
+                if (!isMusicActive) "Media paused successfully (audio inactive)" else "Media pause key dispatched"
+            action.contains("play") ->
+                if (isMusicActive) "Media playback active (audio playing)" else "Media play key dispatched"
+            else -> "Media control action '$action' dispatched to audio subsystem"
+        }
+        return VerificationEvidence(
+            verified = status == null || status == "success",
+            observedState = stateMsg,
+            method = "media_control_contract"
         )
     }
 }
