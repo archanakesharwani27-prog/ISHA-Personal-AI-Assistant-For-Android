@@ -183,6 +183,31 @@ object OfflineReflexEngine {
             return OfflineReflexResult("toggle_flashlight", resp, success)
         }
 
+        // 1b. Screen Unlock / Wake / Lock Reflex
+        val isUnlockCmd = clean.contains("unlock") || clean.contains("screen on") || clean.contains("screen jalao") ||
+                          clean.contains("lock kholo") || clean.contains("lock open") || clean.contains("screen wake") ||
+                          clean.contains("wake screen") || clean.contains("screen jagao")
+        if (isUnlockCmd && !isCrossDevice) {
+            val pinMatch = Regex("""\b\d{4,6}\b""").find(clean)?.value
+            val patMatch = Regex("""pattern\s*([0-9,\s-]+)""", RegexOption.IGNORE_CASE).find(clean)?.groupValues?.get(1)?.trim()
+            val args = JsonObject().apply {
+                if (!pinMatch.isNullOrBlank()) addProperty("pin", pinMatch)
+                if (!patMatch.isNullOrBlank()) addProperty("pattern", patMatch)
+            }
+            val result = if (execute) IshaToolRegistry.executeTool(context, "unlock_device", args) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val msg = result.get("message")?.asString ?: if (success) "Phone screen wake aur unlock kar diya hai Boss! 🔓" else "Screen unlock karne me pareshani aayi."
+            return OfflineReflexResult("unlock_device", msg, success)
+        }
+
+        val isLockCmd = (clean == "lock" || clean == "lock karo" || clean == "phone lock" || clean == "phone lock karo" || clean == "screen lock" || clean == "screen lock karo" || clean == "band kar do screen" || clean == "screen band karo") && !isCrossDevice
+        if (isLockCmd) {
+            val result = if (execute) IshaToolRegistry.executeTool(context, "lock_device", JsonObject()) else JsonObject().apply { addProperty("status", "success") }
+            val success = isSuccess(result)
+            val msg = result.get("message")?.asString ?: if (success) "Phone screen lock kar di hai Boss! 🔒" else "Screen lock karne ke liye accessibility permission required hai."
+            return OfflineReflexResult("lock_device", msg, success)
+        }
+
         // 2. Battery Status
         if (clean.contains("battery") || clean.contains("charge kitna") || clean.contains("charging")) {
             val result = if (execute) IshaToolRegistry.executeTool(context, "get_battery_status", JsonObject()) else JsonObject().apply { addProperty("level", 85); addProperty("is_charging", false); addProperty("status", "success") }

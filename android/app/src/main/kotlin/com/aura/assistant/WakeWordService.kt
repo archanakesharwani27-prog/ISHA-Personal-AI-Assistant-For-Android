@@ -824,25 +824,47 @@ class WakeWordService : Service(), SensorEventListener {
             )
         }
 
-        // Acquire a brief 2-second wake lock in case the display was sleeping
+        // Acquire wake lock to immediately power on display and keep it bright for voice interaction
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isScreenOff = powerManager?.isInteractive == false
+            val wakeLockDuration = if (isScreenOff) 10000L else 3000L
             val wakeLock = powerManager?.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                         PowerManager.ACQUIRE_CAUSES_WAKEUP or
                         PowerManager.ON_AFTER_RELEASE,
-                "aura:GeminiOverlayWakeLock"
+                "isha:VoiceWakeLock"
             )
-            wakeLock?.acquire(2000L)
-        } catch (_: Exception) {}
+            wakeLock?.acquire(wakeLockDuration)
+            Log.i(TAG, "Screen wake lock acquired ($wakeLockDuration ms, isScreenOff=$isScreenOff)")
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock acquisition failed: ${e.message}")
+        }
 
         // 1. Show Dynamic Island overlay bubble on top (preserves user's foreground apps e.g. games, YouTube, WhatsApp)
         IshaDynamicIsland.show(applicationContext, "voice_mode")
 
         // 2. Engage Gemini Live voice duplex directly
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val isScreenOff = powerManager?.isInteractive == false
         val act = MainActivity.instance
         if (act != null) {
             act.startVoiceModeDirectly()
+            // If screen was off, also launch intent to ensure activity is frontmost and turns screen on over keyguard
+            if (isScreenOff) {
+                try {
+                    val voiceIntent = Intent(applicationContext, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        putExtra("open_voice_mode", true)
+                        putExtra(EXTRA_REASON, reason)
+                        putExtra(EXTRA_SCORE, score)
+                        putExtra(EXTRA_MODEL, modelName)
+                    }
+                    startActivity(voiceIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to bring MainActivity to front on dark screen: ${e.message}")
+                }
+            }
         } else {
             // If MainActivity not yet in memory, launch it
             try {

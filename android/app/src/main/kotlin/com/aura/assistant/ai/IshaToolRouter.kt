@@ -34,6 +34,7 @@ object IshaToolRouter {
         "toggle_dark_mode",
         "set_dnd",
         "lock_device",
+        "unlock_device",
         "open_system_settings"
     )
 
@@ -64,7 +65,8 @@ object IshaToolRouter {
         "find_and_tap",
         "screen_scroll",
         "take_screenshot",
-        "share_media"
+        "share_media",
+        "unlock_device"
     )
 
     val TIME_PRODUCTIVITY_TOOLS = setOf(
@@ -133,13 +135,17 @@ object IshaToolRouter {
         "search_internet",
         "read_screen_text",
         "write_local_file",
-        "open_local_file"
+        "open_local_file",
+        "unlock_device",
+        "lock_device",
+        "open_system_settings",
+        "screen_tap"
     )
 
     // ── 3. Regex Patterns for Instant Intent Classification (<1ms) ───────────────
 
     private val CHAINING_PATTERN = Pattern.compile(
-        "\\b(aur|then|uske baad|phir|also|dono|teeno|and|pehle.*phir)\\b",
+        "\\b(aur|then|uske baad|phir|fir|also|dono|teeno|and|pehle.*phir|pehle.*fir)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -149,7 +155,12 @@ object IshaToolRouter {
     )
 
     private val HARDWARE_PATTERN = Pattern.compile(
-        "\\b(torch|flashlight|wifi|wi-fi|bluetooth|hotspot|dark mode|dnd|silent|vibrate|volume|brightness|lock|switch on|switch off|chalu|band kar|on kar|off kar)\\b",
+        "\\b(torch|flashlight|wifi|wi-fi|bluetooth|hotspot|dark mode|dnd|silent|vibrate|volume|brightness|lock|unlock|screen on|screen jalao|lock kholo|pin daalo|pin dalo|pattern daalo|pattern dalo|switch on|switch off|chalu|band kar|on kar|off kar)\\b",
+        Pattern.CASE_INSENSITIVE
+    )
+
+    private val UNLOCK_PATTERN = Pattern.compile(
+        "\\b(unlock|screen on|screen jalao|lock kholo|kholo lock|lock open|pin daalo|pin dalo|pattern daalo|pattern dalo|enter pin|enter pattern|screen wake|wake screen|wake up|screen jagao)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -179,7 +190,7 @@ object IshaToolRouter {
     )
 
     private val SCREEN_INTERACTIVE_PATTERN = Pattern.compile(
-        "\\b(tap on|click kar|scroll down|scroll up|screenshot|screen shot|screen capture|button dabao)\\b",
+        "\\b(tap|tap on|click|click kar|touch|scroll|scroll down|scroll up|swipe|screenshot|screen shot|screen capture|button dabao|dabao|daba do)\\b",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -225,7 +236,7 @@ object IshaToolRouter {
         if (MEDIA_PATTERN.matcher(clean).find()) {
             selectedNames.addAll(MEDIA_TOOLS)
         }
-        if (HARDWARE_PATTERN.matcher(clean).find()) {
+        if (HARDWARE_PATTERN.matcher(clean).find() || UNLOCK_PATTERN.matcher(clean).find()) {
             selectedNames.addAll(HARDWARE_TOOLS)
         }
         val isWhatsappOpen = try {
@@ -311,6 +322,7 @@ object IshaToolRouter {
         val domainMatches = listOf(
             MEDIA_PATTERN.matcher(clean).find(),
             HARDWARE_PATTERN.matcher(clean).find(),
+            UNLOCK_PATTERN.matcher(clean).find(),
             COMMS_PATTERN.matcher(clean).find(),
             TIME_PATTERN.matcher(clean).find(),
             DIAGNOSTICS_PATTERN.matcher(clean).find(),

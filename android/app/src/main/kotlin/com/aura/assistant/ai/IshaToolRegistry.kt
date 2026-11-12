@@ -4216,6 +4216,7 @@ object IshaToolRegistry {
 
                 // 40. Open System Settings
                 "open_system_settings" -> {
+                    wakeAndUnlockIfNeeded(context)
                     val setting = args.get("setting_name")?.asString?.lowercase() ?: ""
                     val intentAction = when {
                         setting.contains("hotspot") || setting.contains("tether") -> "android.settings.TETHER_SETTINGS"
