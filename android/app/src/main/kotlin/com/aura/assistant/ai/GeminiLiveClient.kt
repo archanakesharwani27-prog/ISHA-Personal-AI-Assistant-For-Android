@@ -3,6 +3,7 @@ package com.aura.assistant.ai
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
@@ -118,6 +119,9 @@ class GeminiLiveClient(private val context: Context) {
     @Volatile private var lastActivityTimestamp = System.currentTimeMillis()
     @Volatile private var hasUserSpokenInSession = false
     var onInactivityTimeout: (() -> Unit)? = null
+    private val audioManager: AudioManager? by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    }
 
     fun hasUserSpoken(): Boolean = hasUserSpokenInSession
 
@@ -883,8 +887,16 @@ class GeminiLiveClient(private val context: Context) {
                             }
                         }
 
-                        // ── Hybrid VAD: Near-Field Voice Gating & Background TV Rejection ──
-                        val isUserSpeaking = (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
+                        // ── Hybrid VAD: Near-Field Voice Gating & Background TV / External Media Rejection ──
+                        // When external media (e.g. YouTube/Spotify) is playing while ISHA is backgrounded,
+                        // enforce the near-field override gate so speaker audio doesn't hijack the mic or reset auto-sleep.
+                        val isBgOrScreenOffNow = isBackgroundOrScreenOff()
+                        val isExternalMediaPlaying = isBgOrScreenOffNow && !hasSpokenInTurn && (audioManager?.isMusicActive == true)
+                        val isUserSpeaking = if (isExternalMediaPlaying) {
+                            (vadResult.isSpeech && rms >= 0.22) || rms >= 0.30
+                        } else {
+                            (vadResult.isSpeech && rms >= 0.012) || rms >= 0.035
+                        }
                         if (isUserSpeaking) {
                             hasUserSpokenInSession = true
                             refreshActivityTimestamp()

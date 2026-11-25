@@ -12,6 +12,7 @@ import com.aura.assistant.tools.ToolRegistry
 import com.aura.assistant.tools.ToolResult
 import com.aura.assistant.tools.ToolStatus
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -27,6 +28,34 @@ import kotlinx.coroutines.withTimeoutOrNull
 object ExecutionEngine {
     private const val TAG = "ExecutionEngine"
 
+    private val TRANSIENT_SETTLE_METHODS = setOf(
+        "foreground_transition_pending",
+        "keyguard_still_locked",
+        "youtube_autoplay_pending",
+        "youtube_fg_loading",
+        "media_playback_pending"
+    )
+
+    private val ASYNC_IN_PROGRESS_METHODS = setOf(
+        "youtube_autoplay_pending",
+        "youtube_fg_loading",
+        "youtube_unverified",
+        "media_playback_pending"
+    )
+
+    private val RETRYABLE_STATE_MISMATCH_METHODS = setOf(
+        "AudioManager.getStreamVolume",
+        "Settings.System.SCREEN_BRIGHTNESS",
+        "NotificationManager.currentInterruptionFilter",
+        "BluetoothManager.adapter.isEnabled",
+        "WifiManager.isWifiEnabled",
+        "keyguard_still_locked",
+        "foreground_transition_pending",
+        "siren_state_check",
+        "siren_stopped_check",
+        "tool_contract_verify"
+    )
+
     suspend fun execute(
         tool: AuraTool,
         arguments: JsonObject,
@@ -38,7 +67,8 @@ object ExecutionEngine {
         val toolContext = ToolContext(
             applicationContext = context,
             scope = scope,
-            callId = callId
+            callId = callId,
+            timeoutMs = RetryPolicy.getToolTimeout(tool.name)
         )
         val startTime = System.currentTimeMillis()
 
@@ -69,19 +99,59 @@ object ExecutionEngine {
             val confirmed = arguments.has("confirmed") && arguments.get("confirmed").asBoolean
             if (!confirmed) {
                 Log.w(TAG, "Tool '${tool.name}' requires explicit confirmation.")
-                com.aura.assistant.security.ConfirmationEngine.request(
-                    toolName = tool.name,
-                    promptText = "AURA Security Governance: Kya aap '${tool.name}' ko run karna chahte hain?",
-                    onConfirm = {
-                        Log.i(TAG, "User confirmed action: ${tool.name}")
+                val isAppForeground = try {
+                    com.aura.assistant.IshaDynamicIsland.isAppInForeground
+                } catch (_: Exception) {
+                    false
+                }
+                if (isAppForeground) {
+                    val decision = CompletableDeferred<Boolean>()
+                    com.aura.assistant.security.ConfirmationEngine.request(
+                        toolName = tool.name,
+                        promptText = "AURA Security Governance: Kya aap '${tool.name}' ko run karna chahte hain?",
+                        onConfirm = {
+                            Log.i(TAG, "User confirmed action: ${tool.name}")
+                            decision.complete(true)
+                        },
+                        onCancel = {
+                            Log.i(TAG, "User cancelled action: ${tool.name}")
+                            decision.complete(false)
+                        }
+                    )
+                    val approved = withTimeoutOrNull(25_000L) { decision.await() }
+                    if (approved == false) {
+                        return ToolResult(
+                            toolId = tool.id,
+                            callId = callId,
+                            status = ToolStatus.CANCELLED,
+                            message = "Boss ne '${tool.name}' action cancel kar diya.",
+                            retryable = false
+                        )
+                    } else if (approved == null) {
+                        com.aura.assistant.security.ConfirmationEngine.cancel()
+                        return ToolResult(
+                            toolId = tool.id,
+                            callId = callId,
+                            status = ToolStatus.NEEDS_CONFIRMATION,
+                            message = "Confirmation timed out for high-risk action: ${tool.name}",
+                            retryable = false
+                        )
                     }
-                )
-                return ToolResult(
-                    toolId = tool.id,
-                    callId = callId,
-                    status = ToolStatus.NEEDS_CONFIRMATION,
-                    message = "High risk action requires confirmation: ${tool.name}"
-                )
+                    // Approved == true: continue straight into Stage 4 -> Stage 10!
+                } else {
+                    com.aura.assistant.security.ConfirmationEngine.request(
+                        toolName = tool.name,
+                        promptText = "AURA Security Governance: Kya aap '${tool.name}' ko run karna chahte hain?",
+                        onConfirm = { Log.i(TAG, "User confirmed action: ${tool.name}") }
+                    )
+                    return ToolResult(
+                        toolId = tool.id,
+                        callId = callId,
+                        status = ToolStatus.NEEDS_CONFIRMATION,
+                        message = "High risk action requires confirmation: ${tool.name}",
+                        retryable = false
+                    )
+                }
             }
         } else if (auth == AuthorizationResult.DENIED) {
             Log.e(TAG, "Authorization denied for tool '${tool.name}'")
@@ -118,7 +188,7 @@ object ExecutionEngine {
             )
 
             // ── Stage 6: OBSERVE & Stage 7: VERIFY ──────────────────────
-            val evidence = ExecutionVerifier.verify(
+            var evidence = ExecutionVerifier.verify(
                 context = context,
                 tool = tool,
                 arguments = arguments,
@@ -126,37 +196,52 @@ object ExecutionEngine {
                 toolContext = toolContext
             )
 
-            val verifiedResult = if (executionResult.status == ToolStatus.SUCCESS) {
-                if (!evidence.verified) {
-                    Log.w(TAG, "Tool '${tool.name}' executed but verification remains UNVERIFIED: ${evidence.observedState}")
-                    executionResult.copy(
-                        evidence = evidence,
-                        durationMs = System.currentTimeMillis() - startTime
+            // Non-blocking transient settle poll (e.g. Activity window transitions, keyguard dismiss animations)
+            if (executionResult.status == ToolStatus.SUCCESS && !evidence.verified && evidence.method in TRANSIENT_SETTLE_METHODS) {
+                for (settleAttempt in 1..2) {
+                    delay(400L)
+                    evidence = ExecutionVerifier.verify(
+                        context = context,
+                        tool = tool,
+                        arguments = arguments,
+                        executionResult = executionResult,
+                        toolContext = toolContext
                     )
-                } else {
-                    executionResult.copy(
-                        evidence = evidence,
-                        durationMs = System.currentTimeMillis() - startTime
-                    )
+                    if (evidence.verified) {
+                        Log.i(TAG, "Tool '${tool.name}' state settled & verified on poll #$settleAttempt (${evidence.method})")
+                        break
+                    }
                 }
-            } else {
-                executionResult.copy(
-                    evidence = evidence,
-                    durationMs = System.currentTimeMillis() - startTime
-                )
             }
+
+            val verifiedResult = executionResult.copy(
+                evidence = evidence,
+                durationMs = System.currentTimeMillis() - startTime
+            )
 
             if (verifiedResult.status == ToolStatus.SUCCESS) {
-                // ── Stage 9: COMMIT & Stage 10: LEARN ───────────────────
-                Log.i(TAG, "Tool '${tool.name}' successfully executed and observed in ${verifiedResult.durationMs}ms (verified: ${evidence.verified})")
-                recordLearning(context, tool, arguments, verifiedResult, evidence.verified)
-                return verifiedResult
-            }
+                val shouldRetryUnverified = !evidence.verified &&
+                    evidence.method !in ASYNC_IN_PROGRESS_METHODS &&
+                    evidence.method in RETRYABLE_STATE_MISMATCH_METHODS &&
+                    attempts <= retryPolicy.maxRetries
 
-            lastResult = verifiedResult
+                if (!shouldRetryUnverified) {
+                    if (!evidence.verified) {
+                        Log.w(TAG, "Tool '${tool.name}' executed but verification remains UNVERIFIED: ${evidence.observedState}")
+                    }
+                    // ── Stage 9: COMMIT & Stage 10: LEARN ───────────────────
+                    Log.i(TAG, "Tool '${tool.name}' successfully executed and observed in ${verifiedResult.durationMs}ms (verified: ${evidence.verified})")
+                    recordLearning(context, tool, arguments, verifiedResult, evidence.verified)
+                    return verifiedResult
+                }
 
-            if (!verifiedResult.retryable || attempts > retryPolicy.maxRetries) {
-                break
+                Log.w(TAG, "Tool '${tool.name}' reported success but physical state mismatch (${evidence.method}: ${evidence.observedState}); triggering Stage 8 retry...")
+                lastResult = verifiedResult.copy(retryable = true)
+            } else {
+                lastResult = verifiedResult
+                if (!verifiedResult.retryable || attempts > retryPolicy.maxRetries) {
+                    break
+                }
             }
 
             // ── Stage 8: RECOVER (Backoff retry) ────────────────────────

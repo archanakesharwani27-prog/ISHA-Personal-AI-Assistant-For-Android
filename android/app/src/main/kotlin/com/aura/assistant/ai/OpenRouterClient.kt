@@ -228,6 +228,10 @@ class OpenRouterClient(private val context: Context) {
                 val activeMessages = messagesArray.deepCopy()
                 var step = 0
                 val maxToolSteps = 3
+                var executedToolCount = 0
+                val isMultiStepPrompt = prompt.contains(
+                    Regex("\\b(aur|then|uske baad|phir|fir|also|and|bhejo|send|share|kar ke|karke|krke)\\b", RegexOption.IGNORE_CASE)
+                ) || prompt.contains(",")
 
                 while (step < maxToolSteps) {
                     step++
@@ -252,14 +256,14 @@ class OpenRouterClient(private val context: Context) {
                         reqBuilder.addHeader(k, v)
                     }
 
-                    val response = httpClient.newCall(reqBuilder.build()).execute()
-                    if (!response.isSuccessful) {
-                        val err = response.body?.string() ?: ""
-                        Log.w(TAG, "Model $model returned HTTP ${response.code}: $err")
-                        throw RuntimeException("HTTP ${response.code}: $err")
+                    val responseBody = httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val err = response.body?.string() ?: ""
+                            Log.w(TAG, "Model $model returned HTTP ${response.code}: $err")
+                            throw RuntimeException("HTTP ${response.code}: $err")
+                        }
+                        response.body?.string() ?: throw RuntimeException("Empty response body")
                     }
-
-                    val responseBody = response.body?.string() ?: throw RuntimeException("Empty response body")
                     val parsed = JsonParser.parseString(responseBody).asJsonObject
                     val choices = parsed.getAsJsonArray("choices")
                     if (choices == null || choices.size() == 0) {
@@ -277,6 +281,7 @@ class OpenRouterClient(private val context: Context) {
                         Log.i(TAG, "Model $model requested ${toolCalls.size()} tool call(s) at step $step")
                         activeMessages.add(message) // Add assistant turn with tool_calls
 
+                        var needsFollowUpStep = false
                         for (i in 0 until toolCalls.size()) {
                             val callObj = toolCalls.get(i).asJsonObject
                             val callId = callObj.get("id")?.asString ?: "call_${System.currentTimeMillis()}"
@@ -291,6 +296,11 @@ class OpenRouterClient(private val context: Context) {
 
                             Log.i(TAG, "⚡ Executing native tool: $toolName with args: $toolArgs")
                             val toolResult = onExecuteTool(toolName, toolArgs)
+                            executedToolCount++
+
+                            if (toolName in setOf("chat_on_whatsapp", "take_screenshot", "open_camera", "get_screen_context", "read_notifications")) {
+                                needsFollowUpStep = true
+                            }
 
                             val toolRespMsg = JsonObject().apply {
                                 addProperty("role", "tool")
@@ -299,6 +309,11 @@ class OpenRouterClient(private val context: Context) {
                                 addProperty("content", toolResult.toString())
                             }
                             activeMessages.add(toolRespMsg)
+                        }
+
+                        if (step < maxToolSteps && (isMultiStepPrompt || needsFollowUpStep)) {
+                            // Continue loop so the model retains `tools` and can chain next step cleanly
+                            continue
                         }
 
                         // Stream final completion for sweet spoken Hindi response
@@ -311,31 +326,33 @@ class OpenRouterClient(private val context: Context) {
                             callback = callback
                         )
                     } else {
-                        // Model responded directly with conversation text (0 tools called)
+                        // Model responded directly with conversation text (0 new tool calls this step)
                         val content = if (message.has("content") && !message.get("content").isJsonNull) {
                             message.get("content").asString
                         } else ""
                         if (content.isNotBlank()) {
-                            val lowerContent = content.lowercase()
-                            val lowerPrompt = prompt.lowercase()
-                            val isActionIntent = lowerPrompt.contains("bhej") || lowerPrompt.contains("send") || lowerPrompt.contains("share") ||
-                                    lowerPrompt.contains("play") || lowerPrompt.contains("torch") || lowerPrompt.contains("type") ||
-                                    lowerPrompt.contains("call") || lowerPrompt.contains("alarm") || lowerPrompt.contains("timer") ||
-                                    lowerPrompt.contains("set") || lowerPrompt.contains("turn") || lowerPrompt.contains("karo")
-                            val isFakeActionText = lowerContent.contains("kar rahi hoon") || lowerContent.contains("bhej rahi") ||
-                                    lowerContent.contains("send kar rahi") || lowerContent.contains("fetch kar rahi") ||
-                                    lowerContent.contains("maps.google.com/?q=23.") ||
-                                    lowerContent.contains("bhej diya") || lowerContent.contains("send ho gaya") || lowerContent.contains("send kar diya") ||
-                                    lowerContent.contains("type kar diya") || lowerContent.contains("likh diya") || lowerContent.contains("call mila di") ||
-                                    lowerContent.contains("call kar di") || lowerContent.contains("laga diya") || lowerContent.contains("set kar diya") ||
-                                    lowerContent.contains("on kar diya") || lowerContent.contains("off kar diya") || lowerContent.contains("kar diya hai") ||
-                                    lowerContent.contains("kar diya boss") || lowerContent.contains("ho gaya boss")
-                            if (isActionIntent && isFakeActionText) {
-                                Log.w(TAG, "Fast LLM hallucinated action without tool execution: $content")
-                                throw IllegalStateException("Fast LLM hallucinated action narrative without calling tool")
+                            if (executedToolCount == 0) {
+                                val lowerContent = content.lowercase()
+                                val lowerPrompt = prompt.lowercase()
+                                val isActionIntent = lowerPrompt.contains("bhej") || lowerPrompt.contains("send") || lowerPrompt.contains("share") ||
+                                        lowerPrompt.contains("play") || lowerPrompt.contains("torch") || lowerPrompt.contains("type") ||
+                                        lowerPrompt.contains("call") || lowerPrompt.contains("alarm") || lowerPrompt.contains("timer") ||
+                                        lowerPrompt.contains("set") || lowerPrompt.contains("turn") || lowerPrompt.contains("karo")
+                                val isFakeActionText = lowerContent.contains("kar rahi hoon") || lowerContent.contains("bhej rahi") ||
+                                        lowerContent.contains("send kar rahi") || lowerContent.contains("fetch kar rahi") ||
+                                        lowerContent.contains("maps.google.com/?q=23.") ||
+                                        lowerContent.contains("bhej diya") || lowerContent.contains("send ho gaya") || lowerContent.contains("send kar diya") ||
+                                        lowerContent.contains("type kar diya") || lowerContent.contains("likh diya") || lowerContent.contains("call mila di") ||
+                                        lowerContent.contains("call kar di") || lowerContent.contains("laga diya") || lowerContent.contains("set kar diya") ||
+                                        lowerContent.contains("on kar diya") || lowerContent.contains("off kar diya") || lowerContent.contains("kar diya hai") ||
+                                        lowerContent.contains("kar diya boss") || lowerContent.contains("ho gaya boss")
+                                if (isActionIntent && isFakeActionText) {
+                                    Log.w(TAG, "Fast LLM hallucinated action without tool execution: $content")
+                                    throw IllegalStateException("Fast LLM hallucinated action narrative without calling tool")
+                                }
                             }
 
-                            Log.i(TAG, "Model $model returned direct text (${content.length} chars)")
+                            Log.i(TAG, "Model $model returned direct text (${content.length} chars, toolsExecuted=$executedToolCount)")
                             callback.onToken(content)
                             callback.onComplete(content)
                             return@withContext content
@@ -378,42 +395,43 @@ class OpenRouterClient(private val context: Context) {
             reqBuilder.addHeader(k, v)
         }
 
-        val response = httpClient.newCall(reqBuilder.build()).execute()
-        if (!response.isSuccessful) {
-            val err = response.body?.string() ?: ""
-            throw RuntimeException("Final stream error HTTP ${response.code}: $err")
-        }
-
-        val stream = response.body?.byteStream() ?: throw RuntimeException("Null response stream")
-        val reader = BufferedReader(InputStreamReader(stream))
-        val accumulator = StringBuilder()
-
-        try {
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                val current = line ?: break
-                if (current.startsWith("data: ")) {
-                    val data = current.removePrefix("data: ").trim()
-                    if (data == "[DONE]") break
-                    try {
-                        val json = JsonParser.parseString(data).asJsonObject
-                        val choices = json.getAsJsonArray("choices")
-                        if (choices != null && choices.size() > 0) {
-                            val delta = choices[0].asJsonObject.getAsJsonObject("delta")
-                            if (delta != null && delta.has("content") && !delta.get("content").isJsonNull) {
-                                val token = delta.get("content").asString
-                                accumulator.append(token)
-                                callback.onToken(token)
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
+        val fullResponse = httpClient.newCall(reqBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) {
+                val err = response.body?.string() ?: ""
+                throw RuntimeException("Final stream error HTTP ${response.code}: $err")
             }
-        } finally {
-            try { reader.close() } catch (_: Exception) {}
-        }
 
-        val fullResponse = accumulator.toString().trim()
+            val stream = response.body?.byteStream() ?: throw RuntimeException("Null response stream")
+            val reader = BufferedReader(InputStreamReader(stream))
+            val accumulator = StringBuilder()
+
+            try {
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val current = line ?: break
+                    if (current.startsWith("data: ")) {
+                        val data = current.removePrefix("data: ").trim()
+                        if (data == "[DONE]") break
+                        try {
+                            val json = JsonParser.parseString(data).asJsonObject
+                            val choices = json.getAsJsonArray("choices")
+                            if (choices != null && choices.size() > 0) {
+                                val delta = choices[0].asJsonObject.getAsJsonObject("delta")
+                                if (delta != null && delta.has("content") && !delta.get("content").isJsonNull) {
+                                    val token = delta.get("content").asString
+                                    accumulator.append(token)
+                                    callback.onToken(token)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+            } finally {
+                try { reader.close() } catch (_: Exception) {}
+            }
+
+            accumulator.toString().trim()
+        }
         if (fullResponse.isNotBlank()) {
             callback.onComplete(fullResponse)
             return@withContext fullResponse

@@ -46,6 +46,7 @@ import java.util.Locale
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -6840,7 +6841,7 @@ object IshaToolRegistry {
      * Resolves app package, sends MediaStore search intent, launches deep links,
      * and arms IshaAccessibilityService to auto-tap the first result.
      */
-    private fun playMediaInApp(context: Context, query: String, targetApp: String): Boolean {
+    private suspend fun playMediaInApp(context: Context, query: String, targetApp: String): Boolean {
         wakeAndUnlockIfNeeded(context)
         val trimmedQuery = query.trim()
         val appLower = targetApp.lowercase().trim()
@@ -6887,16 +6888,16 @@ object IshaToolRegistry {
                     val a11y = IshaAccessibilityService.instance
                     if (a11y != null) {
                         val startTime = System.currentTimeMillis()
-                        // Await up to 3500ms for accessibility to click the video card and verify playback
+                        // Non-blocking suspend poll (up to 3500ms) for accessibility playback confirmation
                         while (System.currentTimeMillis() - startTime < 3500L) {
                             if (a11y.youTubePlaybackVerified) {
                                 Log.i(TAG, "playMediaInApp: YouTube playback verified active after ${System.currentTimeMillis() - startTime}ms")
                                 break
                             }
-                            try { Thread.sleep(250L) } catch (_: Exception) {}
+                            delay(250L)
                         }
                     } else {
-                        try { Thread.sleep(600L) } catch (_: Exception) {}
+                        delay(600L)
                     }
                 }
                 return true

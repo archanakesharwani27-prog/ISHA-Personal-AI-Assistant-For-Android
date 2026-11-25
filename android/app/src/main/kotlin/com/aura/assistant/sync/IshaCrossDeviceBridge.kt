@@ -74,6 +74,9 @@ object IshaCrossDeviceBridge {
     )
     private var isListening = false
     @Volatile private var isInitialized = false
+    private var reconnectAttempts = 0
+    private var reconnectJob: kotlinx.coroutines.Job? = null
+    @Volatile private var currentListenedUid: String? = null
 
     val ACTIONS_EXEMPT_FROM_UNLOCK: Set<String> = setOf(
         "toggle_flashlight", "flashlight", "torch", "turn_on_flashlight", "turn_off_flashlight",
@@ -95,9 +98,19 @@ object IshaCrossDeviceBridge {
 
         scope.launch {
             IshaAuthManager.sessionState.collect { user ->
-                if (user.isLoggedIn && user.uid.isNotBlank()) {
+                if (user.isLoggedIn && user.uid.isNotBlank() && user.provider != "GUEST" && !user.uid.startsWith("guest")) {
+                    if (currentListenedUid != user.uid || !isListening) {
+                        reconnectAttempts = 0
+                        reconnectJob?.cancel()
+                        isListening = false
+                        startInboxListener(app)
+                    }
+                } else {
+                    reconnectJob?.cancel()
+                    inboxListener?.remove()
+                    inboxListener = null
                     isListening = false
-                    startInboxListener(app)
+                    currentListenedUid = null
                 }
             }
         }
@@ -111,9 +124,10 @@ object IshaCrossDeviceBridge {
         IshaAuthManager.init(app)
         IshaDeviceRegistry.init(app)
 
-        val userId = IshaAuthManager.sessionState.value.uid
-        if (userId.isBlank()) {
-            Log.w(TAG, "Cannot start inbox listener: user not logged in yet")
+        val session = IshaAuthManager.sessionState.value
+        val userId = session.uid
+        if (!session.isLoggedIn || userId.isBlank() || session.provider == "GUEST" || userId.startsWith("guest")) {
+            Log.d(TAG, "Skipping cross-device inbox listener: guest or unauthenticated session")
             return
         }
 
@@ -123,9 +137,10 @@ object IshaCrossDeviceBridge {
             return
         }
 
-        if (isListening) return
+        if (isListening && currentListenedUid == userId) return
 
         try {
+            reconnectJob?.cancel()
             inboxListener?.remove()
             val firestore = FirebaseFirestore.getInstance()
 
@@ -137,14 +152,34 @@ object IshaCrossDeviceBridge {
                 .whereEqualTo("status", "PENDING")
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Log.w(TAG, "Inbox listener error: ${error.message} — scheduling reconnect in 5s")
+                        inboxListener?.remove()
+                        inboxListener = null
                         isListening = false
-                        scope.launch {
-                            kotlinx.coroutines.delay(5000L)
+
+                        val code = error.code
+                        if (code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                            code == com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED) {
+                            Log.w(TAG, "Inbox listener stopped ($code): ${error.message}. Waiting for auth/permission change instead of spinning.")
+                            return@addSnapshotListener
+                        }
+
+                        reconnectAttempts++
+                        val backoffMs = when {
+                            reconnectAttempts <= 1 -> 5_000L
+                            reconnectAttempts == 2 -> 15_000L
+                            reconnectAttempts == 3 -> 45_000L
+                            else -> 120_000L
+                        }
+                        Log.w(TAG, "Inbox listener error ($code): ${error.message} — scheduling reconnect #${reconnectAttempts} in ${backoffMs / 1000}s")
+                        reconnectJob?.cancel()
+                        reconnectJob = scope.launch {
+                            kotlinx.coroutines.delay(backoffMs)
                             startInboxListener(app)
                         }
                         return@addSnapshotListener
                     }
+
+                    reconnectAttempts = 0
                     if (snapshot != null && !snapshot.isEmpty) {
                         for (doc in snapshot.documents) {
                             val cmdId = doc.getString("commandId") ?: doc.id
@@ -158,13 +193,17 @@ object IshaCrossDeviceBridge {
                         }
                     }
                 }
+            currentListenedUid = userId
             isListening = true
             Log.i(TAG, "Started cross-device inbox listener for device: $myDeviceId (User: $userId)")
         } catch (e: Exception) {
             isListening = false
-            Log.w(TAG, "Failed to start inbox listener: ${e.message}")
-            scope.launch {
-                kotlinx.coroutines.delay(5000L)
+            reconnectAttempts++
+            val backoffMs = minOf(5_000L * reconnectAttempts, 120_000L)
+            Log.w(TAG, "Failed to start inbox listener: ${e.message} (retry in ${backoffMs / 1000}s)")
+            reconnectJob?.cancel()
+            reconnectJob = scope.launch {
+                kotlinx.coroutines.delay(backoffMs)
                 startInboxListener(app)
             }
         }

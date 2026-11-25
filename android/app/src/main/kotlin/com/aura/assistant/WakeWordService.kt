@@ -625,6 +625,7 @@ class WakeWordService : Service(), SensorEventListener {
     private var engineProcessorsField: java.lang.reflect.Field? = null
     private var modelAudioProcField: java.lang.reflect.Field? = null
     private var rawBufferField: java.lang.reflect.Field? = null
+    @Volatile private var rmsReflectionWarned = false
 
     private fun calculateEngineRms(engine: WakeWordEngine): Double {
         return try {
@@ -657,8 +658,12 @@ class WakeWordService : Service(), SensorEventListener {
                 sumSq += s * s
             }
             if (samplesToTake > 0) sqrt(sumSq / samplesToTake) else 1.0
-        } catch (_: Exception) {
-            1.0 // Gracefully pass energy check if reflection is not supported on this runtime
+        } catch (e: Exception) {
+            if (!rmsReflectionWarned) {
+                rmsReflectionWarned = true
+                Log.w(TAG, "WakeWordEngine RMS reflection unavailable (${e.javaClass.simpleName}: ${e.message}); falling back to model-only threshold")
+            }
+            1.0
         }
     }
 

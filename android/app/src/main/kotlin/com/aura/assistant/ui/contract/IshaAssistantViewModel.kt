@@ -36,7 +36,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import java.util.Locale
 import java.util.UUID
 
@@ -512,6 +515,7 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
     // ── Text Chat & Gemini Streaming Pipeline ──────────────────────────────────
 
     private val pendingCommandQueue = mutableListOf<Pair<String, AttachedMedia?>>()
+    private var textPrepJob: Job? = null
 
     private fun processNextPendingCommand() {
         if (_isGenerating.value) return
@@ -613,78 +617,8 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
         }
 
         _selectedAttachment.value = null // consume attachment
+        _isGenerating.value = true
 
-        var promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
-
-        // Implicit memory auto-extraction: continuously learn user facts from chat
-        if (trimmed.isNotBlank()) {
-            AuraMemoryManager.extractAndSaveImplicitFacts(getApplication<Application>(), trimmed)
-        }
-
-        // Cross-session context search if user asks about past conversations or memory
-        val lowerPrompt = trimmed.lowercase()
-        if (lowerPrompt.contains("pichhli") || lowerPrompt.contains("pehle") || lowerPrompt.contains("kal") || 
-            lowerPrompt.contains("bataya tha") || lowerPrompt.contains("past") || lowerPrompt.contains("yaad hai")) {
-            val pastSnippets = repository.searchPastConversations(trimmed)
-            if (pastSnippets.isNotEmpty()) {
-                val pastContext = pastSnippets.joinToString("\n")
-                promptToSend = "$promptToSend\n\n[Relevant Past Conversation Context]:\n$pastContext"
-            }
-        }
-
-        // Exclude explicit screenshot/capture tool actions or external app actions from auto screen capture
-        val isScreenshotAction = lowerPrompt.contains("screenshot") || lowerPrompt.contains("screen shot") || lowerPrompt.contains("screen capture")
-        val isExternalAppAction = lowerPrompt.contains("whatsapp") || lowerPrompt.contains("whatsap") ||
-                lowerPrompt.contains("call") || lowerPrompt.contains("dial") ||
-                lowerPrompt.contains("phone") || lowerPrompt.contains("youtube") ||
-                lowerPrompt.contains("instagram") || lowerPrompt.contains("telegram") ||
-                lowerPrompt.contains("meta ai") || lowerPrompt.contains("meta se")
-
-        // If user asks about understanding/reading the screen and hasn't manually attached an image, inject active screen context & visual capture (<50ms)
-        val isScreenRelated = !isScreenshotAction && !isExternalAppAction && attached == null && (
-            lowerPrompt.contains("screen") ||
-            lowerPrompt.contains("ye kya chal raha") ||
-            lowerPrompt.contains("dekh kar") ||
-            lowerPrompt.contains("dekh kr") ||
-            lowerPrompt.contains("ye page") ||
-            lowerPrompt.contains("page padho") ||
-            lowerPrompt.contains("padh kar") ||
-            lowerPrompt.contains("padh kr") ||
-            lowerPrompt.contains("padh do") ||
-            lowerPrompt.contains("padh lo") ||
-            lowerPrompt.contains("padho") ||
-            lowerPrompt.contains("kya likha") ||
-            lowerPrompt.contains("kya likha hai") ||
-            lowerPrompt.contains("summarize") ||
-            lowerPrompt.contains("read this") ||
-            lowerPrompt.contains("read screen") ||
-            lowerPrompt.contains("what's on screen") ||
-            lowerPrompt.contains("what is on my screen") ||
-            lowerPrompt.contains("batao isme") ||
-            lowerPrompt.contains("kiski post") ||
-            lowerPrompt.contains("kisne bheja") ||
-            lowerPrompt.contains("ye dekho")
-        )
-        var autoScreenCaptureBytes: ByteArray? = null
-        if (isScreenRelated) {
-            val a11y = com.aura.assistant.IshaAccessibilityService.instance
-            if (a11y != null) {
-                val screenSummary = a11y.getScreenTextHierarchy()
-                if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
-                    promptToSend = "$promptToSend\n\n[Active Screen Context]:\n$screenSummary"
-                }
-                val latch = java.util.concurrent.CountDownLatch(1)
-                a11y.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes ->
-                    autoScreenCaptureBytes = bytes
-                    latch.countDown()
-                }
-                try {
-                    latch.await(600, java.util.concurrent.TimeUnit.MILLISECONDS)
-                } catch (_: Exception) {}
-            }
-        }
-
-        // 1. Append User Message
         val userMsg = ChatMessage(
             sessionId = currentSessionId,
             role = MessageRole.USER,
@@ -692,149 +626,233 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             imageUri = attached?.uri?.toString()
         )
 
-        // ⚡ Tier 0: Zero-Latency On-Device Reflex Engine (<20ms hardware & system actions)
-        if (attached == null && trimmed.isNotBlank()) {
-            val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecuteSync(getApplication(), trimmed)
-            if (reflex != null) {
-                if (!alreadyInUi) {
-                    val currentWithUser = _chatMessages.value.toMutableList().apply { add(userMsg) }
-                    _chatMessages.value = currentWithUser
-                }
-                executeOfflineReflexTurn(currentSessionId, reflex)
-                return
-            }
-        }
-
-        // 2. Prepare streaming Assistant Message
-        val assistantMsgId = UUID.randomUUID().toString()
-        val assistantMsg = ChatMessage(
-            id = assistantMsgId,
-            sessionId = currentSessionId,
-            role = MessageRole.ASSISTANT,
-            text = "",
-            isStreaming = true
-        )
-
-        // Preserve full conversation history including Tool execution outputs for maximum contextual continuity
+        // Preserve conversation history PRIOR to current user turn
         val previousHistory = if (alreadyInUi) _chatMessages.value.dropLast(1) else _chatMessages.value
 
-        val updatedList = _chatMessages.value.toMutableList().apply {
-            if (!alreadyInUi) {
-                add(userMsg)
-            }
-            add(assistantMsg)
+        // Render user message immediately on Main so UI feels instantaneous (<16ms)
+        if (!alreadyInUi) {
+            _chatMessages.value = _chatMessages.value + userMsg
         }
-        _chatMessages.value = updatedList
-        _isGenerating.value = true
 
-        // 3. Initiate Stream with history prior to current prompt
-        chatService.sendChatStream(
-            history = previousHistory,
-            newPrompt = promptToSend,
-            imageBytes = attached?.bytes ?: autoScreenCaptureBytes,
-            callback = object : ChatStreamCallback {
-                override fun onToken(chunk: String) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val current = _chatMessages.value.toMutableList()
-                        val idx = current.indexOfFirst { it.id == assistantMsgId }
-                        if (idx != -1) {
-                            val existing = current[idx]
-                            current[idx] = existing.copy(text = existing.text + chunk, isStreaming = true)
-                            _chatMessages.value = current
-                        }
+        // Dispatch heavy memory/DB/screen capture & reflex work off the Main UI thread
+        textPrepJob?.cancel()
+        textPrepJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var promptToSend = if (trimmed.isNotBlank()) trimmed else "Describe this attached image and help me understand it."
+
+                // Implicit memory auto-extraction: continuously learn user facts from chat
+                if (trimmed.isNotBlank()) {
+                    AuraMemoryManager.extractAndSaveImplicitFacts(getApplication<Application>(), trimmed)
+                }
+
+                // Cross-session context search if user asks about past conversations or memory
+                val lowerPrompt = trimmed.lowercase()
+                if (lowerPrompt.contains("pichhli") || lowerPrompt.contains("pehle") || lowerPrompt.contains("kal") ||
+                    lowerPrompt.contains("bataya tha") || lowerPrompt.contains("past") || lowerPrompt.contains("yaad hai")) {
+                    val pastSnippets = repository.searchPastConversations(trimmed)
+                    if (pastSnippets.isNotEmpty()) {
+                        val pastContext = pastSnippets.joinToString("\n")
+                        promptToSend = "$promptToSend\n\n[Relevant Past Conversation Context]:\n$pastContext"
                     }
                 }
 
-                override fun onToolStart(toolName: String, args: String) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val toolMsg = ChatMessage(
-                            sessionId = currentSessionId,
-                            role = MessageRole.TOOL,
-                            text = getFriendlyToolLabel(toolName),
-                            toolName = toolName,
-                            toolArgs = args,
-                            toolResult = null,
-                            isStreaming = true
-                        )
-                        val current = _chatMessages.value.toMutableList()
-                        val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
-                        if (assistantIdx != -1) {
-                            current.add(assistantIdx, toolMsg)
-                        } else {
-                            current.add(toolMsg)
-                        }
-                        _chatMessages.value = current
-                    }
-                }
+                // Exclude explicit screenshot/capture tool actions or external app actions from auto screen capture
+                val isScreenshotAction = lowerPrompt.contains("screenshot") || lowerPrompt.contains("screen shot") || lowerPrompt.contains("screen capture")
+                val isExternalAppAction = lowerPrompt.contains("whatsapp") || lowerPrompt.contains("whatsap") ||
+                        lowerPrompt.contains("call") || lowerPrompt.contains("dial") ||
+                        lowerPrompt.contains("phone") || lowerPrompt.contains("youtube") ||
+                        lowerPrompt.contains("instagram") || lowerPrompt.contains("telegram") ||
+                        lowerPrompt.contains("meta ai") || lowerPrompt.contains("meta se")
 
-                override fun onToolExecution(toolName: String, args: String, result: String) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val current = _chatMessages.value.toMutableList()
-                        val pendingToolIdx = current.indexOfLast { it.role == MessageRole.TOOL && it.toolName == toolName && it.isStreaming }
-                        if (pendingToolIdx != -1) {
-                            val existing = current[pendingToolIdx]
-                            current[pendingToolIdx] = existing.copy(
-                                text = result,
-                                toolResult = result,
-                                isStreaming = false
-                            )
-                        } else {
-                            val toolMsg = ChatMessage(
-                                sessionId = currentSessionId,
-                                role = MessageRole.TOOL,
-                                text = result,
-                                toolName = toolName,
-                                toolArgs = args,
-                                toolResult = result,
-                                isStreaming = false
-                            )
-                            val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
-                            if (assistantIdx != -1) {
-                                current.add(assistantIdx, toolMsg)
-                            } else {
-                                current.add(toolMsg)
+                // If user asks about understanding/reading the screen and hasn't manually attached an image, inject active screen context & visual capture
+                val isScreenRelated = !isScreenshotAction && !isExternalAppAction && attached == null && (
+                    lowerPrompt.contains("screen") ||
+                    lowerPrompt.contains("ye kya chal raha") ||
+                    lowerPrompt.contains("dekh kar") ||
+                    lowerPrompt.contains("dekh kr") ||
+                    lowerPrompt.contains("ye page") ||
+                    lowerPrompt.contains("page padho") ||
+                    lowerPrompt.contains("padh kar") ||
+                    lowerPrompt.contains("padh kr") ||
+                    lowerPrompt.contains("padh do") ||
+                    lowerPrompt.contains("padh lo") ||
+                    lowerPrompt.contains("padho") ||
+                    lowerPrompt.contains("kya likha") ||
+                    lowerPrompt.contains("kya likha hai") ||
+                    lowerPrompt.contains("summarize") ||
+                    lowerPrompt.contains("read this") ||
+                    lowerPrompt.contains("read screen") ||
+                    lowerPrompt.contains("what's on screen") ||
+                    lowerPrompt.contains("what is on my screen") ||
+                    lowerPrompt.contains("batao isme") ||
+                    lowerPrompt.contains("kiski post") ||
+                    lowerPrompt.contains("kisne bheja") ||
+                    lowerPrompt.contains("ye dekho")
+                )
+                var autoScreenCaptureBytes: ByteArray? = null
+                if (isScreenRelated) {
+                    val a11y = com.aura.assistant.IshaAccessibilityService.instance
+                    if (a11y != null) {
+                        val screenSummary = a11y.getScreenTextHierarchy()
+                        if (screenSummary.isNotBlank() && !screenSummary.startsWith("Screen is empty")) {
+                            promptToSend = "$promptToSend\n\n[Active Screen Context]:\n$screenSummary"
+                        }
+                        autoScreenCaptureBytes = withTimeoutOrNull(600L) {
+                            suspendCancellableCoroutine<ByteArray?> { cont ->
+                                a11y.takeOptimizedScreenCapture(maxDim = 640, quality = 60) { bytes ->
+                                    if (cont.isActive) cont.resume(bytes)
+                                }
                             }
                         }
-                        _chatMessages.value = current
                     }
                 }
 
-                override fun onComplete(fullText: String) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val current = _chatMessages.value.toMutableList()
-                        val idx = current.indexOfFirst { it.id == assistantMsgId }
-                        if (idx != -1) {
-                            val existing = current[idx]
-                            val finalText = if (existing.text.isNotBlank()) existing.text else fullText
-                            current[idx] = existing.copy(text = finalText, isStreaming = false)
-                            _chatMessages.value = current
+                // ⚡ Tier 0: Zero-Latency On-Device Reflex Engine (non-blocking suspend execution off Main thread)
+                if (attached == null && trimmed.isNotBlank()) {
+                    val reflex = com.aura.assistant.brain.OfflineReflexEngine.tryExecute(getApplication(), trimmed)
+                    if (reflex != null) {
+                        withContext(Dispatchers.Main) {
+                            executeOfflineReflexTurn(currentSessionId, reflex)
+                            _isGenerating.value = false
+                            processNextPendingCommand()
                         }
-                        _isGenerating.value = false
-                        saveCurrentMessages()
-                        processNextPendingCommand()
+                        return@launch
                     }
                 }
 
-                override fun onError(errorMessage: String) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        val current = _chatMessages.value.toMutableList()
-                        val idx = current.indexOfFirst { it.id == assistantMsgId }
-                        if (idx != -1) {
-                            val existing = current[idx]
-                            val errorDisplay = if (existing.text.isNotBlank()) existing.text else "⚠️ $errorMessage"
-                            current[idx] = existing.copy(text = errorDisplay, isStreaming = false)
-                            _chatMessages.value = current
+                // 2. Prepare streaming Assistant Message on Main
+                val assistantMsgId = UUID.randomUUID().toString()
+                val assistantMsg = ChatMessage(
+                    id = assistantMsgId,
+                    sessionId = currentSessionId,
+                    role = MessageRole.ASSISTANT,
+                    text = "",
+                    isStreaming = true
+                )
+                withContext(Dispatchers.Main) {
+                    _chatMessages.value = _chatMessages.value + assistantMsg
+                }
+
+                // 3. Initiate Stream with history prior to current prompt
+                chatService.sendChatStream(
+                    history = previousHistory,
+                    newPrompt = promptToSend,
+                    imageBytes = attached?.bytes ?: autoScreenCaptureBytes,
+                    callback = object : ChatStreamCallback {
+                        override fun onToken(chunk: String) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val current = _chatMessages.value.toMutableList()
+                                val idx = current.indexOfFirst { it.id == assistantMsgId }
+                                if (idx != -1) {
+                                    val existing = current[idx]
+                                    current[idx] = existing.copy(text = existing.text + chunk, isStreaming = true)
+                                    _chatMessages.value = current
+                                }
+                            }
                         }
-                        _isGenerating.value = false
-                        saveCurrentMessages()
-                        processNextPendingCommand()
+
+                        override fun onToolStart(toolName: String, args: String) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val toolMsg = ChatMessage(
+                                    sessionId = currentSessionId,
+                                    role = MessageRole.TOOL,
+                                    text = getFriendlyToolLabel(toolName),
+                                    toolName = toolName,
+                                    toolArgs = args,
+                                    toolResult = null,
+                                    isStreaming = true
+                                )
+                                val current = _chatMessages.value.toMutableList()
+                                val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
+                                if (assistantIdx != -1) {
+                                    current.add(assistantIdx, toolMsg)
+                                } else {
+                                    current.add(toolMsg)
+                                }
+                                _chatMessages.value = current
+                            }
+                        }
+
+                        override fun onToolExecution(toolName: String, args: String, result: String) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val current = _chatMessages.value.toMutableList()
+                                val pendingToolIdx = current.indexOfLast { it.role == MessageRole.TOOL && it.toolName == toolName && it.isStreaming }
+                                if (pendingToolIdx != -1) {
+                                    val existing = current[pendingToolIdx]
+                                    current[pendingToolIdx] = existing.copy(
+                                        text = result,
+                                        toolResult = result,
+                                        isStreaming = false
+                                    )
+                                } else {
+                                    val toolMsg = ChatMessage(
+                                        sessionId = currentSessionId,
+                                        role = MessageRole.TOOL,
+                                        text = result,
+                                        toolName = toolName,
+                                        toolArgs = args,
+                                        toolResult = result,
+                                        isStreaming = false
+                                    )
+                                    val assistantIdx = current.indexOfFirst { it.id == assistantMsgId }
+                                    if (assistantIdx != -1) {
+                                        current.add(assistantIdx, toolMsg)
+                                    } else {
+                                        current.add(toolMsg)
+                                    }
+                                }
+                                _chatMessages.value = current
+                            }
+                        }
+
+                        override fun onComplete(fullText: String) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val current = _chatMessages.value.toMutableList()
+                                val idx = current.indexOfFirst { it.id == assistantMsgId }
+                                if (idx != -1) {
+                                    val existing = current[idx]
+                                    val finalText = if (existing.text.isNotBlank()) existing.text else fullText
+                                    current[idx] = existing.copy(text = finalText, isStreaming = false)
+                                    _chatMessages.value = current
+                                }
+                                _isGenerating.value = false
+                                saveCurrentMessages()
+                                processNextPendingCommand()
+                            }
+                        }
+
+                        override fun onError(errorMessage: String) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val current = _chatMessages.value.toMutableList()
+                                val idx = current.indexOfFirst { it.id == assistantMsgId }
+                                if (idx != -1) {
+                                    val existing = current[idx]
+                                    val errorDisplay = if (existing.text.isNotBlank()) existing.text else "⚠️ $errorMessage"
+                                    current[idx] = existing.copy(text = errorDisplay, isStreaming = false)
+                                    _chatMessages.value = current
+                                }
+                                _isGenerating.value = false
+                                saveCurrentMessages()
+                                processNextPendingCommand()
+                            }
+                        }
                     }
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "onSendTextMessage async dispatch failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _isGenerating.value = false
+                    processNextPendingCommand()
                 }
             }
-        )
+        }
     }
 
     fun stopGeneration() {
+        textPrepJob?.cancel()
+        textPrepJob = null
         if (_isGenerating.value) {
             chatService.cancelCurrentGeneration()
             _isGenerating.value = false
@@ -1203,8 +1221,10 @@ class IshaAssistantViewModel(application: Application) : AndroidViewModel(applic
             add(assistantMsg)
         }
         _chatMessages.value = updated
-        repository.saveMessages(sessionId, updated)
-        _sessions.value = repository.getAllSessions()
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.saveMessages(sessionId, updated)
+            _sessions.value = repository.getAllSessions()
+        }
 
         // Automatic TTS voice playback disabled per user requirement: "tts nhi chahiye mujhe tumse"
         // if (_isMessageSpeakEnabled.value) {
